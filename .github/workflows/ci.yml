@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore NotifyHub.sln
+
+      - name: Build
+        run: dotnet build NotifyHub.sln --no-restore -c Release
+
+      - name: Test
+        run: dotnet test NotifyHub.sln --no-build -c Release --collect:"XPlat Code Coverage"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: notifyhub-web/package-lock.json
+
+      - name: Install web dependencies
+        run: npm ci
+        working-directory: notifyhub-web
+
+      - name: Build web
+        run: npm run build
+        working-directory: notifyhub-web
