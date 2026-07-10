@@ -1,0 +1,58 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NotifyHub.Api", "NotifyHub.Api\NotifyHub.Api.csproj", "{A9E9A9A5-60F8-4EE9-8BEC-FBB115BD956A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NotifyHub.Worker", "NotifyHub.Worker\NotifyHub.Worker.csproj", "{21FE9CA7-B213-4594-A87D-66247014DC1A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NotifyHub.Domain", "NotifyHub.Domain\NotifyHub.Domain.csproj", "{2995992A-222A-4641-9387-1203C0F44C51}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NotifyHub.Infrastructure", "NotifyHub.Infrastructure\NotifyHub.Infrastructure.csproj", "{741097B8-3FF8-44AF-8568-A48EFFFFDF03}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "NotifyHub.Tests", "NotifyHub.Tests", "{701D0349-020E-4FEF-AF5A-4F481C088ADD}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NotifyHub.Domain.Tests", "NotifyHub.Tests\NotifyHub.Domain.Tests\NotifyHub.Domain.Tests.csproj", "{F4B896D1-C59A-438D-BB00-BA85C9C20F0D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NotifyHub.Integration.Tests", "NotifyHub.Tests\NotifyHub.Integration.Tests\NotifyHub.Integration.Tests.csproj", "{43D26F9E-1D7D-4F8E-A5CC-AA12382CB0D3}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{A9E9A9A5-60F8-4EE9-8BEC-FBB115BD956A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A9E9A9A5-60F8-4EE9-8BEC-FBB115BD956A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A9E9A9A5-60F8-4EE9-8BEC-FBB115BD956A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A9E9A9A5-60F8-4EE9-8BEC-FBB115BD956A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{21FE9CA7-B213-4594-A87D-66247014DC1A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{21FE9CA7-B213-4594-A87D-66247014DC1A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{21FE9CA7-B213-4594-A87D-66247014DC1A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{21FE9CA7-B213-4594-A87D-66247014DC1A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2995992A-222A-4641-9387-1203C0F44C51}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2995992A-222A-4641-9387-1203C0F44C51}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2995992A-222A-4641-9387-1203C0F44C51}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2995992A-222A-4641-9387-1203C0F44C51}.Release|Any CPU.Build.0 = Release|Any CPU
+		{741097B8-3FF8-44AF-8568-A48EFFFFDF03}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{741097B8-3FF8-44AF-8568-A48EFFFFDF03}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{741097B8-3FF8-44AF-8568-A48EFFFFDF03}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{741097B8-3FF8-44AF-8568-A48EFFFFDF03}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F4B896D1-C59A-438D-BB00-BA85C9C20F0D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F4B896D1-C59A-438D-BB00-BA85C9C20F0D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F4B896D1-C59A-438D-BB00-BA85C9C20F0D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F4B896D1-C59A-438D-BB00-BA85C9C20F0D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{43D26F9E-1D7D-4F8E-A5CC-AA12382CB0D3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{43D26F9E-1D7D-4F8E-A5CC-AA12382CB0D3}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{43D26F9E-1D7D-4F8E-A5CC-AA12382CB0D3}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{43D26F9E-1D7D-4F8E-A5CC-AA12382CB0D3}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{F4B896D1-C59A-438D-BB00-BA85C9C20F0D} = {701D0349-020E-4FEF-AF5A-4F481C088ADD}
+		{43D26F9E-1D7D-4F8E-A5CC-AA12382CB0D3} = {701D0349-020E-4FEF-AF5A-4F481C088ADD}
+	EndGlobalSection
+EndGlobal

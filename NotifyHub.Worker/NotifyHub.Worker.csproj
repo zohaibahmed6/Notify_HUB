@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>dotnet-NotifyHub.Worker-f6ee6ebc-4806-4043-85f1-e8f8e4755ebe</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NotifyHub.Domain\NotifyHub.Domain.csproj" />
+    <ProjectReference Include="..\NotifyHub.Infrastructure\NotifyHub.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>
