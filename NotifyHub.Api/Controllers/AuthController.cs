@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
@@ -55,6 +56,22 @@ public class AuthController(
         var response = await IssueTokensAsync(existing.User, supersedes: existing);
         return Ok(response);
     }
+
+    /// Proves RBAC/JWT wiring end-to-end: any authenticated user can read their own identity.
+    [HttpGet("me")]
+    public ActionResult<AuthUserDto> Me()
+    {
+        var id = long.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        var username = User.FindFirstValue(ClaimTypes.Name)!;
+        var role = User.FindFirstValue(ClaimTypes.Role)!;
+
+        return Ok(new AuthUserDto { Id = id, Username = username, Role = role });
+    }
+
+    /// Admin-only diagnostic route proving role-based restriction is enforced server-side.
+    [HttpGet("admin-only")]
+    [Authorize(Roles = "Admin")]
+    public ActionResult AdminOnly() => Ok();
 
     private async Task<AuthResponse> IssueTokensAsync(User user, RefreshToken? supersedes = null)
     {

@@ -2,6 +2,7 @@ using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Authorization;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using NotifyHub.Api.Auth;
 
@@ -11,19 +12,25 @@ public static class AuthServiceCollectionExtensions
 {
     public static IServiceCollection AddNotifyHubJwtAuth(this IServiceCollection services, IConfiguration configuration)
     {
-        var jwtOptions = configuration.GetSection(JwtOptions.SectionName).Get<JwtOptions>()
-            ?? throw new InvalidOperationException("Missing required configuration section: Jwt");
-
-        if (string.IsNullOrWhiteSpace(jwtOptions.Secret))
+        if (string.IsNullOrWhiteSpace(configuration["Jwt:Secret"]))
             throw new InvalidOperationException("Missing required configuration: Jwt:Secret");
 
         services.Configure<JwtOptions>(configuration.GetSection(JwtOptions.SectionName));
         services.AddSingleton<JwtTokenService>();
 
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-            .AddJwtBearer(options =>
+            .AddJwtBearer();
+
+        // Bound lazily via IOptions<JwtOptions>, resolved at first use (same timing/snapshot
+        // JwtTokenService reads) rather than eagerly at registration time — keeps the signing
+        // key used to issue tokens and the key used to validate them derived from the exact
+        // same configuration snapshot even if configuration sources are still being layered in
+        // (e.g. test hosts appending overrides after this method runs).
+        services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
+            .Configure<IOptions<JwtOptions>>((bearerOptions, jwtOptionsAccessor) =>
             {
-                options.TokenValidationParameters = new TokenValidationParameters
+                var jwtOptions = jwtOptionsAccessor.Value;
+                bearerOptions.TokenValidationParameters = new TokenValidationParameters
                 {
                     ValidateIssuerSigningKey = true,
                     IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtOptions.Secret)),

@@ -45,7 +45,14 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
-    await db.Database.MigrateAsync();
+
+    // The InMemory provider (used by integration tests) doesn't support relational
+    // migrations; EnsureCreated is the test-only equivalent. Production always uses
+    // the MySQL relational provider and takes the Migrate path.
+    if (db.Database.IsRelational())
+        await db.Database.MigrateAsync();
+    else
+        await db.Database.EnsureCreatedAsync();
 
     var seedRunner = scope.ServiceProvider.GetRequiredService<DbSeedRunner>();
     await seedRunner.RunAsync(db);
