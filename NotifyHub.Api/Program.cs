@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using NotifyHub.Api.Extensions;
 using NotifyHub.Domain.Entities;
 using NotifyHub.Infrastructure.Persistence;
 using NotifyHub.Infrastructure.Seed;
@@ -24,6 +25,8 @@ builder.Services.AddSingleton<IPasswordHasher<User>, PasswordHasher<User>>();
 
 builder.Services.AddScoped<IDbSeedStep, UserSeedStep>();
 builder.Services.AddScoped<DbSeedRunner>();
+
+builder.Services.AddNotifyHubJwtAuth(builder.Configuration);
 
 var webOrigin = builder.Configuration["Cors:WebOrigin"];
 builder.Services.AddCors(options =>
@@ -62,6 +65,7 @@ app.UseHttpsRedirection();
 
 app.UseCors("WebApp");
 
+app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
