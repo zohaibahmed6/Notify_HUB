@@ -1,0 +1,12 @@
+**/bin/
+**/obj/
+**/.vs/
+**/node_modules/
+notifyhub-web/
+.git/
+.github/
+*.md
+.env
+.env.example
+**/appsettings.Development.json
+**/appsettings.Development.json.example

@@ -1,0 +1,72 @@
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  api:
+    build:
+      context: .
+      dockerfile: NotifyHub.Api/Dockerfile
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:5000
+      ConnectionStrings__Default: ${CONNECTIONSTRINGS__DEFAULT}
+      Jwt__Secret: ${JWT__SECRET}
+      Jwt__AccessTokenMinutes: ${JWT__ACCESSTOKENMINUTES}
+      Jwt__RefreshTokenDays: ${JWT__REFRESHTOKENDAYS}
+      Cors__WebOrigin: ${CORS__WEBORIGIN}
+      Seed__AdminUsername: ${SEED__ADMINUSERNAME}
+      Seed__AdminPassword: ${SEED__ADMINPASSWORD}
+      Seed__StaffUsername: ${SEED__STAFFUSERNAME}
+      Seed__StaffPassword: ${SEED__STAFFPASSWORD}
+      MockGateway__FailRatePercent: ${MOCKGATEWAY__FAILRATEPERCENT}
+      MockGateway__MinDelayMs: ${MOCKGATEWAY__MINDELAYMS}
+      MockGateway__MaxDelayMs: ${MOCKGATEWAY__MAXDELAYMS}
+      Webhooks__SharedSecret: ${WEBHOOKS__SHAREDSECRET}
+    ports:
+      - "5000:5000"
+
+  worker:
+    build:
+      context: .
+      dockerfile: NotifyHub.Worker/Dockerfile
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      DOTNET_ENVIRONMENT: Development
+      ConnectionStrings__Default: ${CONNECTIONSTRINGS__DEFAULT}
+      MockGateway__FailRatePercent: ${MOCKGATEWAY__FAILRATEPERCENT}
+      MockGateway__MinDelayMs: ${MOCKGATEWAY__MINDELAYMS}
+      MockGateway__MaxDelayMs: ${MOCKGATEWAY__MAXDELAYMS}
+
+  web:
+    build:
+      context: ./notifyhub-web
+      dockerfile: Dockerfile
+    environment:
+      VITE_API_URL: ${VITE_API_URL}
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
+
+volumes:
+  mysql-data:
