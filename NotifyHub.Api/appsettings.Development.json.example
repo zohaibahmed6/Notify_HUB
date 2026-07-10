@@ -1,0 +1,28 @@
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    }
+  },
+  "ConnectionStrings": {
+    "Default": "Server=localhost;Port=3306;Database=notifyhub;User=notifyhub;Password=CHANGE_ME;"
+  },
+  "Jwt": {
+    "Secret": "CHANGE_ME_MIN_32_CHARS_RANDOM_STRING",
+    "AccessTokenMinutes": 30,
+    "RefreshTokenDays": 7
+  },
+  "Cors": {
+    "WebOrigin": "http://localhost:5173"
+  },
+  "Seed": {
+    "AdminUsername": "admin",
+    "AdminPassword": "CHANGE_ME",
+    "StaffUsername": "staff",
+    "StaffPassword": "CHANGE_ME"
+  },
+  "Webhooks": {
+    "SharedSecret": "CHANGE_ME"
+  }
+}
