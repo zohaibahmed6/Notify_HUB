@@ -39,6 +39,7 @@ services:
       MockGateway__FailRatePercent: ${MOCKGATEWAY__FAILRATEPERCENT}
       MockGateway__MinDelayMs: ${MOCKGATEWAY__MINDELAYMS}
       MockGateway__MaxDelayMs: ${MOCKGATEWAY__MAXDELAYMS}
+      MockGateway__CallbackBaseUrl: ${MOCKGATEWAY__CALLBACKBASEURL}
       Webhooks__SharedSecret: ${WEBHOOKS__SHAREDSECRET}
     ports:
       - "5000:5000"
@@ -53,9 +54,8 @@ services:
     environment:
       DOTNET_ENVIRONMENT: Development
       ConnectionStrings__Default: ${CONNECTIONSTRINGS__DEFAULT}
-      MockGateway__FailRatePercent: ${MOCKGATEWAY__FAILRATEPERCENT}
-      MockGateway__MinDelayMs: ${MOCKGATEWAY__MINDELAYMS}
-      MockGateway__MaxDelayMs: ${MOCKGATEWAY__MAXDELAYMS}
+      MockGateway__ApiBaseUrl: ${MOCKGATEWAY__APIBASEURL}
+      Webhooks__SharedSecret: ${WEBHOOKS__SHAREDSECRET}
 
   web:
     build:

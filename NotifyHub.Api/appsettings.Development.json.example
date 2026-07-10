@@ -24,5 +24,8 @@
   },
   "Webhooks": {
     "SharedSecret": "CHANGE_ME"
+  },
+  "MockGateway": {
+    "CallbackBaseUrl": "http://localhost:5000"
   }
 }

@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using NotifyHub.Api.Extensions;
+using NotifyHub.Api.Gateway;
 using NotifyHub.Domain.Entities;
 using NotifyHub.Infrastructure.Persistence;
 using NotifyHub.Infrastructure.Seed;
@@ -12,7 +14,32 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers();
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(options =>
+{
+    options.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+    {
+        Name = "Authorization",
+        Type = Microsoft.OpenApi.Models.SecuritySchemeType.Http,
+        Scheme = "bearer",
+        BearerFormat = "JWT",
+        In = Microsoft.OpenApi.Models.ParameterLocation.Header,
+        Description = "Paste the access token (without the \"Bearer \" prefix).",
+    });
+    options.AddSecurityRequirement(new Microsoft.OpenApi.Models.OpenApiSecurityRequirement
+    {
+        {
+            new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+            {
+                Reference = new Microsoft.OpenApi.Models.OpenApiReference
+                {
+                    Type = Microsoft.OpenApi.Models.ReferenceType.SecurityScheme,
+                    Id = "Bearer",
+                },
+            },
+            Array.Empty<string>()
+        },
+    });
+});
 builder.Services.AddProblemDetails();
 
 var connectionString = builder.Configuration.GetConnectionString("Default")
@@ -24,9 +51,20 @@ builder.Services.AddDbContext<NotifyHubDbContext>(options =>
 builder.Services.AddSingleton<IPasswordHasher<User>, PasswordHasher<User>>();
 
 builder.Services.AddScoped<IDbSeedStep, UserSeedStep>();
+builder.Services.AddScoped<IDbSeedStep, PatientAppointmentSeedStep>();
+builder.Services.AddScoped<IDbSeedStep, TemplateSeedStep>();
+builder.Services.AddScoped<IDbSeedStep, DemoOutboundMessageSeedStep>();
 builder.Services.AddScoped<DbSeedRunner>();
 
 builder.Services.AddNotifyHubJwtAuth(builder.Configuration);
+
+builder.Services.Configure<MockGatewayOptions>(builder.Configuration.GetSection(MockGatewayOptions.SectionName));
+builder.Services.AddHttpClient("self", (services, client) =>
+{
+    var opts = services.GetRequiredService<IOptions<MockGatewayOptions>>().Value;
+    client.BaseAddress = new Uri(opts.CallbackBaseUrl);
+    client.DefaultRequestHeaders.Add("X-Webhook-Secret", builder.Configuration["Webhooks:SharedSecret"]);
+});
 
 var webOrigin = builder.Configuration["Cors:WebOrigin"];
 builder.Services.AddCors(options =>

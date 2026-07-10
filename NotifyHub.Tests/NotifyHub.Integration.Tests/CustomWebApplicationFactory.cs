@@ -21,6 +21,12 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
     public const string AdminPassword = "IntegrationAdmin1!";
     public const string StaffUsername = "integration-staff";
     public const string StaffPassword = "IntegrationStaff1!";
+    public const string SharedSecret = "integration-test-webhook-shared-secret";
+
+    /// Overridden by subclasses to deterministically drive the mock gateway's outcome —
+    /// 0 for happy-path tests, 100 to exercise the retry path (§11: required for the
+    /// FR-013 integration test to be reliable, not flaky).
+    protected virtual int MockGatewayFailRatePercent => 0;
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -37,6 +43,11 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
                 ["Seed:AdminPassword"] = AdminPassword,
                 ["Seed:StaffUsername"] = StaffUsername,
                 ["Seed:StaffPassword"] = StaffPassword,
+                ["Webhooks:SharedSecret"] = SharedSecret,
+                ["MockGateway:FailRatePercent"] = MockGatewayFailRatePercent.ToString(),
+                ["MockGateway:MinDelayMs"] = "1",
+                ["MockGateway:MaxDelayMs"] = "5",
+                ["MockGateway:CallbackBaseUrl"] = "http://localhost",
             });
         });
 
@@ -45,6 +56,11 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             services.RemoveAll<DbContextOptions<NotifyHubDbContext>>();
             services.AddDbContext<NotifyHubDbContext>(options =>
                 options.UseInMemoryDatabase(_dbName));
+
+            // The mock gateway posts its simulated delivery receipt back to this same
+            // Api instance (§: FR-002) — routed straight to the TestServer instead of
+            // a real socket, so the whole loop stays in-process and deterministic.
+            services.AddHttpClient("self").ConfigurePrimaryHttpMessageHandler(() => Server.CreateHandler());
         });
     }
 }

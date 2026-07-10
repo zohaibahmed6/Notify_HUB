@@ -1,0 +1,67 @@
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using NotifyHub.Api.Templates.Dtos;
+using NotifyHub.Domain.Entities;
+using NotifyHub.Domain.Enums;
+using NotifyHub.Infrastructure.Persistence;
+
+namespace NotifyHub.Api.Controllers;
+
+/// §8: Admin or Staff — no [Authorize(Roles=...)] restriction needed since the global
+/// policy (any authenticated user) already matches "Admin or Staff" exactly (§4: Staff
+/// can manage templates, not Admin-only).
+[ApiController]
+[Route("api/templates")]
+public class TemplatesController(NotifyHubDbContext db) : ControllerBase
+{
+    [HttpGet]
+    public async Task<ActionResult<IReadOnlyList<TemplateDto>>> List(CancellationToken ct)
+    {
+        var templates = await db.MessageTemplates
+            .OrderBy(t => t.Id)
+            .Select(t => new TemplateDto
+            {
+                Id = t.Id,
+                Name = t.Name,
+                Body = t.Body,
+                TriggerType = t.TriggerType.ToString(),
+                OffsetHours = t.OffsetHours,
+            })
+            .ToListAsync(ct);
+
+        return Ok(templates);
+    }
+
+    [HttpPost]
+    public async Task<ActionResult<TemplateDto>> Create(CreateTemplateRequest request, CancellationToken ct)
+    {
+        if (!Enum.TryParse<TriggerType>(request.TriggerType, ignoreCase: true, out var triggerType))
+        {
+            return Problem(
+                statusCode: StatusCodes.Status400BadRequest,
+                title: $"Invalid trigger type '{request.TriggerType}'. Valid values: {string.Join(", ", Enum.GetNames<TriggerType>())}.");
+        }
+
+        var template = new MessageTemplate
+        {
+            Name = request.Name,
+            Body = request.Body,
+            TriggerType = triggerType,
+            OffsetHours = request.OffsetHours,
+        };
+
+        db.MessageTemplates.Add(template);
+        await db.SaveChangesAsync(ct);
+
+        return Created($"/api/templates/{template.Id}", ToDto(template));
+    }
+
+    private static TemplateDto ToDto(MessageTemplate t) => new()
+    {
+        Id = t.Id,
+        Name = t.Name,
+        Body = t.Body,
+        TriggerType = t.TriggerType.ToString(),
+        OffsetHours = t.OffsetHours,
+    };
+}

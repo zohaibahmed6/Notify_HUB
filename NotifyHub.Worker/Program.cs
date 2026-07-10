@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using NotifyHub.Infrastructure.Messaging;
 using NotifyHub.Infrastructure.Persistence;
 using NotifyHub.Worker;
 
@@ -10,7 +11,19 @@ var connectionString = builder.Configuration.GetConnectionString("Default")
 builder.Services.AddDbContext<NotifyHubDbContext>(options =>
     options.UseMySql(connectionString, new MySqlServerVersion(new Version(8, 0, 35))));
 
-builder.Services.AddHostedService<PlaceholderHeartbeatWorker>();
+builder.Services.AddHttpClient("gateway", (services, client) =>
+{
+    var baseUrl = services.GetRequiredService<IConfiguration>()["MockGateway:ApiBaseUrl"] ?? "http://localhost:5000";
+    client.BaseAddress = new Uri(baseUrl);
+    client.DefaultRequestHeaders.Add("X-Webhook-Secret", builder.Configuration["Webhooks:SharedSecret"]);
+});
+
+builder.Services.AddScoped(sp => new MessageDispatcher(
+    sp.GetRequiredService<NotifyHubDbContext>(),
+    sp.GetRequiredService<IHttpClientFactory>().CreateClient("gateway"),
+    sp.GetRequiredService<ILogger<MessageDispatcher>>()));
+
+builder.Services.AddHostedService<DispatcherWorker>();
 
 var host = builder.Build();
 host.Run();

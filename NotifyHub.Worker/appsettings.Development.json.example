@@ -7,5 +7,11 @@
   },
   "ConnectionStrings": {
     "Default": "Server=localhost;Port=3306;Database=notifyhub;User=notifyhub;Password=CHANGE_ME;"
+  },
+  "MockGateway": {
+    "ApiBaseUrl": "http://localhost:5000"
+  },
+  "Webhooks": {
+    "SharedSecret": "CHANGE_ME"
   }
 }

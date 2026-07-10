@@ -1,0 +1,39 @@
+using NotifyHub.Domain.Enums;
+
+namespace NotifyHub.Domain.Entities;
+
+public class OutboundMessage
+{
+    public long Id { get; set; }
+
+    public long PatientId { get; set; }
+    public Patient Patient { get; set; } = default!;
+
+    /// Null until threads exist (step 3) — see STATUS.md documented deviation.
+    public long? ThreadId { get; set; }
+
+    /// Null means an ad-hoc staff reply (no template) — see BR-008.
+    public long? TemplateId { get; set; }
+    public MessageTemplate? Template { get; set; }
+
+    public SenderType SenderType { get; set; }
+
+    /// Business event string (e.g. "appointment:{id}:created"); null for ad-hoc staff replies. See BR-009.
+    public string? TriggerReference { get; set; }
+
+    /// Rendered server-side at send time, snapshotted here so audit history reflects what was
+    /// actually sent even if the template is edited afterward (BR-013). Null until dispatched.
+    public string? RenderedBody { get; set; }
+
+    public DateTime CreatedAt { get; set; }
+    public MessageStatus Status { get; set; }
+
+    /// SHA-256 hex of patientId+templateId+triggerReference; unique, required only for
+    /// system-dispatched messages (§9, FR-003).
+    public string? IdempotencyKey { get; set; }
+
+    public int AttemptCount { get; set; }
+    public DateTime? NextRetryAt { get; set; }
+
+    public ICollection<DeliveryStatusHistory> StatusHistory { get; set; } = new List<DeliveryStatusHistory>();
+}
