@@ -1,0 +1,30 @@
+# .NET
+bin/
+obj/
+*.user
+.vs/
+
+# EF Core secrets / local config
+**/appsettings.Development.json
+**/appsettings.*.local.json
+
+# Node
+node_modules/
+notifyhub-web/dist/
+notifyhub-web/.vite/
+
+# Env files
+.env
+.env.local
+.env.*.local
+
+# Test/coverage output
+TestResults/
+coverage/
+**/coverage.cobertura.xml
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
