@@ -12,7 +12,7 @@ Last verified against commit `6b64f31` (2026-07-11/12 session).
 ## 1. Solution structure
 
 - `NotifyHub.Api/` — REST endpoints, SignalR hub, Swagger, auth, EF Core DbContext registration + startup migrate/seed.
-- `NotifyHub.Worker/` — two `BackgroundService`s: message dispatcher, escalation job poller. No reminder scheduler yet (see §4).
+- `NotifyHub.Worker/` — three `BackgroundService`s: message dispatcher, escalation job poller, reminder scheduler (see §4).
 - `NotifyHub.Domain/` — entities, enums, pure business-rule logic (idempotency, backoff, recurrence, opt-out matching, due-date defaults). No EF/HTTP deps.
 - `NotifyHub.Infrastructure/` — EF Core `DbContext` + Fluent API configs, `MessageDispatcher`, `EscalationJob`, seed steps.
 - `NotifyHub.Tests/NotifyHub.Domain.Tests/` — xUnit unit tests, no DB.
@@ -43,7 +43,7 @@ manual per-entity registration) — every `IEntityTypeConfiguration<T>` in
 | `InboundMessage` → `inbound_messages` | `InboundMessage.cs:4` | `InboundMessageConfiguration.cs:7` | Id, ThreadId, Body (≤1000), ReceivedAt | FK `Thread`, cascade delete (:18-21); composite index `(ThreadId, ReceivedAt)` (:24) |
 | `TaskItem` → `tasks` | `TaskItem.cs:7` | `TaskItemConfiguration.cs:7` | Id, ThreadId, Priority, DueAt, Status, AssignedStaffId?, OriginalOwnerId, IsRecurring, RecurrenceIntervalDays?, RecurrenceEndDate?, RecurrenceMaxOccurrences?, OccurrenceCount | FK `Thread` cascade (:29-32); FK `AssignedStaff`/`OriginalOwner` `Restrict` (:34-42); composite index `(Status, DueAt)` (:45, drives escalation job); index `AssignedStaffId` (:46) |
 
-Enums: `UserRole` (`Enums/UserRole.cs:3`), `MessageStatus` (`:3`, Queued/Sending/Sent/Delivered/Failed),
+Enums: `UserRole` (`Enums/UserRole.cs:3`), `MessageStatus` (`:3`, Queued/Sending/Sent/Delivered/Failed/**Superseded** — 6th value added in step 5, terminal, set only by `ReminderScheduler` on a rescheduled appointment's stale queued reminder, BR-010; never picked up by `MessageDispatcher`'s `Status == Queued` query so nothing else needed to change),
 `TriggerType` (`:3`, AppointmentReminder/MedicationAlert/PrescriptionAlert), `SenderType` (`:3`,
 System/Staff), `AppointmentStatus` (`:4`), `NotifyHubTaskStatus` (`:6`, Open/InProgress/Completed/
 Escalated/**Cancelled** — 5th value added per BR-007b, see STATUS.md), `TaskPriority` (`:3`, Low/
@@ -131,10 +131,14 @@ Race-safe find-or-create: `FindOrCreateThreadAsync` (:119-141) — see §5.
 | `MessageDispatcher` | `NotifyHub.Infrastructure/Messaging/MessageDispatcher.cs` | Called by `DispatcherWorker` | `DispatchDueMessagesAsync` (:19-35): batch of 10 `Queued` messages due now, ordered by `CreatedAt`. `DispatchOneAsync` (:37-90): opt-out short-circuit (:42-50), renders template if set (:54-59), POSTs to mock gateway (:66-67), on failure increments attempt count and either terminalizes via `RetryBackoffPolicy.IsTerminal` (:77-81) or requeues with backoff (:83-86). `RenderAsync` (:92-113) parses `TriggerReference` for `{{appointment_time}}` (:101-109). |
 | `EscalationWorker` | `NotifyHub.Worker/EscalationWorker.cs:8-36` | Config-driven poll, `Escalation:PollIntervalSeconds` default 60s (:17); 5s error-retry delay (:13) | Resolves `EscalationJob` per scope, calls `EscalateOverdueTasksAsync` (:26) |
 | `EscalationJob` | `NotifyHub.Infrastructure/Escalation/EscalationJob.cs` | Called by `EscalationWorker` | `EscalateOverdueTasksAsync` (:19-61): batch of 100 overdue non-terminal tasks (:23-29), resolves lowest-id Admin as fallback (:36-40), sets `Escalated` + audits (:45-47), reassigns + audits "auto-reassigned" if not already assigned to that admin (:49-54) |
+| `ReminderWorker` | `NotifyHub.Worker/ReminderWorker.cs:8-36` | Config-driven poll, `Reminders:PollIntervalSeconds` default 900s/15min (:17, locked decision per §14); 5s error-retry delay (:13) | Resolves `ReminderScheduler` per scope, calls `RunAsync` (:26) |
+| `ReminderScheduler` | `NotifyHub.Infrastructure/Reminders/ReminderScheduler.cs` | Called by `ReminderWorker` | `RunAsync` (:18-34): loads `AppointmentReminder` templates, then two passes. `SupersedeStaleRemindersAsync` (:41-86, BR-010): finds `Queued` messages tied to a reminder template, parses each `TriggerReference` via `ReminderTriggerReference.TryParse`, and marks `Superseded` any whose embedded `ScheduledAt` no longer matches the appointment's current value (rescheduled or deleted) — audits "superseded". `CreateDueRemindersAsync` (:91-142, FR-009/BR-003): for each upcoming `Scheduled` appointment × reminder template where `ReminderDueCalculator.IsDue` is true, checks `outbound_messages.idempotency_key` first (skip if exists — re-run safe) then queues a new message, `ThreadId=null`/`RenderedBody=null` (rendered later by the existing `MessageDispatcher.RenderAsync`, unchanged). |
 
-**No FR-009 reminder scheduler exists yet** — confirmed by repo-wide search, not inferred. Only
-`DispatcherWorker` and `EscalationWorker` are registered in `NotifyHub.Worker/Program.cs`. This is
-expected: per STATUS.md's plan numbering, reminders are step 5, not yet started (current step: 4 of 7).
+**FR-009 reminder scheduler implemented in step 5** (`ReminderWorker`/`ReminderScheduler`, above) —
+registered in `NotifyHub.Worker/Program.cs` alongside `DispatcherWorker`/`EscalationWorker`. No
+appointment-management endpoint exists (appointments are stub data, §7/out of scope for a dedicated
+screen), so BR-010's reschedule-supersede logic is poll-based, not event-driven — see §5 and
+STATUS.md's deviations for the tradeoff.
 
 ---
 
@@ -149,6 +153,9 @@ expected: per STATUS.md's plan numbering, reminders are step 5, not yet started 
 | Task due-date defaults (FR-008) | `NotifyHub.Domain/Tasks/TaskDueDateDefaults.cs:6-16` | Urgent+4h / High+1d / Medium+3d / Low+7d from creation |
 | BR-014 escalation auto-revert | `NotifyHub.Api/Controllers/TasksController.cs` — two call sites: `Detail` :58-64 (on open by assignee), `Update` :119-124 (on any action by assignee that doesn't itself set a new status) | Flips `Escalated` → `InProgress` |
 | Race-safe thread creation | `NotifyHub.Api/Controllers/WebhooksController.cs:119-141` (`FindOrCreateThreadAsync`) | Optimistic insert, `catch (DbUpdateException)` on the unique index (`ConversationThreadConfiguration.cs:21`), detach + re-read the winner (:138-139). **Now covered by a real-MySQL test** — `NotifyHub.Tests/NotifyHub.Integration.Tests/InboundWebhookThreadRaceMySqlTests.cs` (see §7); EF Core InMemory (used by every other integration test) can't reproduce genuine connection-level locking, so this was previously untested at the actual race. |
+| Reminder due-window calculation (FR-009) | `NotifyHub.Domain/Messaging/ReminderDueCalculator.cs:9-10` (`IsDue`) | `now < scheduledAt && now >= scheduledAt.AddHours(-offsetHours)` — true once the offset window opens, false once the appointment has occurred |
+| Reminder trigger-reference build/parse (BR-009/BR-010) | `NotifyHub.Domain/Messaging/ReminderTriggerReference.cs:16-17` (`Build`), `:21-38` (`TryParse`) | Format `appointment:{appointmentId}:reminder:{offsetHours}h:{scheduledAt.Ticks}` — embeds `ScheduledAt` itself (not a version counter, see STATUS.md deviations) so a reschedule always yields a new reference; `TryParse` rejects non-reminder formats (e.g. seed data's `appointment:{id}:created`) |
+| Reminder scheduling + reschedule-supersede (FR-009/BR-003/BR-010) | `NotifyHub.Infrastructure/Reminders/ReminderScheduler.cs` (see §4) | Poll-based supersede-then-create, reusing `outbound_messages`/`IdempotencyKeyGenerator`/`MessageDispatcher` unchanged |
 
 **Known related risk, not yet fixed** (logged in STATUS.md's Final review checklist): the
 `Inbound` action's `thread.UnreadCount++` (`WebhooksController.cs`, after `FindOrCreateThreadAsync`
@@ -194,13 +201,13 @@ hit in practice.
 ## 7. Test structure
 
 ### Domain (`NotifyHub.Tests/NotifyHub.Domain.Tests/`) — no DB
-Files: `PasswordPolicyTests.cs`, `TemplateRendererTests.cs`, `IdempotencyKeyGeneratorTests.cs`, `RetryBackoffPolicyTests.cs`, `OptOutKeywordMatcherTests.cs`, `TaskDueDateDefaultsTests.cs`, `RecurrenceCalculatorTests.cs`.
+Files: `PasswordPolicyTests.cs`, `TemplateRendererTests.cs`, `IdempotencyKeyGeneratorTests.cs`, `RetryBackoffPolicyTests.cs`, `OptOutKeywordMatcherTests.cs`, `TaskDueDateDefaultsTests.cs`, `RecurrenceCalculatorTests.cs`, `ReminderDueCalculatorTests.cs`, `ReminderTriggerReferenceTests.cs`.
 Run: `dotnet test NotifyHub.Tests/NotifyHub.Domain.Tests`
 
 ### Integration (`NotifyHub.Tests/NotifyHub.Integration.Tests/`)
 | Test file | Factory |
 |---|---|
-| `AuthEndpointTests.cs`, `EscalationJobTests.cs`, `InboundWebhookTests.cs`, `MessageDispatcherOptOutTests.cs`, `TasksControllerTests.cs`, `ThreadsControllerTests.cs` | `CustomWebApplicationFactory` (EF Core InMemory) |
+| `AuthEndpointTests.cs`, `EscalationJobTests.cs`, `InboundWebhookTests.cs`, `MessageDispatcherOptOutTests.cs`, `TasksControllerTests.cs`, `ThreadsControllerTests.cs`, `ReminderSchedulerTests.cs` | `CustomWebApplicationFactory` (EF Core InMemory) |
 | `OutboundPipelineTests.cs` | `ReliableGatewayWebApplicationFactory` (happy path) / `FailingGatewayWebApplicationFactory` (retry) — both subclass `CustomWebApplicationFactory` |
 | `InboundWebhookThreadRaceMySqlTests.cs` | `MySqlWebApplicationFactory` — real MySQL, `[Trait("Category","MySql")]`, exercises `FindOrCreateThreadAsync`'s race guard under genuine concurrent connections |
 
@@ -218,6 +225,6 @@ Run: `docker-compose up -d`, then `cd notifyhub-web && npm run test:e2e` (or the
 ## 8. Known limitations / deviations
 
 See `STATUS.md`:
-- "Documented deviations from PROJECT_CONTEXT.md" — `Cancelled` task status, ad-hoc replies through the dispatcher pipeline, "Blocked" audit action, thread-assignment target validation, escalation fallback Admin selection, escalation poll interval, task-board reassign scope, task creation requiring a thread first.
+- "Documented deviations from PROJECT_CONTEXT.md" — `Cancelled` task status, ad-hoc replies through the dispatcher pipeline, "Blocked" audit action, thread-assignment target validation, escalation fallback Admin selection, escalation poll interval, task-board reassign scope, task creation requiring a thread first, reminder `trigger_reference` format (ticks vs. version counter), reschedule-supersede being poll-based not event-driven (no appointment-management endpoint exists).
 - "Known limitations (by design, not bugs)" — SignalR broadcasts to all sessions, no stale-"Sending" recovery sweep, `{{appointment_time}}` resolution, Worker not gating on Api migration, no frontend unit test suite.
 - "Final review checklist" — the `UnreadCount` atomicity question noted in §5 above.
