@@ -5,13 +5,14 @@ namespace NotifyHub.Domain.Tests;
 
 public class RetryBackoffPolicyTests
 {
-    // attempt 5 is terminal (see IsTerminal_StopsAtFiveAttempts) — no 6th attempt is ever
-    // scheduled, so only the first 4 delays are reachable in practice.
+    // 6 total attempts (1 initial send + 5 retries) — all 5 backoff values are reachable,
+    // used between each pair of attempts.
     [Theory]
     [InlineData(1, 1)]
     [InlineData(2, 2)]
     [InlineData(3, 4)]
     [InlineData(4, 8)]
+    [InlineData(5, 16)]
     public void NextDelay_MatchesExponentialSchedule(int attemptCount, int expectedMinutes)
     {
         var delay = RetryBackoffPolicy.NextDelay(attemptCount);
@@ -21,10 +22,10 @@ public class RetryBackoffPolicyTests
 
     [Theory]
     [InlineData(1, false)]
-    [InlineData(4, false)]
-    [InlineData(5, true)]
+    [InlineData(5, false)]
     [InlineData(6, true)]
-    public void IsTerminal_StopsAtFiveAttempts(int attemptCount, bool expectedTerminal)
+    [InlineData(7, true)]
+    public void IsTerminal_StopsAtSixAttempts(int attemptCount, bool expectedTerminal)
     {
         Assert.Equal(expectedTerminal, RetryBackoffPolicy.IsTerminal(attemptCount));
     }
@@ -32,6 +33,6 @@ public class RetryBackoffPolicyTests
     [Fact]
     public void NextDelay_ThrowsForTerminalAttemptCount()
     {
-        Assert.Throws<InvalidOperationException>(() => RetryBackoffPolicy.NextDelay(5));
+        Assert.Throws<InvalidOperationException>(() => RetryBackoffPolicy.NextDelay(6));
     }
 }

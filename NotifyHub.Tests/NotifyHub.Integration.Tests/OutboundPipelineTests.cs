@@ -22,7 +22,12 @@ file static class PipelineTestHelpers
     {
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
-        var message = await db.OutboundMessages.FirstAsync(m => m.Status == MessageStatus.Queued);
+        // AttemptCount == 0 excludes messages a previous test in the same class fixture
+        // already claimed and requeued (non-terminal retry), keeping tests order-independent.
+        var message = await db.OutboundMessages
+            .Where(m => m.Status == MessageStatus.Queued && m.AttemptCount == 0)
+            .OrderBy(m => m.Id)
+            .FirstAsync();
 
         message.RenderedBody = "Rendered for integration test.";
         message.Status = MessageStatus.Sending;
@@ -97,15 +102,17 @@ public class OutboundPipelineRetryTests(FailingGatewayWebApplicationFactory fact
     }
 
     [Fact]
-    public async Task Send_AfterFiveFailedAttempts_BecomesTerminalFailed()
+    public async Task Send_AfterSixFailedAttempts_BecomesTerminalFailed()
     {
         var messageId = await PipelineTestHelpers.ClaimNextQueuedMessageAsync(factory);
 
-        // Simulates the dispatcher re-attempting this message across 5 polling cycles —
-        // each call re-fails deterministically (FailRatePercent=100). Only the first
-        // attempt needs the claim/render step; the message stays Queued (not re-claimed
-        // by a real dispatcher poll) between the remaining retries here.
-        for (var i = 0; i < 5; i++)
+        // BR-011 (clarified): 1 initial send + 5 retries = 6 total attempts, all 5 backoff
+        // values used between them. Simulates the dispatcher re-attempting this message
+        // across 6 polling cycles — each call re-fails deterministically
+        // (FailRatePercent=100). Only the first attempt needs the claim/render step; the
+        // message stays Queued (not re-claimed by a real dispatcher poll) between the
+        // remaining retries here.
+        for (var i = 0; i < 6; i++)
             await SendAsync(messageId);
 
         using var assertScope = factory.Services.CreateScope();
@@ -113,7 +120,7 @@ public class OutboundPipelineRetryTests(FailingGatewayWebApplicationFactory fact
         var updated = await assertDb.OutboundMessages.SingleAsync(m => m.Id == messageId);
 
         Assert.Equal(MessageStatus.Failed, updated.Status);
-        Assert.Equal(5, updated.AttemptCount);
+        Assert.Equal(6, updated.AttemptCount);
         Assert.Null(updated.NextRetryAt);
     }
 

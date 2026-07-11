@@ -1,15 +1,12 @@
 namespace NotifyHub.Domain.Messaging;
 
-/// BR-011: a message stops retrying after 5 failed attempts and moves to a terminal
-/// Failed status. Backoff schedule: exponential — 1, 2, 4, 8, 16 minutes across the
-/// 5 attempts allowed.
+/// BR-011: a message stops retrying after 6 total attempts (1 initial send + 5 retries)
+/// and moves to a terminal Failed status. Backoff schedule: exponential — 1, 2, 4, 8, 16
+/// minutes, one delay between each of the 6 attempts (all 5 values used).
 public static class RetryBackoffPolicy
 {
-    public const int MaxAttempts = 5;
+    public const int MaxAttempts = 6;
 
-    // Only the first 4 values are ever consumed — attempt 5 is terminal (IsTerminal),
-    // so no 6th attempt is scheduled. The 5th value is kept to mirror FR-003's literal
-    // published schedule (1/2/4/8/16 min) verbatim.
     private static readonly TimeSpan[] Delays =
     [
         TimeSpan.FromMinutes(1),

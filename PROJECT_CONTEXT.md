@@ -104,7 +104,7 @@ Users seeded via script — no dedicated user-management UI (decision: only must
 | BR-008 | A staff-authored ad-hoc reply is not tied to a template; conversation view must render both templated (system) and ad-hoc (staff) messages together in thread order |
 | BR-009 | trigger_reference (used in the idempotency key, FR-003) encodes the specific business event, not just an entity ID — e.g. an appointment reschedule produces a new trigger_reference and is therefore a legitimate new send, not a blocked duplicate |
 | BR-010 | When an appointment is rescheduled, any still-`queued` reminder tied to the old trigger_reference is marked `superseded` (terminal, not sent); the reminder scheduler creates fresh reminders under the new trigger_reference |
-| BR-011 | A message stops retrying after 5 failed attempts and moves to a terminal `failed` status (not retried further); this is audited |
+| BR-011 | A message stops retrying after 6 total attempts (1 initial send + 5 retries) and moves to a terminal `failed` status; all 5 backoff values from FR-003 (1/2/4/8/16 min) are used, one between each attempt. This is audited |
 | BR-012 | Thread assignment only succeeds if `assigned_staff_id` is currently null; a concurrent assign attempt on an already-assigned thread returns 409 Conflict |
 | BR-013 | Template merge fields (`{{field}}` syntax) are rendered server-side at send time using the specific patient/appointment/message context; the rendered text is stored on outbound_messages.rendered_body — not re-rendered live from the template — so audit history reflects what was actually sent even if the template is edited afterward |
 | BR-014 | A task's `escalated` status auto-reverts to `in_progress` the moment any action is taken on it (opened, updated, or reassigned) by the current assignee — it does not require a separate manual status change |
@@ -119,7 +119,7 @@ Users seeded via script — no dedicated user-management UI (decision: only must
 | Data fetching/cache | TanStack Query (React Query) |
 | Routing | React Router — one route per screen (§6) |
 | HTTP client | `fetch`, wrapped in a single `apiClient` module (base URL from env var, attaches JWT header, handles 401 → redirect to login) |
-| Auth token storage | In-memory (React context) + refresh via `/api/auth/login` on expiry; not localStorage, to reduce XSS exposure |
+| Auth token storage | In-memory (React context) + refresh via dedicated `POST /api/auth/refresh` on expiry (refresh token rotated each call, not re-sent password); not localStorage, to reduce XSS exposure |
 | API base URL | `VITE_API_URL` env var, set per environment in docker-compose |
 | CORS | API allows only the web container's origin (docker-compose service name / configured frontend URL), not wildcard |
 | SignalR client | `@microsoft/signalr` client, connects to `/hubs/inbox` with the JWT on connection; reconnect-on-drop enabled |
@@ -172,6 +172,7 @@ Users seeded via script — no dedicated user-management UI (decision: only must
 | `tasks` | id, thread_id (FK), priority, due_at, status, assigned_staff_id (FK), original_owner_id (FK — set at creation, next recurrence always reassigns here), is_recurring, recurrence_interval_days (nullable, required if is_recurring), recurrence_end_date (nullable), recurrence_max_occurrences (nullable), occurrence_count (default 1) | — |
 | `audit_log` | id, actor, action, entity_type, entity_id, occurred_at, detail | — |
 | `users` | id, username (unique), password_hash, role | — |
+| `refresh_tokens` | id, user_id (FK), token_hash (unique), expires_at, revoked_at (nullable) | Supports rotation: issuing a new token sets revoked_at on the old one |
 
 **Indexes (required for FR-010):** `outbound_messages(status, next_retry_at)`, `outbound_messages(thread_id, created_at)`, `inbound_messages(thread_id, received_at)`, `threads(assigned_staff_id)`.
 
@@ -183,7 +184,8 @@ Users seeded via script — no dedicated user-management UI (decision: only must
 
 | Method | Route | Auth | Purpose |
 |---|---|---|---|
-| POST | `/api/auth/login` | None | Issue JWT |
+| POST | `/api/auth/login` | None | Issue JWT access + refresh token pair |
+| POST | `/api/auth/refresh` | Refresh token (body) | Issue new access token; rotates refresh token (old one invalidated) |
 | GET/POST | `/api/templates` | Admin or Staff | Manage message templates |
 | GET | `/api/threads` | Staff/Admin | List threads (paginated) |
 | GET | `/api/threads/{id}` | Staff/Admin | Thread detail + messages |
@@ -207,7 +209,7 @@ Phone: synthetic E.164-like format. Template body: non-empty, max 1000 character
 
 ## 10. Security requirements
 
-- Auth: JWT with expiry + refresh
+- Auth: JWT with expiry + refresh — dedicated `/api/auth/refresh` endpoint, refresh tokens rotated on each use (old token revoked), stored hashed in `refresh_tokens`
 - RBAC enforced server-side on every controller action
 - Input validation on all endpoints, including inbound webhooks
 - Parameterized queries via EF Core only — no raw SQL string concatenation
@@ -299,6 +301,8 @@ Seed scale: 50,000 messages (explicit). Paginated + indexed inbox (explicit). St
 | Session 1 | QA/UX/business-rule pass: fixed Staff-audit-endpoint contradiction (added /api/audit/mine), retry cap (5 attempts→terminal failed), opt-out checked at send-time not just creation-time, opt-out blocks staff+system sends, escalation reassigns to Admin, UTC timestamp storage, reschedule supersedes old queued reminder, concurrent assign returns 409, empty states + real-time draft handling + unread-count trigger defined; documented (not built) multi-worker locking and template char counter as known limitations | Zohaib |
 | Session 1 | SMS/task domain pass: template merge fields ({{field}} syntax) + rendered_body snapshot for audit integrity, exponential backoff (1/2/4/8/16 min), STOP keyword variants (STOP/UNSUBSCRIBE/CANCEL/END/QUIT, case-insensitive), task due-date defaults by priority (staff can override), escalated status auto-reverts to in_progress on assignee action | Zohaib |
 | Session 1 | Architecture/dev/UX final pass: threads.patient_id unique + find-or-create (prevents duplicate-thread race), default task priority=medium on auto-creation, EF Core auto-migrate on startup + MySQL healthcheck/depends_on for docker-compose reliability, one-time seed step (no re-seed on restart), RFC 7807 ProblemDetails error format, consistent toast notification pattern across screens | Zohaib |
+| Build session | Ambiguity flagged by Claude Code during implementation: §6a/§8/§11a contradiction on refresh flow. Resolved: dedicated POST /api/auth/refresh with refresh token rotation (refresh_tokens table added, old token revoked on each use) | Zohaib |
+| Build session (step 2) | Ambiguity flagged: BR-011 "5 attempts" vs FR-003's 5 backoff values left one unused. Resolved: 6 total attempts (1 initial + 5 retries), all 5 backoff values used | Zohaib |
 
 *Append new decisions here — do not rewrite history.*
 
