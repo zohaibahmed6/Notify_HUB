@@ -10,13 +10,21 @@ using NotifyHub.Infrastructure.Persistence;
 
 namespace NotifyHub.Api.Controllers;
 
+/// §6a: the refresh token lives only in an httpOnly cookie — never in a JSON response
+/// body or any JS-readable storage — so an XSS payload that hooks fetch/localStorage
+/// still can't exfiltrate it. The access token remains in-memory on the frontend, as
+/// before; only the refresh token's transport changed (body -> cookie), to make a
+/// silent session restore on page load possible without violating "not localStorage."
 [ApiController]
 [Route("api/auth")]
 public class AuthController(
     NotifyHubDbContext db,
     IPasswordHasher<User> passwordHasher,
-    JwtTokenService tokenService) : ControllerBase
+    JwtTokenService tokenService,
+    IWebHostEnvironment env) : ControllerBase
 {
+    private const string RefreshCookieName = "notifyhub_refresh";
+
     [HttpPost("login")]
     [AllowAnonymous]
     public async Task<ActionResult<AuthResponse>> Login(LoginRequest request)
@@ -32,15 +40,24 @@ public class AuthController(
                 title: "Invalid username or password");
         }
 
-        var response = await IssueTokensAsync(user);
+        var (response, rawRefreshToken, refreshTokenExpiresAt) = await IssueTokensAsync(user);
+        SetRefreshCookie(rawRefreshToken, refreshTokenExpiresAt);
         return Ok(response);
     }
 
     [HttpPost("refresh")]
     [AllowAnonymous]
-    public async Task<ActionResult<AuthResponse>> Refresh(RefreshRequest request)
+    public async Task<ActionResult<AuthResponse>> Refresh()
     {
-        var tokenHash = tokenService.HashRefreshToken(request.RefreshToken);
+        var rawRefreshToken = Request.Cookies[RefreshCookieName];
+        if (string.IsNullOrEmpty(rawRefreshToken))
+        {
+            return Problem(
+                statusCode: StatusCodes.Status401Unauthorized,
+                title: "Invalid or expired refresh token");
+        }
+
+        var tokenHash = tokenService.HashRefreshToken(rawRefreshToken);
 
         var existing = await db.RefreshTokens
             .Include(rt => rt.User)
@@ -48,13 +65,37 @@ public class AuthController(
 
         if (existing is null || !existing.IsActive)
         {
+            DeleteRefreshCookie();
             return Problem(
                 statusCode: StatusCodes.Status401Unauthorized,
                 title: "Invalid or expired refresh token");
         }
 
-        var response = await IssueTokensAsync(existing.User, supersedes: existing);
+        var (response, newRawRefreshToken, refreshTokenExpiresAt) = await IssueTokensAsync(existing.User, supersedes: existing);
+        SetRefreshCookie(newRawRefreshToken, refreshTokenExpiresAt);
         return Ok(response);
+    }
+
+    /// Without this, client-side logout wouldn't actually end the session — the httpOnly
+    /// cookie would still be there to silently restore it on the next page load.
+    [HttpPost("logout")]
+    [AllowAnonymous]
+    public async Task<ActionResult> Logout()
+    {
+        var rawRefreshToken = Request.Cookies[RefreshCookieName];
+        if (!string.IsNullOrEmpty(rawRefreshToken))
+        {
+            var tokenHash = tokenService.HashRefreshToken(rawRefreshToken);
+            var existing = await db.RefreshTokens.SingleOrDefaultAsync(rt => rt.TokenHash == tokenHash);
+            if (existing is not null && existing.IsActive)
+            {
+                existing.RevokedAt = DateTime.UtcNow;
+                await db.SaveChangesAsync();
+            }
+        }
+
+        DeleteRefreshCookie();
+        return NoContent();
     }
 
     /// Proves RBAC/JWT wiring end-to-end: any authenticated user can read their own identity.
@@ -73,7 +114,8 @@ public class AuthController(
     [Authorize(Roles = "Admin")]
     public ActionResult AdminOnly() => Ok();
 
-    private async Task<AuthResponse> IssueTokensAsync(User user, RefreshToken? supersedes = null)
+    private async Task<(AuthResponse Response, string RawRefreshToken, DateTime RefreshTokenExpiresAt)> IssueTokensAsync(
+        User user, RefreshToken? supersedes = null)
     {
         var (accessToken, accessTokenExpiresAt) = tokenService.GenerateAccessToken(user);
 
@@ -103,12 +145,10 @@ public class AuthController(
             await db.SaveChangesAsync();
         }
 
-        return new AuthResponse
+        var response = new AuthResponse
         {
             AccessToken = accessToken,
             AccessTokenExpiresAt = accessTokenExpiresAt,
-            RefreshToken = rawRefreshToken,
-            RefreshTokenExpiresAt = refreshTokenExpiresAt,
             User = new AuthUserDto
             {
                 Id = user.Id,
@@ -116,5 +156,24 @@ public class AuthController(
                 Role = user.Role.ToString(),
             },
         };
+
+        return (response, rawRefreshToken, refreshTokenExpiresAt);
+    }
+
+    private void SetRefreshCookie(string rawRefreshToken, DateTime expiresAt)
+    {
+        Response.Cookies.Append(RefreshCookieName, rawRefreshToken, new CookieOptions
+        {
+            HttpOnly = true,
+            Secure = !env.IsDevelopment(),
+            SameSite = SameSiteMode.Lax,
+            Path = "/api/auth",
+            Expires = expiresAt,
+        });
+    }
+
+    private void DeleteRefreshCookie()
+    {
+        Response.Cookies.Delete(RefreshCookieName, new CookieOptions { Path = "/api/auth" });
     }
 }

@@ -14,6 +14,18 @@ export function useTasks(status?: TaskStatus | "All") {
   });
 }
 
+/// BR-014: fetching a task's detail is itself an "action taken" by the assignee — the
+/// backend (TasksController.Detail) reverts Escalated -> InProgress as a side effect of
+/// this GET when the caller is the assignee. Firing this query (i.e. "opening" the task
+/// in the UI) is what makes that revert happen; the list query alone never triggers it.
+export function useTask(id: number | null) {
+  return useQuery({
+    queryKey: ["task", id],
+    queryFn: () => apiClient.get<TaskDto>(`/api/tasks/${id}`),
+    enabled: id != null,
+  });
+}
+
 export function useUpdateTaskMutation() {
   const queryClient = useQueryClient();
 

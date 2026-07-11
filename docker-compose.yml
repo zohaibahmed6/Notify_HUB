@@ -63,8 +63,10 @@ services:
     build:
       context: ./notifyhub-web
       dockerfile: Dockerfile
-    environment:
-      VITE_API_URL: ${VITE_API_URL}
+    # VITE_API_URL intentionally unset: apiBaseUrl.ts derives the API's origin from
+    # whatever hostname the browser used to load the page (same port-5000 backend,
+    # different port), which is correct for both a developer's own browser (localhost)
+    # and the Playwright e2e suite (host.docker.internal) without a container restart.
     ports:
       - "5173:5173"
     depends_on:

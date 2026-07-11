@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { PriorityBadge } from "@/components/PriorityBadge";
 import { TaskStatusBadge } from "@/components/TaskStatusBadge";
 import { NewTaskForm } from "@/components/tasks/NewTaskForm";
+import { TaskDetailPanel } from "@/components/tasks/TaskDetailPanel";
 import type { TaskStatus } from "@/types/tasks";
 
 const STATUS_FILTERS: (TaskStatus | "All")[] = ["All", "Open", "InProgress", "Escalated", "Completed", "Cancelled"];
@@ -17,6 +18,7 @@ export default function TaskBoardPage() {
   const { user } = useAuth();
   const [statusFilter, setStatusFilter] = useState<TaskStatus | "All">("All");
   const [showNewTaskForm, setShowNewTaskForm] = useState(false);
+  const [expandedTaskId, setExpandedTaskId] = useState<number | null>(null);
 
   const { data, isLoading } = useTasks(statusFilter);
   const updateTask = useUpdateTaskMutation();
@@ -83,36 +85,55 @@ export default function TaskBoardPage() {
           {tasks.map((task) => {
             const isOverdue = new Date(task.dueAt) < new Date() && task.status !== "Completed" && task.status !== "Cancelled";
 
+            const isExpanded = expandedTaskId === task.id;
+
             return (
-              <div
-                key={task.id}
-                className="flex items-center justify-between gap-4 rounded-lg border p-3"
-              >
-                <div className="flex min-w-0 items-center gap-3">
-                  <PriorityBadge priority={task.priority} />
-                  <TaskStatusBadge status={task.status} />
-                  <div className="min-w-0">
-                    <div className={cn("text-sm", isOverdue && "font-medium text-destructive")}>
-                      Due {new Date(task.dueAt).toLocaleString()}
-                      {task.isRecurring && ` · recurring (#${task.occurrenceCount})`}
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      {task.assignedStaffUsername ? `Assigned to ${task.assignedStaffUsername}` : "Unassigned"}
+              <div key={task.id} className="overflow-hidden rounded-lg border">
+                <button
+                  type="button"
+                  onClick={() => setExpandedTaskId(isExpanded ? null : task.id)}
+                  className="flex w-full items-center justify-between gap-4 p-3 text-left hover:bg-accent/50"
+                >
+                  <div className="flex min-w-0 items-center gap-3">
+                    <PriorityBadge priority={task.priority} />
+                    <TaskStatusBadge status={task.status} />
+                    <div className="min-w-0">
+                      <div className={cn("text-sm", isOverdue && "font-medium text-destructive")}>
+                        Due {new Date(task.dueAt).toLocaleString()}
+                        {task.isRecurring && ` · recurring (#${task.occurrenceCount})`}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {task.assignedStaffUsername ? `Assigned to ${task.assignedStaffUsername}` : "Unassigned"}
+                      </div>
                     </div>
                   </div>
-                </div>
-                <div className="flex shrink-0 gap-2">
-                  {task.status !== "Completed" && task.status !== "Cancelled" && (
-                    <>
-                      <Button variant="outline" size="sm" onClick={() => handleAssignToMe(task.id)}>
-                        Assign to me
-                      </Button>
-                      <Button size="sm" onClick={() => handleComplete(task.id)}>
-                        Complete
-                      </Button>
-                    </>
-                  )}
-                </div>
+                  <div className="flex shrink-0 gap-2">
+                    {task.status !== "Completed" && task.status !== "Cancelled" && (
+                      <>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleAssignToMe(task.id);
+                          }}
+                        >
+                          Assign to me
+                        </Button>
+                        <Button
+                          size="sm"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleComplete(task.id);
+                          }}
+                        >
+                          Complete
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                </button>
+                {isExpanded && <TaskDetailPanel taskId={task.id} />}
               </div>
             );
           })}

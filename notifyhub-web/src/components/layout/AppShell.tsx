@@ -43,7 +43,7 @@ export default function AppShell() {
           <span className="text-sm text-muted-foreground">
             {user?.username} ({user?.role})
           </span>
-          <Button variant="outline" size="sm" onClick={logout}>
+          <Button variant="outline" size="sm" onClick={() => void logout()}>
             Sign out
           </Button>
         </div>

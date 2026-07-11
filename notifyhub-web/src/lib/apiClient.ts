@@ -1,6 +1,5 @@
+import { API_BASE_URL as BASE_URL } from "./apiBaseUrl";
 import { tokenStore } from "./tokenStore";
-
-const BASE_URL = import.meta.env.VITE_API_URL;
 
 export class ApiError extends Error {
   status: number;
@@ -19,17 +18,16 @@ interface RequestOptions extends RequestInit {
 }
 
 // A single in-flight refresh is shared across concurrent 401s so we don't fire
-// multiple refresh requests (and rotate the refresh token multiple times) at once.
+// multiple refresh requests (and rotate the refresh cookie multiple times) at once.
 let refreshPromise: Promise<boolean> | null = null;
 
 async function refreshTokens(): Promise<boolean> {
-  const refreshToken = tokenStore.getRefreshToken();
-  if (!refreshToken) return false;
-
+  // No refresh token to check client-side — it lives in an httpOnly cookie the browser
+  // attaches automatically (credentials: "include"). A non-OK response just means there
+  // was no valid session cookie (e.g. never logged in, or it expired/was revoked).
   const response = await fetch(`${BASE_URL}/api/auth/refresh`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ refreshToken }),
+    credentials: "include",
   });
 
   if (!response.ok) return false;
@@ -50,7 +48,7 @@ async function request<T>(path: string, options: RequestOptions = {}, isRetry = 
     headers.set("Authorization", `Bearer ${accessToken}`);
   }
 
-  const response = await fetch(`${BASE_URL}${path}`, { ...options, headers });
+  const response = await fetch(`${BASE_URL}${path}`, { ...options, headers, credentials: "include" });
 
   if (response.status === 401 && !options.skipAuth && !isRetry) {
     if (!refreshPromise) {

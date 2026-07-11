@@ -18,14 +18,17 @@ interface AuthContextValue {
   user: AuthUser | null;
   isAuthenticated: boolean;
   isLoggingIn: boolean;
+  /** True until the mount-time silent refresh (cookie -> new access token) resolves. */
+  isBootstrapping: boolean;
   login: (username: string, password: string) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [isBootstrapping, setIsBootstrapping] = useState(true);
 
   useEffect(() => {
     // apiClient dispatches this when a 401 survives a refresh attempt — a plain
@@ -33,6 +36,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const handleLogout = () => setUser(null);
     window.addEventListener("auth:logout", handleLogout);
     return () => window.removeEventListener("auth:logout", handleLogout);
+  }, []);
+
+  useEffect(() => {
+    // §6a: the refresh token lives in an httpOnly cookie the browser sends
+    // automatically, so a reload can silently restore the session by minting a fresh
+    // access token from it, with no re-login prompt — as long as the cookie is still
+    // valid. A failure here just means "no valid session," not an error to surface.
+    (async () => {
+      try {
+        const data = await apiClient.post<LoginResponse>("/api/auth/refresh", undefined, { skipAuth: true });
+        tokenStore.set(data);
+        setUser(data.user);
+      } catch {
+        // No valid session cookie — stay logged out.
+      } finally {
+        setIsBootstrapping(false);
+      }
+    })();
   }, []);
 
   const loginMutation = useMutation({
@@ -48,15 +69,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await loginMutation.mutateAsync({ username, password });
   };
 
-  const logout = () => {
-    tokenStore.clear();
-    setUser(null);
+  const logout = async () => {
+    try {
+      await apiClient.post("/api/auth/logout", undefined, { skipAuth: true });
+    } finally {
+      tokenStore.clear();
+      setUser(null);
+    }
   };
 
   const value: AuthContextValue = {
     user,
     isAuthenticated: user !== null,
     isLoggingIn: loginMutation.isPending,
+    isBootstrapping,
     login,
     logout,
   };

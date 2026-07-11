@@ -11,6 +11,10 @@ interface ThreadAssignedEvent {
   threadId: number;
 }
 
+interface OutboundMessageSentEvent {
+  threadId: number;
+}
+
 /** FR-007: shared inbox real-time — invalidates the affected queries on server push so
  * every connected session (e.g. two open browser tabs) converges without polling. */
 export function useInboxHub() {
@@ -25,6 +29,11 @@ export function useInboxHub() {
     });
 
     connection.on("threadAssigned", (event: ThreadAssignedEvent) => {
+      queryClient.invalidateQueries({ queryKey: ["threads"] });
+      queryClient.invalidateQueries({ queryKey: ["thread", event.threadId] });
+    });
+
+    connection.on("outboundMessageSent", (event: OutboundMessageSentEvent) => {
       queryClient.invalidateQueries({ queryKey: ["threads"] });
       queryClient.invalidateQueries({ queryKey: ["thread", event.threadId] });
     });

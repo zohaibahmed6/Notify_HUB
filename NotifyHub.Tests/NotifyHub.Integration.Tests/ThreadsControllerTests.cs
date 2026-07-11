@@ -25,7 +25,7 @@ public class ThreadsControllerTests(CustomWebApplicationFactory factory) : IClas
 
         var response = await client.PostAsync($"/api/threads/{thread.Id}/assign", JsonContent.Create(new { }));
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
 
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
@@ -86,7 +86,7 @@ public class ThreadsControllerTests(CustomWebApplicationFactory factory) : IClas
 
         var response = await client.PostAsJsonAsync($"/api/threads/{thread.Id}/messages", new ReplyRequest { Body = "On our way, see you soon." });
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
 
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();

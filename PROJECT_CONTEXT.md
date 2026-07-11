@@ -119,8 +119,8 @@ Users seeded via script — no dedicated user-management UI (decision: only must
 | Data fetching/cache | TanStack Query (React Query) |
 | Routing | React Router — one route per screen (§6) |
 | HTTP client | `fetch`, wrapped in a single `apiClient` module (base URL from env var, attaches JWT header, handles 401 → redirect to login) |
-| Auth token storage | In-memory (React context) + refresh via dedicated `POST /api/auth/refresh` on expiry (refresh token rotated each call, not re-sent password); not localStorage, to reduce XSS exposure |
-| API base URL | `VITE_API_URL` env var, set per environment in docker-compose |
+| Auth token storage | Access token in-memory (React context) only. Refresh token in an **httpOnly cookie** (never a JS-readable store, and never in a `POST /api/auth/login`/`refresh` JSON body) — the browser sends it automatically to `POST /api/auth/refresh`, which lets the app silently restore a session on page load (`AuthContext` calls `refresh` on mount) without ever exposing the refresh token to script, an even smaller XSS surface than the original "not localStorage" framing since it isn't readable at all, by design or via injected script |
+| API base URL | Derived at runtime from the page's own hostname (`window.location.hostname` + port 5000) — same-origin-by-default (dev: page and API differ only by port). `VITE_API_URL` remains available as an explicit override when that assumption doesn't hold |
 | CORS | API allows only the web container's origin (docker-compose service name / configured frontend URL), not wildcard |
 | SignalR client | `@microsoft/signalr` client, connects to `/hubs/inbox` with the JWT on connection; reconnect-on-drop enabled |
 | Build tool | Vite |
@@ -184,8 +184,9 @@ Users seeded via script — no dedicated user-management UI (decision: only must
 
 | Method | Route | Auth | Purpose |
 |---|---|---|---|
-| POST | `/api/auth/login` | None | Issue JWT access + refresh token pair |
-| POST | `/api/auth/refresh` | Refresh token (body) | Issue new access token; rotates refresh token (old one invalidated) |
+| POST | `/api/auth/login` | None | Issue JWT access token (body) + refresh token (httpOnly cookie) |
+| POST | `/api/auth/refresh` | Refresh token (httpOnly cookie, sent automatically) | Issue new access token; rotates refresh token (old one invalidated) |
+| POST | `/api/auth/logout` | Refresh token (httpOnly cookie) | Revoke the refresh token and clear the cookie server-side |
 | GET/POST | `/api/templates` | Admin or Staff | Manage message templates |
 | GET | `/api/threads` | Staff/Admin | List threads (paginated) |
 | GET | `/api/threads/{id}` | Staff/Admin | Thread detail + messages |
@@ -304,6 +305,7 @@ Seed scale: 50,000 messages (explicit). Paginated + indexed inbox (explicit). St
 | Build session | Ambiguity flagged by Claude Code during implementation: §6a/§8/§11a contradiction on refresh flow. Resolved: dedicated POST /api/auth/refresh with refresh token rotation (refresh_tokens table added, old token revoked on each use) | Zohaib |
 | Build session (step 2) | Ambiguity flagged: BR-011 "5 attempts" vs FR-003's 5 backoff values left one unused. Resolved: 6 total attempts (1 initial + 5 retries), all 5 backoff values used | Zohaib |
 | Build session (step 4) | Gap flagged: §11a's 4-value tasks.status enum has no state satisfying BR-007b ("cancelling ends the series"). Resolved: added `cancelled` as a 5th value | Zohaib |
+| Build session (step 4 bug-fix) | Live testing found: (1) reply/assign returned 200 with an empty body, which the frontend misread as failure; (2) page refresh forced re-login — traced to a real §6a conflict (in-memory-only tokens can't survive a reload); (3) BR-014's revert-on-open never fired since the frontend had no "open task" UI at all, only row actions. Resolved: (1) those endpoints return 204; (2) refresh token moved to an httpOnly cookie with a silent refresh on app mount (§6a updated); (3) Task board rows are now clickable, firing the GET that triggers the revert. The Playwright suite built to cover this also caught a 4th, previously-unreported gap: staff replies (`POST /api/threads/{id}/messages`) never broadcast over SignalR at all (only assignment did), so a reply never appeared live in another open tab — fixed by adding an `outboundMessageSent` broadcast, mirroring the existing `threadAssigned` one | Zohaib |
 
 *Append new decisions here — do not rewrite history.*
 

@@ -120,7 +120,13 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
         });
 
         await db.SaveChangesAsync(ct);
-        return Ok();
+
+        // FR-007: without this, a staff reply only appeared live in the sender's own tab
+        // — other open sessions on the same thread wouldn't see it until their next
+        // unrelated refetch. Mirrors the "threadAssigned" broadcast below.
+        await inboxHub.Clients.All.SendAsync("outboundMessageSent", new { threadId = thread.Id }, ct);
+
+        return NoContent();
     }
 
     /// BR-012: only succeeds if assigned_staff_id is currently null; concurrent assign
@@ -154,7 +160,7 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
         await db.SaveChangesAsync(ct);
         await inboxHub.Clients.All.SendAsync("threadAssigned", new { threadId = thread.Id, assignedStaffId = targetStaffId }, ct);
 
-        return Ok();
+        return NoContent();
     }
 
     [HttpPost("{id}/tasks")]

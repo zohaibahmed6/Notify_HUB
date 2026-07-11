@@ -69,13 +69,18 @@ builder.Services.AddHttpClient("self", (services, client) =>
     client.DefaultRequestHeaders.Add("X-Webhook-Secret", builder.Configuration["Webhooks:SharedSecret"]);
 });
 
-var webOrigin = builder.Configuration["Cors:WebOrigin"];
+// Comma-separated so the same dev deployment can serve both a developer's own browser
+// (http://localhost:5173) and the Playwright e2e suite, which loads the SPA from the
+// docker-compose service hostname (http://web:5173) — CORS is origin-based, so both
+// need to be explicitly allowed, not just whichever one a human happens to use.
+var webOrigins = (builder.Configuration["Cors:WebOrigin"] ?? string.Empty)
+    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("WebApp", policy =>
     {
-        if (!string.IsNullOrWhiteSpace(webOrigin))
-            policy.WithOrigins(webOrigin).AllowAnyHeader().AllowAnyMethod();
+        if (webOrigins.Length > 0)
+            policy.WithOrigins(webOrigins).AllowAnyHeader().AllowAnyMethod().AllowCredentials();
     });
 });
 
