@@ -116,6 +116,72 @@ public class ThreadsControllerTests(CustomWebApplicationFactory factory) : IClas
     }
 
     [Fact]
+    public async Task Detail_PaginatesMessages_DoesNotReturnFullHistory()
+    {
+        var thread = await CreateThreadAsync("+19990000008");
+        const int totalMessages = 60;
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
+            var baseTime = DateTime.UtcNow.AddDays(-1);
+
+            for (var i = 0; i < totalMessages; i++)
+            {
+                var timestamp = baseTime.AddMinutes(i);
+                if (i % 2 == 0)
+                {
+                    db.OutboundMessages.Add(new OutboundMessage
+                    {
+                        PatientId = thread.PatientId,
+                        ThreadId = thread.Id,
+                        SenderType = Domain.Enums.SenderType.Staff,
+                        RenderedBody = $"outbound-{i}",
+                        CreatedAt = timestamp,
+                        Status = Domain.Enums.MessageStatus.Delivered,
+                    });
+                }
+                else
+                {
+                    db.InboundMessages.Add(new InboundMessage { ThreadId = thread.Id, Body = $"inbound-{i}", ReceivedAt = timestamp });
+                }
+            }
+            await db.SaveChangesAsync();
+        }
+
+        var (client, _) = await _client.AsStaffAsync();
+
+        // Defaults (no page/pageSize query params): §11a's 25/max-100 pattern.
+        var page1Response = await client.GetAsync($"/api/threads/{thread.Id}");
+        var page1 = await page1Response.Content.ReadFromJsonAsync<ThreadDetailDto>();
+
+        Assert.Equal(25, page1!.Messages.Items.Count); // not all 60 — proves the full history isn't returned
+        Assert.Equal(totalMessages, page1.Messages.TotalCount);
+
+        var expectedPage1Bodies = Enumerable.Range(totalMessages - 25, 25)
+            .Select(i => i % 2 == 0 ? $"outbound-{i}" : $"inbound-{i}")
+            .ToList();
+        Assert.Equal(expectedPage1Bodies, page1.Messages.Items.Select(m => m.Body).ToList());
+
+        var page2Response = await client.GetAsync($"/api/threads/{thread.Id}?page=2");
+        var page2 = await page2Response.Content.ReadFromJsonAsync<ThreadDetailDto>();
+
+        Assert.Equal(25, page2!.Messages.Items.Count);
+
+        // Combined, the two pages cover exactly the most recent 50 of 60 messages, in
+        // chronological order, with zero overlap — proves the merge-pagination across the
+        // two independently-ordered tables (inbound/outbound) is correct, not just "returns
+        // some subset".
+        var combinedBodies = page2.Messages.Items.Select(m => m.Body)
+            .Concat(page1.Messages.Items.Select(m => m.Body))
+            .ToList();
+        var expectedCombinedBodies = Enumerable.Range(10, 50)
+            .Select(i => i % 2 == 0 ? $"outbound-{i}" : $"inbound-{i}")
+            .ToList();
+        Assert.Equal(expectedCombinedBodies, combinedBodies);
+    }
+
+    [Fact]
     public async Task CreateTask_UsesDefaultPriorityAndDueDate_WhenNotSpecified()
     {
         var thread = await CreateThreadAsync("+19990000007");

@@ -2,11 +2,15 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 
 import { useAssignMutation, useReplyMutation, useThread } from "@/hooks/useThreads";
+import { apiClient } from "@/lib/apiClient";
 import { errorMessage } from "@/lib/errorMessage";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import type { ThreadDetailDto, ThreadMessageDto } from "@/types/inbox";
 import { CreateTaskForm } from "./CreateTaskForm";
+
+const MESSAGES_PAGE_SIZE = 25;
 
 export function ConversationPanel({ threadId }: { threadId: number }) {
   const { data: thread, isLoading } = useThread(threadId);
@@ -16,8 +20,19 @@ export function ConversationPanel({ threadId }: { threadId: number }) {
   const [draft, setDraft] = useState("");
   const [showTaskForm, setShowTaskForm] = useState(false);
 
+  // FR-010: the API only returns one page of messages at a time (most recent first).
+  // Older pages are fetched on demand and prepended here rather than through TanStack
+  // Query's cache, since this is an ever-growing local scrollback, not a replaceable page.
+  const [olderMessages, setOlderMessages] = useState<ThreadMessageDto[]>([]);
+  const [loadedPageCount, setLoadedPageCount] = useState(1);
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const wasAtBottomRef = useRef(true);
+
+  const pageMessages = thread?.messages.items ?? [];
+  const allMessages = [...olderMessages, ...pageMessages];
+  const hasMoreOlder = thread !== undefined && thread !== null && allMessages.length < thread.messages.totalCount;
 
   // §6c: a real-time message arriving while a draft is open must append below without
   // touching the draft, and only auto-scroll if the view was already scrolled to the
@@ -29,13 +44,31 @@ export function ConversationPanel({ threadId }: { threadId: number }) {
     if (el && wasAtBottomRef.current) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [thread?.messages.length]);
+  }, [pageMessages.length]);
 
   useEffect(() => {
     wasAtBottomRef.current = true;
     setDraft("");
     setShowTaskForm(false);
+    setOlderMessages([]);
+    setLoadedPageCount(1);
   }, [threadId]);
+
+  const handleLoadOlder = async () => {
+    const nextPage = loadedPageCount + 1;
+    setIsLoadingOlder(true);
+    try {
+      const data = await apiClient.get<ThreadDetailDto>(
+        `/api/threads/${threadId}?page=${nextPage}&pageSize=${MESSAGES_PAGE_SIZE}`,
+      );
+      setOlderMessages((prev) => [...data.messages.items, ...prev]);
+      setLoadedPageCount(nextPage);
+    } catch (error) {
+      toast.error(errorMessage(error, "Failed to load earlier messages"));
+    } finally {
+      setIsLoadingOlder(false);
+    }
+  };
 
   const handleScroll = () => {
     const el = scrollRef.current;
@@ -103,39 +136,48 @@ export function ConversationPanel({ threadId }: { threadId: number }) {
       )}
 
       <div ref={scrollRef} onScroll={handleScroll} className="flex-1 space-y-3 overflow-y-auto p-4">
-        {thread.messages.length === 0 ? (
+        {allMessages.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-1 text-center">
             <p className="font-medium">Start the conversation</p>
             <p className="text-sm text-muted-foreground">Send the first message to {thread.patientName}.</p>
           </div>
         ) : (
-          thread.messages.map((message, index) => (
-            <div
-              key={index}
-              className={cn("flex", message.direction === "inbound" ? "justify-start" : "justify-end")}
-            >
+          <>
+            {hasMoreOlder && (
+              <div className="flex justify-center pb-1">
+                <Button variant="outline" size="sm" onClick={handleLoadOlder} disabled={isLoadingOlder}>
+                  {isLoadingOlder ? "Loading..." : "Load earlier messages"}
+                </Button>
+              </div>
+            )}
+            {allMessages.map((message, index) => (
               <div
-                className={cn(
-                  "max-w-[75%] rounded-lg px-3 py-2 text-sm",
-                  message.direction === "inbound"
-                    ? "bg-muted text-foreground"
-                    : "bg-primary text-primary-foreground",
-                )}
+                key={index}
+                className={cn("flex", message.direction === "inbound" ? "justify-start" : "justify-end")}
               >
-                <p>{message.body}</p>
-                <p
+                <div
                   className={cn(
-                    "mt-1 text-[10px] opacity-70",
-                    message.direction === "outbound" && "text-right",
+                    "max-w-[75%] rounded-lg px-3 py-2 text-sm",
+                    message.direction === "inbound"
+                      ? "bg-muted text-foreground"
+                      : "bg-primary text-primary-foreground",
                   )}
                 >
-                  {message.direction === "outbound" && message.senderType === "Staff" ? "You" : message.senderType ?? "Patient"}
-                  {" · "}
-                  {new Date(message.timestamp).toLocaleString()}
-                </p>
+                  <p>{message.body}</p>
+                  <p
+                    className={cn(
+                      "mt-1 text-[10px] opacity-70",
+                      message.direction === "outbound" && "text-right",
+                    )}
+                  >
+                    {message.direction === "outbound" && message.senderType === "Staff" ? "You" : message.senderType ?? "Patient"}
+                    {" · "}
+                    {new Date(message.timestamp).toLocaleString()}
+                  </p>
+                </div>
               </div>
-            </div>
-          ))
+            ))}
+          </>
         )}
       </div>
 

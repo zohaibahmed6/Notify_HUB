@@ -32,6 +32,11 @@ public class MySqlWebApplicationFactory : WebApplicationFactory<Program>
                 ["Seed:AdminPassword"] = "MySqlItAdmin1!",
                 ["Seed:StaffUsername"] = "mysql-it-staff",
                 ["Seed:StaffPassword"] = "MySqlItStaff1!",
+                // FR-010: cap PerformanceSeedStep here too — this factory runs Program.cs's
+                // real seed pipeline unmodified against a live MySQL instance; there's no
+                // benefit to inserting the full 50,000-row production default just to boot
+                // this race-condition test.
+                ["Seed:PerformanceMessageCount"] = "100",
                 ["Webhooks:SharedSecret"] = SharedSecret,
                 ["MockGateway:FailRatePercent"] = "0",
                 ["MockGateway:MinDelayMs"] = "1",

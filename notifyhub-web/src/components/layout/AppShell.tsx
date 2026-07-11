@@ -8,6 +8,8 @@ import { cn } from "@/lib/utils";
 const NAV_LINKS = [
   { to: "/inbox", label: "Inbox" },
   { to: "/tasks", label: "Task board" },
+  { to: "/templates", label: "Templates" },
+  { to: "/audit", label: "Audit log" },
 ];
 
 export default function AppShell() {

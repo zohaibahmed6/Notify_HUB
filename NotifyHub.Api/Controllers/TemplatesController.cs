@@ -56,6 +56,38 @@ public class TemplatesController(NotifyHubDbContext db) : ControllerBase
         return Created($"/api/templates/{template.Id}", ToDto(template));
     }
 
+    [HttpPatch("{id}")]
+    public async Task<ActionResult<TemplateDto>> Update(long id, UpdateTemplateRequest request, CancellationToken ct)
+    {
+        var template = await db.MessageTemplates.SingleOrDefaultAsync(t => t.Id == id, ct);
+        if (template is null)
+            return NotFound();
+
+        if (request.Name is not null)
+            template.Name = request.Name;
+
+        if (request.Body is not null)
+            template.Body = request.Body;
+
+        if (request.TriggerType is not null)
+        {
+            if (!Enum.TryParse<TriggerType>(request.TriggerType, ignoreCase: true, out var triggerType))
+            {
+                return Problem(
+                    statusCode: StatusCodes.Status400BadRequest,
+                    title: $"Invalid trigger type '{request.TriggerType}'. Valid values: {string.Join(", ", Enum.GetNames<TriggerType>())}.");
+            }
+
+            template.TriggerType = triggerType;
+        }
+
+        if (request.OffsetHours is not null)
+            template.OffsetHours = request.OffsetHours.Value;
+
+        await db.SaveChangesAsync(ct);
+        return Ok(ToDto(template));
+    }
+
     private static TemplateDto ToDto(MessageTemplate t) => new()
     {
         Id = t.Id,

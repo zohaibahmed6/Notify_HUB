@@ -5,7 +5,9 @@ Reality-first: what's actually implemented, with file:line citations. Not a rest
 `PROJECT_CONTEXT.md` (spec) and `STATUS.md` (build log, deviations, known limitations). If this
 file ever contradicts the code, the code wins — fix this file and flag the discrepancy.
 
-Last verified against commit `6b64f31` (2026-07-11/12 session).
+Last verified against commit `6b64f31` (2026-07-11/12 session), plus step 6 additions
+(audit endpoints, `PerformanceSeedStep`, Templates/Audit screens) made this session — **not
+yet committed**, file:line citations below verified against the working tree.
 
 ---
 
@@ -73,11 +75,11 @@ Refresh-token cookie name `notifyhub_refresh` (:26); set/clear in `SetRefreshCoo
 ### `ThreadsController` — `NotifyHub.Api/Controllers/ThreadsController.cs` (`[Route("api/threads")]` :20)
 | Verb + route | Method:line | Auth | Notes |
 |---|---|---|---|
-| GET `api/threads` | `List` :23 | default authenticated | paginated |
-| GET `api/threads/{id}` | `Detail` :43 | default authenticated | resets `UnreadCount = 0` on open (:74-76) |
-| POST `api/threads/{id}/messages` | `Reply` :96 | default authenticated | BR-001b opt-out check (:103-106); broadcasts `outboundMessageSent` (:127) |
-| POST `api/threads/{id}/assign` | `Assign` :134 | default authenticated | self-assign OK; assigning others requires caller role Admin, else 403 (:144-149); broadcasts `threadAssigned` (:161) |
-| POST `api/threads/{id}/tasks` | `CreateTask` :166 | default authenticated | |
+| GET `api/threads` | `List` :23-41 | default authenticated | paginated |
+| GET `api/threads/{id}` | `Detail` :43-74 | default authenticated | resets `UnreadCount = 0` on open (:58-60); messages paginated via `GetMessagesPageAsync` (:89-132, step 6/FR-010 — see §5) instead of the old unpaginated `.Include(InboundMessages).Include(OutboundMessages)` |
+| POST `api/threads/{id}/messages` | `Reply` :139 | default authenticated | BR-001b opt-out check (:145-148); broadcasts `outboundMessageSent` (:169) |
+| POST `api/threads/{id}/assign` | `Assign` :177 | default authenticated | self-assign OK; assigning others requires caller role Admin, else 403 (:190-191); broadcasts `threadAssigned` (:203) |
+| POST `api/threads/{id}/tasks` | `CreateTask` :209 | default authenticated | |
 
 ### `TasksController` — `NotifyHub.Api/Controllers/TasksController.cs` (`[Route("api/tasks")]` :17)
 | Verb + route | Method:line | Auth | Notes |
@@ -91,6 +93,17 @@ Refresh-token cookie name `notifyhub_refresh` (:26); set/clear in `SetRefreshCoo
 |---|---|---|
 | GET `api/templates` | `List` :17 | default authenticated |
 | POST `api/templates` | `Create` :35 | default authenticated |
+| PATCH `api/templates/{id}` | `Update` :59-89 | default authenticated |
+
+Applies only non-null fields from `UpdateTemplateRequest` (`NotifyHub.Api/Templates/Dtos/UpdateTemplateRequest.cs`) — added step 6 to close §6b's "create/edit" gap (only `GET`/`POST` existed before).
+
+### `AuditController` — `NotifyHub.Api/Controllers/AuditController.cs` (`[Route("api/audit")]` :17-19, step 6/FR-011)
+| Verb + route | Method:line | Auth | Notes |
+|---|---|---|---|
+| GET `api/audit` | `List` :21-27 | `[Authorize(Roles="Admin")]` (:22) — first non-default, non-webhook auth policy in the codebase | filters `actor`/`action`/`from`/`to`, paginated via `PagedResult<T>.Clamp` |
+| GET `api/audit/mine` | `Mine` :29-35 | default authenticated | same filters minus `actor` — server hardcodes `actor` to the caller's own username (:33), ignoring any client value |
+
+Shared query logic: `QueryAsync` (:37-63).
 
 ### `WebhooksController` — `NotifyHub.Api/Controllers/WebhooksController.cs` (`[Route("api/webhooks")]` :18, class-level `[AllowAnonymous][SharedSecret]` :19-20)
 | Verb + route | Method:line | Notes |
@@ -142,6 +155,32 @@ STATUS.md's deviations for the tradeoff.
 
 ---
 
+## 4a. Seed steps (`NotifyHub.Infrastructure/Seed/`, run in DI-registration order by `DbSeedRunner`)
+
+All registered as `IDbSeedStep` in `NotifyHub.Api/Program.cs` (:55-61) and run unconditionally at
+Api startup (`Program.cs` :105-106), including in every integration test that boots the Api
+pipeline — no environment gating. Order: `UserSeedStep` → `SecondStaffSeedStep` →
+`PatientAppointmentSeedStep` (10 demo patients+appointments) → `TemplateSeedStep` (4 templates) →
+`DemoOutboundMessageSeedStep` (5 demo messages) → `PerformanceSeedStep` (step 6, FR-010).
+
+`PerformanceSeedStep` (`NotifyHub.Infrastructure/Seed/PerformanceSeedStep.cs:31-151`) — constructor
+parameter `targetMessageCount` (default 50,000), read from config key `Seed:PerformanceMessageCount`
+in `Program.cs`'s DI registration. `RunAsync` (:40-82): idempotency check via a patient-name marker
+prefix (:42, independent of `DemoOutboundMessageSeedStep`'s own "any message exists" check), thread
+count scales with message target (~50 messages/thread, clamped 10-1,000, :52), 90/10
+outbound/inbound split (`OutboundRatio`, :38), all outbound messages get a terminal status
+(Delivered/Failed, :106 — never `Queued`, so `DispatcherWorker` never picks any of them up), batched
+inserts via `SeedOutboundMessagesAsync`/`SeedInboundMessagesAsync`/`FlushAsync` (:84-151, chunks of
+2,000, `AutoDetectChangesEnabled=false` during the loop).
+
+**Test-factory overrides**: `Seed:PerformanceMessageCount` is capped to 50
+(`CustomWebApplicationFactory.cs`) / 100 (`MySqlWebApplicationFactory.cs`) — otherwise every
+integration test booting the Api pipeline would also seed 50,000 rows per fixture.
+`PerformanceSeedStepTests` deliberately uses its own isolated `NotifyHubDbContext` instead of either
+factory, to test the step's own idempotency without colliding with the automatic startup seed.
+
+---
+
 ## 5. Key business logic (pure/testable, Domain layer unless noted)
 
 | Rule | File:line | Computes |
@@ -156,6 +195,7 @@ STATUS.md's deviations for the tradeoff.
 | Reminder due-window calculation (FR-009) | `NotifyHub.Domain/Messaging/ReminderDueCalculator.cs:9-10` (`IsDue`) | `now < scheduledAt && now >= scheduledAt.AddHours(-offsetHours)` — true once the offset window opens, false once the appointment has occurred |
 | Reminder trigger-reference build/parse (BR-009/BR-010) | `NotifyHub.Domain/Messaging/ReminderTriggerReference.cs:16-17` (`Build`), `:21-38` (`TryParse`) | Format `appointment:{appointmentId}:reminder:{offsetHours}h:{scheduledAt.Ticks}` — embeds `ScheduledAt` itself (not a version counter, see STATUS.md deviations) so a reschedule always yields a new reference; `TryParse` rejects non-reminder formats (e.g. seed data's `appointment:{id}:created`) |
 | Reminder scheduling + reschedule-supersede (FR-009/BR-003/BR-010) | `NotifyHub.Infrastructure/Reminders/ReminderScheduler.cs` (see §4) | Poll-based supersede-then-create, reusing `outbound_messages`/`IdempotencyKeyGenerator`/`MessageDispatcher` unchanged |
+| Thread message-history pagination (FR-010) | `NotifyHub.Api/Controllers/ThreadsController.cs:89-132` (`GetMessagesPageAsync`) | Merge-paginates `inbound_messages`/`outbound_messages` (independently ordered by `ReceivedAt`/`CreatedAt`) without ever loading a thread's full history: pulls only `skip+pageSize` rows DESC from each table (provably sufficient — see the method's doc comment, :76-88), merges in memory, slices to the requested page, re-sorts ascending for chat reading order. Page 1 = most recent messages. |
 
 **Known related risk, not yet fixed** (logged in STATUS.md's Final review checklist): the
 `Inbound` action's `thread.UnreadCount++` (`WebhooksController.cs`, after `FindOrCreateThreadAsync`
@@ -163,15 +203,21 @@ returns) is a read-then-write across independent DbContext scopes per request, n
 increment — same race category as the thread-duplication bug, unconfirmed whether it's actually
 hit in practice.
 
+**Second known risk, found in step 6 — fixed same step**: `ThreadsController.Detail` used to load
+a thread's entire inbound+outbound message history unpaginated via `.Include()`. Flagged during
+step 6's 50k-seed design as an FR-010 violation, then fixed before step 6 was considered done (see
+the row above and `ThreadsControllerTests.Detail_PaginatesMessages_DoesNotReturnFullHistory` in §7)
+rather than deferred — no longer an open item.
+
 ---
 
 ## 6. Frontend structure (`notifyhub-web/src/`)
 
-**Pages** (`src/pages/`): `LoginPage.tsx` (auth entry), `InboxPage.tsx` (thread list + `ConversationPanel`), `TaskBoardPage.tsx` (status-filtered task list + `NewTaskForm`/`TaskDetailPanel`).
+**Pages** (`src/pages/`): `LoginPage.tsx` (auth entry), `InboxPage.tsx` (thread list + `ConversationPanel`), `TaskBoardPage.tsx` (status-filtered task list + `NewTaskForm`/`TaskDetailPanel`), `TemplatesPage.tsx` (§6b, step 6 — list + create form + inline per-row edit form via a shared `TemplateForm` component defined in the same file), `AuditLogPage.tsx` (§6b, step 6 — role-branches on `user.role`: Admin gets an actor filter + `/api/audit`, Staff gets `/api/audit/mine`; action/date-range filters, paginated table, empty state).
 
 **Components**:
-- `components/layout/AppShell.tsx` — top nav; mounts the single shared `useInboxHub()` connection (:18).
-- `components/inbox/ConversationPanel.tsx` — merged inbound/outbound view, reply, assign, auto-scroll-if-at-bottom.
+- `components/layout/AppShell.tsx` — top nav; mounts the single shared `useInboxHub()` connection (:18). `NAV_LINKS` (:8-13) now includes Templates/Audit log alongside Inbox/Task board.
+- `components/inbox/ConversationPanel.tsx` — merged inbound/outbound view, reply, assign, auto-scroll-if-at-bottom. Messages are paginated server-side (step 6/FR-010): `useThread` only returns page 1 (most recent); local `olderMessages` state (:26) accumulates additional pages fetched directly via `apiClient` (bypassing TanStack Query's cache, since this is an append-only local scrollback) when the "Load earlier messages" button (:146-152, shown while `hasMoreOlder`) is clicked.
 - `components/inbox/CreateTaskForm.tsx` — inline "make task" form.
 - `components/tasks/NewTaskForm.tsx` — thread-picker + priority + due date (no standalone task endpoint).
 - `components/tasks/TaskDetailPanel.tsx` — fetching via `useTask(id)` (:12-19) is what triggers BR-014's server-side revert.
@@ -179,9 +225,11 @@ hit in practice.
 - `components/ui/*` — shadcn primitives (generated).
 
 **Hooks** (`src/hooks/`):
-- `useThreads.ts`: `useThreads()` :7 (list), `useThread(id)` :14 (detail, invalidates `["threads"]` since opening resets unread), `useReplyMutation` :30, `useAssignMutation` :41, `useCreateTaskMutation` :53.
+- `useThreads.ts`: `useThreads()` :7 (list), `useThread(id)` :14 (detail — `messages` is now `PagedResult<ThreadMessageDto>`, page 1 only, step 6/FR-010; invalidates `["threads"]` since opening resets unread), `useReplyMutation` :30, `useAssignMutation` :41, `useCreateTaskMutation` :53.
 - `useTasks.ts`: `useTasks(status?)` :7, `useTask(id)` :21 (triggers BR-014 revert), `useUpdateTaskMutation()` :29.
 - `useInboxHub.ts`: `useInboxHub()` :20 — owns SignalR connection lifecycle + query invalidation.
+- `useAudit.ts` (step 6): `useAuditLog(isAdmin, filters)` — picks `/api/audit` vs `/api/audit/mine` based on `isAdmin`, builds the query string from `actor`/`action`/`from`/`to`/`page`/`pageSize`.
+- `useTemplates.ts` (step 6): `useTemplates()` (list), `useCreateTemplateMutation()`, `useUpdateTemplateMutation()` (PATCH, invalidates `["templates"]`).
 
 **Auth wiring**:
 - `context/AuthContext.tsx` — silent refresh-on-mount effect :41-57 (posts `/api/auth/refresh` with `skipAuth`, httpOnly cookie sent automatically); listens for `"auth:logout"` window event :36-38.
@@ -194,7 +242,7 @@ hit in practice.
 
 **API client**: `lib/apiClient.ts` — JWT attached :46-49; 401 handling :53-68 (de-dupes concurrent refreshes via shared `refreshPromise` :22/:54-58, retries once, else clears token store + dispatches `"auth:logout"` :65-67). Base URL derivation: `lib/apiBaseUrl.ts:9-10` (`${protocol}//${hostname}:5000`, `VITE_API_URL` override available).
 
-**Routing**: `main.tsx:17-21` mounts `BrowserRouter`. Table in `App.tsx:11-22`: `/login` public (:12); `/`→`/inbox` redirect (:15), `/inbox`, `/tasks` (:16-17) all under `<ProtectedRoute>`+`<AppShell>` (:13-14); `*`→`/` (:20).
+**Routing**: `main.tsx:17-21` mounts `BrowserRouter`. Table in `App.tsx:13-26`: `/login` public (:14); `/`→`/inbox` redirect (:17), `/inbox`/`/tasks`/`/templates`/`/audit` (:18-21, last two added step 6) all under `<ProtectedRoute>`+`<AppShell>` (:15-16); `*`→`/` (:24).
 
 ---
 
@@ -207,9 +255,15 @@ Run: `dotnet test NotifyHub.Tests/NotifyHub.Domain.Tests`
 ### Integration (`NotifyHub.Tests/NotifyHub.Integration.Tests/`)
 | Test file | Factory |
 |---|---|
-| `AuthEndpointTests.cs`, `EscalationJobTests.cs`, `InboundWebhookTests.cs`, `MessageDispatcherOptOutTests.cs`, `TasksControllerTests.cs`, `ThreadsControllerTests.cs`, `ReminderSchedulerTests.cs` | `CustomWebApplicationFactory` (EF Core InMemory) |
+| `AuthEndpointTests.cs`, `EscalationJobTests.cs`, `InboundWebhookTests.cs`, `MessageDispatcherOptOutTests.cs`, `TasksControllerTests.cs`, `ThreadsControllerTests.cs`, `ReminderSchedulerTests.cs`, `AuditControllerTests.cs`, `TemplatesControllerTests.cs` | `CustomWebApplicationFactory` (EF Core InMemory) |
 | `OutboundPipelineTests.cs` | `ReliableGatewayWebApplicationFactory` (happy path) / `FailingGatewayWebApplicationFactory` (retry) — both subclass `CustomWebApplicationFactory` |
 | `InboundWebhookThreadRaceMySqlTests.cs` | `MySqlWebApplicationFactory` — real MySQL, `[Trait("Category","MySql")]`, exercises `FindOrCreateThreadAsync`'s race guard under genuine concurrent connections |
+| `PerformanceSeedStepTests.cs` | **No factory** — deliberately builds its own isolated `NotifyHubDbContext` (`UseInMemoryDatabase` with a fresh GUID name) instead of using `CustomWebApplicationFactory`, since that factory's automatic startup seeding (with `PerformanceSeedStep` registered as a real `IDbSeedStep`) would trip this step's own idempotency marker before the test calls `RunAsync` explicitly |
+
+`ThreadsControllerTests.Detail_PaginatesMessages_DoesNotReturnFullHistory` (step 6/FR-010): seeds 60
+messages on one thread, asserts page 1 returns exactly 25 (not the full 60) and that pages 1+2
+combined reconstruct the correct most-recent-50 in chronological order with zero overlap —
+verifies `ThreadsController.GetMessagesPageAsync`'s merge-pagination correctness end-to-end.
 
 Run the fast (InMemory-only) suite: `dotnet test NotifyHub.Tests/NotifyHub.Integration.Tests --filter "Category!=MySql"`
 Run the MySQL-only test (needs `docker compose up -d mysql` locally, or CI's `mysql` service): `dotnet test NotifyHub.Tests/NotifyHub.Integration.Tests --filter "Category=MySql"`
@@ -225,6 +279,6 @@ Run: `docker-compose up -d`, then `cd notifyhub-web && npm run test:e2e` (or the
 ## 8. Known limitations / deviations
 
 See `STATUS.md`:
-- "Documented deviations from PROJECT_CONTEXT.md" — `Cancelled` task status, ad-hoc replies through the dispatcher pipeline, "Blocked" audit action, thread-assignment target validation, escalation fallback Admin selection, escalation poll interval, task-board reassign scope, task creation requiring a thread first, reminder `trigger_reference` format (ticks vs. version counter), reschedule-supersede being poll-based not event-driven (no appointment-management endpoint exists).
+- "Documented deviations from PROJECT_CONTEXT.md" — `Cancelled` task status, ad-hoc replies through the dispatcher pipeline, "Blocked" audit action, thread-assignment target validation, escalation fallback Admin selection, escalation poll interval, task-board reassign scope, task creation requiring a thread first, reminder `trigger_reference` format (ticks vs. version counter), reschedule-supersede being poll-based not event-driven (no appointment-management endpoint exists), `GET /api/audit` being the first Admin-only (not default-authenticated) endpoint, `PATCH /api/templates/{id}` added beyond the literal step-6 work-item list, the 50k seed's thread-spread/status-mix design choices, `PerformanceSeedStep`'s config-driven test-factory caps.
 - "Known limitations (by design, not bugs)" — SignalR broadcasts to all sessions, no stale-"Sending" recovery sweep, `{{appointment_time}}` resolution, Worker not gating on Api migration, no frontend unit test suite.
-- "Final review checklist" — the `UnreadCount` atomicity question noted in §5 above.
+- "Final review checklist" — the `UnreadCount` atomicity question noted in §5 above (still open); the `ThreadsController.Detail` unpaginated-message-history item (also §5) was found and fixed within step 6, no longer open.

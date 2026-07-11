@@ -41,35 +41,19 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
     }
 
     [HttpGet("{id}")]
-    public async Task<ActionResult<ThreadDetailDto>> Detail(long id, CancellationToken ct)
+    public async Task<ActionResult<ThreadDetailDto>> Detail(long id, int page = 1, int pageSize = 25, CancellationToken ct = default)
     {
+        (page, pageSize) = PagedResult<ThreadMessageDto>.Clamp(page, pageSize);
+
         var thread = await db.Threads
             .Include(t => t.Patient)
             .Include(t => t.AssignedStaff)
-            .Include(t => t.InboundMessages)
-            .Include(t => t.OutboundMessages)
             .SingleOrDefaultAsync(t => t.Id == id, ct);
 
         if (thread is null)
             return NotFound();
 
-        var messages = thread.InboundMessages
-            .Select(m => new ThreadMessageDto
-            {
-                Direction = "inbound",
-                Body = m.Body,
-                Timestamp = m.ReceivedAt,
-            })
-            .Concat(thread.OutboundMessages.Select(m => new ThreadMessageDto
-            {
-                Direction = "outbound",
-                SenderType = m.SenderType.ToString(),
-                Body = m.RenderedBody ?? string.Empty,
-                Timestamp = m.CreatedAt,
-                Status = m.Status.ToString(),
-            }))
-            .OrderBy(m => m.Timestamp)
-            .ToList();
+        var messages = await GetMessagesPageAsync(id, page, pageSize, ct);
 
         // §6c: unread count resets to 0 on opening the thread.
         thread.UnreadCount = 0;
@@ -87,6 +71,64 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
             UnreadCount = dto.UnreadCount,
             Messages = messages,
         });
+    }
+
+    /// FR-010: merge-paginates the thread's inbound/outbound messages without loading its
+    /// full history — the previous version's `.Include(InboundMessages).Include
+    /// (OutboundMessages)` pulled every message for the thread on every open, which would
+    /// become a real problem at high per-thread message volume. Page 1 = the most recent
+    /// `pageSize` messages (opening a conversation shows its latest activity, chat-style);
+    /// higher page numbers page backward into older history.
+    ///
+    /// Correctness of pulling only `skip+pageSize` rows per table (instead of everything):
+    /// any message within the top `skip+pageSize` of the true merged-descending order must
+    /// also be within the top `skip+pageSize` of its own table — it can't be preceded by
+    /// that many messages from BOTH tables combined otherwise. So an ORDER BY DESC + LIMIT
+    /// pushed to the database on each table separately is sufficient to correctly answer
+    /// any page, without ever selecting the thread's entire history.
+    private async Task<PagedResult<ThreadMessageDto>> GetMessagesPageAsync(long threadId, int page, int pageSize, CancellationToken ct)
+    {
+        var inboundTotal = await db.InboundMessages.CountAsync(m => m.ThreadId == threadId, ct);
+        var outboundTotal = await db.OutboundMessages.CountAsync(m => m.ThreadId == threadId, ct);
+
+        var skip = (page - 1) * pageSize;
+        var take = skip + pageSize;
+
+        var recentInbound = await db.InboundMessages
+            .Where(m => m.ThreadId == threadId)
+            .OrderByDescending(m => m.ReceivedAt)
+            .Take(take)
+            .Select(m => new ThreadMessageDto { Direction = "inbound", Body = m.Body, Timestamp = m.ReceivedAt })
+            .ToListAsync(ct);
+
+        var recentOutbound = await db.OutboundMessages
+            .Where(m => m.ThreadId == threadId)
+            .OrderByDescending(m => m.CreatedAt)
+            .Take(take)
+            .Select(m => new ThreadMessageDto
+            {
+                Direction = "outbound",
+                SenderType = m.SenderType.ToString(),
+                Body = m.RenderedBody ?? string.Empty,
+                Timestamp = m.CreatedAt,
+                Status = m.Status.ToString(),
+            })
+            .ToListAsync(ct);
+
+        var items = recentInbound.Concat(recentOutbound)
+            .OrderByDescending(m => m.Timestamp)
+            .Skip(skip)
+            .Take(pageSize)
+            .OrderBy(m => m.Timestamp) // chat reading order within the page
+            .ToList();
+
+        return new PagedResult<ThreadMessageDto>
+        {
+            Items = items,
+            Page = page,
+            PageSize = pageSize,
+            TotalCount = inboundTotal + outboundTotal,
+        };
     }
 
     /// BR-001b: server-side opt-out enforcement applies to staff ad-hoc sends too, not

@@ -24,5 +24,7 @@ export interface ThreadMessageDto {
 }
 
 export interface ThreadDetailDto extends ThreadDto {
-  messages: ThreadMessageDto[];
+  // FR-010: paginated, not the thread's full message history. Page 1 = the most recent
+  // `pageSize` messages; higher page numbers page backward into older history.
+  messages: PagedResult<ThreadMessageDto>;
 }

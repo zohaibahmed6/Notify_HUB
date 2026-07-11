@@ -1,8 +1,12 @@
+using NotifyHub.Api.Common;
+
 namespace NotifyHub.Api.Threads.Dtos;
 
 public class ThreadDetailDto : ThreadDto
 {
-    public IReadOnlyList<ThreadMessageDto> Messages { get; set; } = [];
+    /// FR-010: paginated, not the thread's full message history — see
+    /// ThreadsController.GetMessagesPageAsync.
+    public PagedResult<ThreadMessageDto> Messages { get; set; } = new();
 }
 
 /// BR-008: templated (system) and ad-hoc (staff) outbound messages, plus inbound

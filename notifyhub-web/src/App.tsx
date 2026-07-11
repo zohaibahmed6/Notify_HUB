@@ -5,6 +5,8 @@ import AppShell from "@/components/layout/AppShell";
 import LoginPage from "@/pages/LoginPage";
 import InboxPage from "@/pages/InboxPage";
 import TaskBoardPage from "@/pages/TaskBoardPage";
+import TemplatesPage from "@/pages/TemplatesPage";
+import AuditLogPage from "@/pages/AuditLogPage";
 
 export default function App() {
   return (
@@ -15,6 +17,8 @@ export default function App() {
           <Route path="/" element={<Navigate to="/inbox" replace />} />
           <Route path="/inbox" element={<InboxPage />} />
           <Route path="/tasks" element={<TaskBoardPage />} />
+          <Route path="/templates" element={<TemplatesPage />} />
+          <Route path="/audit" element={<AuditLogPage />} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

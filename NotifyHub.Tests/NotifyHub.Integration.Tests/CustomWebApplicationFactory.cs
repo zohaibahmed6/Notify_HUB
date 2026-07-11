@@ -43,6 +43,11 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
                 ["Seed:AdminPassword"] = AdminPassword,
                 ["Seed:StaffUsername"] = StaffUsername,
                 ["Seed:StaffPassword"] = StaffPassword,
+                // FR-010: keep PerformanceSeedStep tiny here — every InMemory integration test
+                // class boots this factory, and the production default (50,000) would make the
+                // whole suite seed 50k rows per fixture. PerformanceSeedStepTests exercises the
+                // real behavior directly with its own explicit count instead.
+                ["Seed:PerformanceMessageCount"] = "50",
                 ["Webhooks:SharedSecret"] = SharedSecret,
                 ["MockGateway:FailRatePercent"] = MockGatewayFailRatePercent.ToString(),
                 ["MockGateway:MinDelayMs"] = "1",
