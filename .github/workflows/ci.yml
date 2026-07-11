@@ -41,6 +41,7 @@ jobs:
         run: dotnet test NotifyHub.sln --no-build -c Release --collect:"XPlat Code Coverage"
         env:
           ConnectionStrings__Default: "Server=127.0.0.1;Port=3306;Database=notifyhub_test;User=root;Password=root;"
+          Jwt__Secret: "ci-test-secret-key-at-least-32-chars-long-0000"
 
       - name: Setup Node
         uses: actions/setup-node@v4
