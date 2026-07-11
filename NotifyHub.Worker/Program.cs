@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using NotifyHub.Infrastructure.Escalation;
 using NotifyHub.Infrastructure.Messaging;
 using NotifyHub.Infrastructure.Persistence;
 using NotifyHub.Worker;
@@ -24,6 +25,9 @@ builder.Services.AddScoped(sp => new MessageDispatcher(
     sp.GetRequiredService<ILogger<MessageDispatcher>>()));
 
 builder.Services.AddHostedService<DispatcherWorker>();
+
+builder.Services.AddScoped<EscalationJob>();
+builder.Services.AddHostedService<EscalationWorker>();
 
 var host = builder.Build();
 host.Run();

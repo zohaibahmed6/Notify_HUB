@@ -36,6 +36,8 @@ services:
       Seed__AdminPassword: ${SEED__ADMINPASSWORD}
       Seed__StaffUsername: ${SEED__STAFFUSERNAME}
       Seed__StaffPassword: ${SEED__STAFFPASSWORD}
+      Seed__Staff2Username: ${SEED__STAFF2USERNAME}
+      Seed__Staff2Password: ${SEED__STAFF2PASSWORD}
       MockGateway__FailRatePercent: ${MOCKGATEWAY__FAILRATEPERCENT}
       MockGateway__MinDelayMs: ${MOCKGATEWAY__MINDELAYMS}
       MockGateway__MaxDelayMs: ${MOCKGATEWAY__MAXDELAYMS}

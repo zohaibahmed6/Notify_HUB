@@ -1,15 +1,21 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 
 import ProtectedRoute from "@/routes/ProtectedRoute";
+import AppShell from "@/components/layout/AppShell";
 import LoginPage from "@/pages/LoginPage";
-import HomePage from "@/pages/HomePage";
+import InboxPage from "@/pages/InboxPage";
+import TaskBoardPage from "@/pages/TaskBoardPage";
 
 export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route element={<ProtectedRoute />}>
-        <Route path="/" element={<HomePage />} />
+        <Route element={<AppShell />}>
+          <Route path="/" element={<Navigate to="/inbox" replace />} />
+          <Route path="/inbox" element={<InboxPage />} />
+          <Route path="/tasks" element={<TaskBoardPage />} />
+        </Route>
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

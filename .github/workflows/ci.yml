@@ -29,11 +29,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: notifyhub-web/package-lock.json
 
-      # Using `npm install` (not `npm ci`) until package-lock.json is committed —
-      # see STATUS.md. Switch to `npm ci` (and restore npm caching here) once it exists.
       - name: Install web dependencies
-        run: npm install
+        run: npm ci
         working-directory: notifyhub-web
 
       - name: Build web

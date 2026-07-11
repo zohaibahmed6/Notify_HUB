@@ -1,9 +1,13 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
+using Microsoft.EntityFrameworkCore;
+using NotifyHub.Api.Inbox;
 using NotifyHub.Api.Webhooks;
 using NotifyHub.Api.Webhooks.Dtos;
 using NotifyHub.Domain.Entities;
 using NotifyHub.Domain.Enums;
+using NotifyHub.Domain.Inbox;
 using NotifyHub.Domain.Messaging;
 using NotifyHub.Infrastructure.Auditing;
 using NotifyHub.Infrastructure.Persistence;
@@ -14,7 +18,7 @@ namespace NotifyHub.Api.Controllers;
 [Route("api/webhooks")]
 [AllowAnonymous]
 [SharedSecret]
-public class WebhooksController(NotifyHubDbContext db) : ControllerBase
+public class WebhooksController(NotifyHubDbContext db, IHubContext<InboxHub> inboxHub) : ControllerBase
 {
     /// FR-002/FR-004: mock gateway's asynchronous delivery receipt. Moves the message
     /// to its terminal Delivered state, or back to Queued with backoff (or terminal
@@ -68,5 +72,71 @@ public class WebhooksController(NotifyHubDbContext db) : ControllerBase
 
         await db.SaveChangesAsync(ct);
         return Ok();
+    }
+
+    /// FR-005/FR-006: simulated patient reply. Routes to the patient's thread
+    /// (find-or-create, race-safe per threads.patient_id unique — BR-012's schema note),
+    /// handles STOP-keyword opt-out (BR-001, BR-006), and pushes a real-time update to
+    /// every connected inbox session (FR-007).
+    [HttpPost("inbound")]
+    public async Task<ActionResult> Inbound(InboundMessageRequest request, CancellationToken ct)
+    {
+        var patient = await db.Patients.SingleOrDefaultAsync(p => p.Phone == request.Phone, ct);
+        if (patient is null)
+            return NotFound();
+
+        var thread = await FindOrCreateThreadAsync(patient.Id, ct);
+        var now = DateTime.UtcNow;
+
+        if (OptOutKeywordMatcher.IsOptOutRequest(request.Body) && patient.OptOutAt is null)
+        {
+            patient.OptOutAt = now;
+            AuditLogger.Add(db, actor: "system", action: "opt-out", entityType: "Patient", entityId: patient.Id,
+                detail: $"received keyword: {request.Body}");
+        }
+
+        db.InboundMessages.Add(new InboundMessage
+        {
+            ThreadId = thread.Id,
+            Body = request.Body,
+            ReceivedAt = now,
+        });
+        thread.UnreadCount++;
+
+        await db.SaveChangesAsync(ct);
+
+        await inboxHub.Clients.All.SendAsync("inboundMessageReceived", new
+        {
+            threadId = thread.Id,
+            patientId = patient.Id,
+            body = request.Body,
+            receivedAt = now,
+        }, ct);
+
+        return Ok();
+    }
+
+    private async Task<ConversationThread> FindOrCreateThreadAsync(long patientId, CancellationToken ct)
+    {
+        var existing = await db.Threads.SingleOrDefaultAsync(t => t.PatientId == patientId, ct);
+        if (existing is not null)
+            return existing;
+
+        var thread = new ConversationThread { PatientId = patientId, UnreadCount = 0 };
+        db.Threads.Add(thread);
+
+        try
+        {
+            await db.SaveChangesAsync(ct);
+            return thread;
+        }
+        catch (DbUpdateException)
+        {
+            // A concurrent request won the race and already created this patient's
+            // thread (threads.patient_id unique index) — detach our failed insert and
+            // read back the one that won.
+            db.Entry(thread).State = EntityState.Detached;
+            return await db.Threads.SingleAsync(t => t.PatientId == patientId, ct);
+        }
     }
 }

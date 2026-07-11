@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using NotifyHub.Api.Extensions;
 using NotifyHub.Api.Gateway;
+using NotifyHub.Api.Inbox;
 using NotifyHub.Domain.Entities;
 using NotifyHub.Infrastructure.Persistence;
 using NotifyHub.Infrastructure.Seed;
@@ -51,12 +52,14 @@ builder.Services.AddDbContext<NotifyHubDbContext>(options =>
 builder.Services.AddSingleton<IPasswordHasher<User>, PasswordHasher<User>>();
 
 builder.Services.AddScoped<IDbSeedStep, UserSeedStep>();
+builder.Services.AddScoped<IDbSeedStep, SecondStaffSeedStep>();
 builder.Services.AddScoped<IDbSeedStep, PatientAppointmentSeedStep>();
 builder.Services.AddScoped<IDbSeedStep, TemplateSeedStep>();
 builder.Services.AddScoped<IDbSeedStep, DemoOutboundMessageSeedStep>();
 builder.Services.AddScoped<DbSeedRunner>();
 
 builder.Services.AddNotifyHubJwtAuth(builder.Configuration);
+builder.Services.AddSignalR();
 
 builder.Services.Configure<MockGatewayOptions>(builder.Configuration.GetSection(MockGatewayOptions.SectionName));
 builder.Services.AddHttpClient("self", (services, client) =>
@@ -114,6 +117,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+app.MapHub<InboxHub>("/hubs/inbox");
 
 app.Run();
 

@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using NotifyHub.Domain.Entities;
 using NotifyHub.Domain.Enums;
 using NotifyHub.Domain.Messaging;
+using NotifyHub.Infrastructure.Auditing;
 using NotifyHub.Infrastructure.Persistence;
 
 namespace NotifyHub.Infrastructure.Messaging;
@@ -35,9 +36,28 @@ public class MessageDispatcher(NotifyHubDbContext db, HttpClient gatewayClient, 
 
     private async Task DispatchOneAsync(OutboundMessage message, CancellationToken ct)
     {
-        // Rendered here, at send time (not at creation), so history reflects the
-        // template as it stood at the moment of send (BR-013).
-        message.RenderedBody = await RenderAsync(message, ct);
+        // BR-001a: checked immediately before calling the gateway, not only at
+        // message-creation time, so a STOP arriving after a message is queued still
+        // blocks it. Applies to both system-dispatched and staff ad-hoc messages.
+        if (message.Patient.OptOutAt is not null)
+        {
+            message.Status = MessageStatus.Failed;
+            message.NextRetryAt = null;
+            AuditLogger.Add(db, actor: "system", action: "blocked", entityType: "OutboundMessage", entityId: message.Id,
+                detail: "patient opted out, message not sent");
+            await db.SaveChangesAsync(ct);
+            return;
+        }
+
+        // Ad-hoc staff replies (TemplateId null) already have RenderedBody set directly
+        // at creation — there's no template to render at send time (BR-008).
+        if (message.TemplateId is not null)
+        {
+            // Rendered here, at send time (not at creation), so history reflects the
+            // template as it stood at the moment of send (BR-013).
+            message.RenderedBody = await RenderAsync(message, ct);
+        }
+
         message.Status = MessageStatus.Sending;
         await db.SaveChangesAsync(ct);
 

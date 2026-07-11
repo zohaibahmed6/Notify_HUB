@@ -9,10 +9,13 @@ public class OutboundMessage
     public long PatientId { get; set; }
     public Patient Patient { get; set; } = default!;
 
-    /// Null until threads exist (step 3) — see STATUS.md documented deviation.
+    /// Null for system-dispatched messages created before a thread exists for the patient
+    /// (e.g. seeded demo messages); set once a thread is found-or-created (step 3+).
     public long? ThreadId { get; set; }
+    public ConversationThread? Thread { get; set; }
 
-    /// Null means an ad-hoc staff reply (no template) — see BR-008.
+    /// Null means an ad-hoc staff reply (no template) — see BR-008. Ad-hoc replies have
+    /// RenderedBody set directly at creation (no template to render at send time).
     public long? TemplateId { get; set; }
     public MessageTemplate? Template { get; set; }
 

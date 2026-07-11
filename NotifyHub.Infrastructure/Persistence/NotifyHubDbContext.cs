@@ -13,6 +13,9 @@ public class NotifyHubDbContext(DbContextOptions<NotifyHubDbContext> options) : 
     public DbSet<OutboundMessage> OutboundMessages => Set<OutboundMessage>();
     public DbSet<DeliveryStatusHistory> DeliveryStatusHistories => Set<DeliveryStatusHistory>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<ConversationThread> Threads => Set<ConversationThread>();
+    public DbSet<InboundMessage> InboundMessages => Set<InboundMessage>();
+    public DbSet<TaskItem> Tasks => Set<TaskItem>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

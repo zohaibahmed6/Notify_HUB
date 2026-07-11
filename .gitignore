@@ -12,6 +12,7 @@ obj/
 node_modules/
 notifyhub-web/dist/
 notifyhub-web/.vite/
+*.tsbuildinfo
 
 # Env files
 .env

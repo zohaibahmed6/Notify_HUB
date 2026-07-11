@@ -250,7 +250,7 @@ Phone: synthetic E.164-like format. Template body: non-empty, max 1000 character
 | Pagination default page size | 25 (max 100) |
 | Docker ports | api: 5000, web: 5173, mysql: 3306 (adjust freely — not graded) |
 | Status enums — `outbound_messages.status` | `queued`, `sending`, `sent`, `delivered`, `failed` |
-| Status enums — `tasks.status` | `open`, `in_progress`, `completed`, `escalated` |
+| Status enums — `tasks.status` | `open`, `in_progress`, `completed`, `escalated`, `cancelled` (added during the inbound-routing/task-engine build — BR-007b requires a way to end a recurring series without completing it, which the original 4-value list had no state for) |
 | Status enums — `tasks.priority` | `low`, `medium`, `high`, `urgent` |
 | Status enums — `message_templates.trigger_type` | `appointment_reminder`, `medication_alert`, `prescription_alert` |
 | Timestamp storage | All timestamps stored UTC; frontend converts to local for display |
@@ -303,6 +303,7 @@ Seed scale: 50,000 messages (explicit). Paginated + indexed inbox (explicit). St
 | Session 1 | Architecture/dev/UX final pass: threads.patient_id unique + find-or-create (prevents duplicate-thread race), default task priority=medium on auto-creation, EF Core auto-migrate on startup + MySQL healthcheck/depends_on for docker-compose reliability, one-time seed step (no re-seed on restart), RFC 7807 ProblemDetails error format, consistent toast notification pattern across screens | Zohaib |
 | Build session | Ambiguity flagged by Claude Code during implementation: §6a/§8/§11a contradiction on refresh flow. Resolved: dedicated POST /api/auth/refresh with refresh token rotation (refresh_tokens table added, old token revoked on each use) | Zohaib |
 | Build session (step 2) | Ambiguity flagged: BR-011 "5 attempts" vs FR-003's 5 backoff values left one unused. Resolved: 6 total attempts (1 initial + 5 retries), all 5 backoff values used | Zohaib |
+| Build session (step 4) | Gap flagged: §11a's 4-value tasks.status enum has no state satisfying BR-007b ("cancelling ends the series"). Resolved: added `cancelled` as a 5th value | Zohaib |
 
 *Append new decisions here — do not rewrite history.*
 

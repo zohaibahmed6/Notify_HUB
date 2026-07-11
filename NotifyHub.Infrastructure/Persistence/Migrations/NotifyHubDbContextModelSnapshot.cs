@@ -89,6 +89,33 @@ namespace NotifyHub.Infrastructure.Persistence.Migrations
                     b.ToTable("audit_log", (string)null);
                 });
 
+            modelBuilder.Entity("NotifyHub.Domain.Entities.ConversationThread", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<long?>("AssignedStaffId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("PatientId")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("UnreadCount")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AssignedStaffId");
+
+                    b.HasIndex("PatientId")
+                        .IsUnique();
+
+                    b.ToTable("threads", (string)null);
+                });
+
             modelBuilder.Entity("NotifyHub.Domain.Entities.DeliveryStatusHistory", b =>
                 {
                     b.Property<long>("Id")
@@ -113,6 +140,32 @@ namespace NotifyHub.Infrastructure.Persistence.Migrations
                     b.HasIndex("MessageId");
 
                     b.ToTable("delivery_status_history", (string)null);
+                });
+
+            modelBuilder.Entity("NotifyHub.Domain.Entities.InboundMessage", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("Body")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("varchar(1000)");
+
+                    b.Property<DateTime>("ReceivedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<long>("ThreadId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ThreadId", "ReceivedAt");
+
+                    b.ToTable("inbound_messages", (string)null);
                 });
 
             modelBuilder.Entity("NotifyHub.Domain.Entities.MessageTemplate", b =>
@@ -205,6 +258,8 @@ namespace NotifyHub.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("Status", "NextRetryAt");
 
+                    b.HasIndex("ThreadId", "CreatedAt");
+
                     b.ToTable("outbound_messages", (string)null);
                 });
 
@@ -275,6 +330,64 @@ namespace NotifyHub.Infrastructure.Persistence.Migrations
                     b.ToTable("refresh_tokens", (string)null);
                 });
 
+            modelBuilder.Entity("NotifyHub.Domain.Entities.TaskItem", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<long?>("AssignedStaffId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("DueAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<bool>("IsRecurring")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<int>("OccurrenceCount")
+                        .HasColumnType("int");
+
+                    b.Property<long>("OriginalOwnerId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Priority")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)");
+
+                    b.Property<DateTime?>("RecurrenceEndDate")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<int?>("RecurrenceIntervalDays")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("RecurrenceMaxOccurrences")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)");
+
+                    b.Property<long>("ThreadId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AssignedStaffId");
+
+                    b.HasIndex("OriginalOwnerId");
+
+                    b.HasIndex("ThreadId");
+
+                    b.HasIndex("Status", "DueAt");
+
+                    b.ToTable("tasks", (string)null);
+                });
+
             modelBuilder.Entity("NotifyHub.Domain.Entities.User", b =>
                 {
                     b.Property<long>("Id")
@@ -317,6 +430,24 @@ namespace NotifyHub.Infrastructure.Persistence.Migrations
                     b.Navigation("Patient");
                 });
 
+            modelBuilder.Entity("NotifyHub.Domain.Entities.ConversationThread", b =>
+                {
+                    b.HasOne("NotifyHub.Domain.Entities.User", "AssignedStaff")
+                        .WithMany()
+                        .HasForeignKey("AssignedStaffId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("NotifyHub.Domain.Entities.Patient", "Patient")
+                        .WithMany()
+                        .HasForeignKey("PatientId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("AssignedStaff");
+
+                    b.Navigation("Patient");
+                });
+
             modelBuilder.Entity("NotifyHub.Domain.Entities.DeliveryStatusHistory", b =>
                 {
                     b.HasOne("NotifyHub.Domain.Entities.OutboundMessage", "Message")
@@ -326,6 +457,17 @@ namespace NotifyHub.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("Message");
+                });
+
+            modelBuilder.Entity("NotifyHub.Domain.Entities.InboundMessage", b =>
+                {
+                    b.HasOne("NotifyHub.Domain.Entities.ConversationThread", "Thread")
+                        .WithMany("InboundMessages")
+                        .HasForeignKey("ThreadId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Thread");
                 });
 
             modelBuilder.Entity("NotifyHub.Domain.Entities.OutboundMessage", b =>
@@ -341,9 +483,16 @@ namespace NotifyHub.Infrastructure.Persistence.Migrations
                         .HasForeignKey("TemplateId")
                         .OnDelete(DeleteBehavior.Restrict);
 
+                    b.HasOne("NotifyHub.Domain.Entities.ConversationThread", "Thread")
+                        .WithMany("OutboundMessages")
+                        .HasForeignKey("ThreadId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.Navigation("Patient");
 
                     b.Navigation("Template");
+
+                    b.Navigation("Thread");
                 });
 
             modelBuilder.Entity("NotifyHub.Domain.Entities.RefreshToken", b =>
@@ -355,6 +504,41 @@ namespace NotifyHub.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("NotifyHub.Domain.Entities.TaskItem", b =>
+                {
+                    b.HasOne("NotifyHub.Domain.Entities.User", "AssignedStaff")
+                        .WithMany()
+                        .HasForeignKey("AssignedStaffId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("NotifyHub.Domain.Entities.User", "OriginalOwner")
+                        .WithMany()
+                        .HasForeignKey("OriginalOwnerId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("NotifyHub.Domain.Entities.ConversationThread", "Thread")
+                        .WithMany("Tasks")
+                        .HasForeignKey("ThreadId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("AssignedStaff");
+
+                    b.Navigation("OriginalOwner");
+
+                    b.Navigation("Thread");
+                });
+
+            modelBuilder.Entity("NotifyHub.Domain.Entities.ConversationThread", b =>
+                {
+                    b.Navigation("InboundMessages");
+
+                    b.Navigation("OutboundMessages");
+
+                    b.Navigation("Tasks");
                 });
 
             modelBuilder.Entity("NotifyHub.Domain.Entities.MessageTemplate", b =>

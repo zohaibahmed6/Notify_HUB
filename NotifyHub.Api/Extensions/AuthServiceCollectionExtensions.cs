@@ -39,6 +39,25 @@ public static class AuthServiceCollectionExtensions
                     ValidateLifetime = true,
                     ClockSkew = TimeSpan.FromSeconds(30),
                 };
+
+                // SignalR's browser client can't set an Authorization header on the
+                // WebSocket handshake, so the JWT is passed as an "access_token" query
+                // param instead (standard SignalR pattern, §6a) — only honored for the
+                // hub path, so this doesn't weaken auth on the regular API routes.
+                bearerOptions.Events = new JwtBearerEvents
+                {
+                    OnMessageReceived = context =>
+                    {
+                        var accessToken = context.Request.Query["access_token"];
+                        if (!string.IsNullOrEmpty(accessToken) &&
+                            context.HttpContext.Request.Path.StartsWithSegments("/hubs"))
+                        {
+                            context.Token = accessToken;
+                        }
+
+                        return Task.CompletedTask;
+                    },
+                };
             });
 
         // Every endpoint requires authorization by default; [AllowAnonymous] opts individual
