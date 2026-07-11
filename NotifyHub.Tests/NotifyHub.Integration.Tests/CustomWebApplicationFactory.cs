@@ -9,10 +9,10 @@ using NotifyHub.Infrastructure.Persistence;
 namespace NotifyHub.Integration.Tests;
 
 /// Boots the real Api pipeline (routing, auth, controllers) against an EF Core
-/// InMemory database instead of MySQL, so the FR-013 integration test doesn't
-/// require a live database. A real MySQL service container is expected to be
-/// added in step 2 for the dispatch-pipeline test, which needs relational
-/// unique-constraint behavior.
+/// InMemory database instead of MySQL, so most integration tests don't require a
+/// live database. For the one test that needs genuine relational unique-constraint/
+/// locking behavior (the FindOrCreateThreadAsync race guard), see
+/// MySqlWebApplicationFactory / InboundWebhookThreadRaceMySqlTests instead.
 public class CustomWebApplicationFactory : WebApplicationFactory<Program>
 {
     private readonly string _dbName = $"notifyhub-test-{Guid.NewGuid()}";

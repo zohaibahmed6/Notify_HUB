@@ -10,7 +10,8 @@ var connectionString = builder.Configuration.GetConnectionString("Default")
     ?? throw new InvalidOperationException("Missing required configuration: ConnectionStrings:Default");
 
 builder.Services.AddDbContext<NotifyHubDbContext>(options =>
-    options.UseMySql(connectionString, new MySqlServerVersion(new Version(8, 0, 35))));
+    options.UseMySql(connectionString, new MySqlServerVersion(new Version(8, 0, 35)),
+        mySqlOptions => mySqlOptions.EnableRetryOnFailure()));
 
 builder.Services.AddHttpClient("gateway", (services, client) =>
 {
