@@ -66,11 +66,37 @@ public class InboundWebhookThreadRaceMySqlTests(MySqlWebApplicationFactory facto
         Assert.Equal(1, await db.Threads.CountAsync(t => t.PatientId == _patientId));
 
         // Each InboundMessage insert is independent (no shared mutable state), so this
-        // count is safe to assert exactly — unlike thread.UnreadCount, which each
-        // request increments via its own untracked DbContext scope and is a separate,
-        // expected lost-update race unrelated to what this test targets.
+        // count is safe to assert exactly. thread.UnreadCount's own concurrent-increment
+        // race is covered separately below (ConcurrentInbound_ForExistingThread_...), since
+        // this test's first requests also race on thread *creation*, which would confound
+        // a same-test UnreadCount assertion.
         var thread = await db.Threads.SingleAsync(t => t.PatientId == _patientId);
         Assert.Equal(ConcurrentRequests, await db.InboundMessages.CountAsync(m => m.ThreadId == thread.Id));
+    }
+
+    [Fact]
+    public async Task ConcurrentInbound_ForExistingThread_IncrementsUnreadCountExactlyN()
+    {
+        // Seed the thread deterministically first (sequential call) so every one of the
+        // N concurrent requests below hits the "existing thread" fast path only — this
+        // isolates the UnreadCount increment race from FindOrCreateThreadAsync's separate
+        // thread-creation race, already covered above.
+        await PostInboundAsync(_phone, "seed message");
+
+        var responses = await Task.WhenAll(Enumerable.Range(0, ConcurrentRequests)
+            .Select(_ => PostInboundAsync(_phone, "concurrent unread test message")));
+
+        Assert.All(responses, r => Assert.Equal(HttpStatusCode.OK, r.StatusCode));
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
+
+        // WebhooksController.Inbound now increments UnreadCount via ExecuteUpdateAsync's
+        // atomic SetProperty(t => t.UnreadCount, t => t.UnreadCount + 1) rather than a
+        // read-modify-write on a tracked entity — this is the assertion that would fail
+        // (land short of ConcurrentRequests + 1) against the old lost-update code.
+        var thread = await db.Threads.SingleAsync(t => t.PatientId == _patientId);
+        Assert.Equal(ConcurrentRequests + 1, thread.UnreadCount);
     }
 
     private async Task<HttpResponseMessage> PostInboundAsync(string phone, string body)

@@ -5,9 +5,10 @@ Reality-first: what's actually implemented, with file:line citations. Not a rest
 `PROJECT_CONTEXT.md` (spec) and `STATUS.md` (build log, deviations, known limitations). If this
 file ever contradicts the code, the code wins — fix this file and flag the discrepancy.
 
-Last verified against commit `6b64f31` (2026-07-11/12 session), plus step 6 additions
-(audit endpoints, `PerformanceSeedStep`, Templates/Audit screens) made this session — **not
-yet committed**, file:line citations below verified against the working tree.
+Last verified against commit `1c6c47b` (step 6, committed and reviewed) plus step 7's
+documentation additions (README, ADRs, security/AI-log docs, coverage report) and step 7's
+fix rounds (CI dependency-vulnerability scan + vulnerable transitive package pins;
+`WebhooksController.Inbound`'s `UnreadCount` increment made atomic) — none yet committed.
 
 ---
 
@@ -197,11 +198,20 @@ factory, to test the step's own idempotency without colliding with the automatic
 | Reminder scheduling + reschedule-supersede (FR-009/BR-003/BR-010) | `NotifyHub.Infrastructure/Reminders/ReminderScheduler.cs` (see §4) | Poll-based supersede-then-create, reusing `outbound_messages`/`IdempotencyKeyGenerator`/`MessageDispatcher` unchanged |
 | Thread message-history pagination (FR-010) | `NotifyHub.Api/Controllers/ThreadsController.cs:89-132` (`GetMessagesPageAsync`) | Merge-paginates `inbound_messages`/`outbound_messages` (independently ordered by `ReceivedAt`/`CreatedAt`) without ever loading a thread's full history: pulls only `skip+pageSize` rows DESC from each table (provably sufficient — see the method's doc comment, :76-88), merges in memory, slices to the requested page, re-sorts ascending for chat reading order. Page 1 = most recent messages. |
 
-**Known related risk, not yet fixed** (logged in STATUS.md's Final review checklist): the
-`Inbound` action's `thread.UnreadCount++` (`WebhooksController.cs`, after `FindOrCreateThreadAsync`
-returns) is a read-then-write across independent DbContext scopes per request, not an atomic
-increment — same race category as the thread-duplication bug, unconfirmed whether it's actually
-hit in practice.
+**Fixed** (was logged in STATUS.md's Final review checklist as an open item): the `Inbound`
+action's `thread.UnreadCount` increment (`WebhooksController.cs:104-118`, after
+`FindOrCreateThreadAsync` returns) was confirmed to be read-then-write on a tracked entity — a
+genuine lost-update race under concurrent inbound webhooks for the same thread, same race category
+as the (already-fixed) thread-duplication bug. Fixed via EF Core's atomic `ExecuteUpdateAsync`:
+`db.Threads.Where(t => t.Id == thread.Id).ExecuteUpdateAsync(s => s.SetProperty(t => t.UnreadCount, t => t.UnreadCount + 1), ct)`
+— a single `UPDATE ... SET UnreadCount = UnreadCount + 1` per request, no read-modify-write window
+— for real database providers. The InMemory provider (used by the fast test suite) can't translate
+`ExecuteUpdate`'s `SetProperty` (throws `InvalidOperationException`), so the action branches on
+`db.Database.ProviderName` and keeps the old tracked increment there — safe, since InMemory tests
+are single-request and never exercise the race. Proven atomic by
+`InboundWebhookThreadRaceMySqlTests.ConcurrentInbound_ForExistingThread_IncrementsUnreadCountExactlyN`
+(real MySQL, 30 concurrent requests against one pre-existing thread, asserts `UnreadCount` lands at
+exactly 31).
 
 **Second known risk, found in step 6 — fixed same step**: `ThreadsController.Detail` used to load
 a thread's entire inbound+outbound message history unpaginated via `.Include()`. Flagged during
@@ -276,9 +286,17 @@ Run: `docker-compose up -d`, then `cd notifyhub-web && npm run test:e2e` (or the
 
 ---
 
+## 8a. Documentation (step 7, FR-012/013/014/015/016/017/018/019)
+
+- `README.md` — project overview, one-command run, screens, test/coverage commands, documentation index.
+- `docs/adr/0001-outbound-queue.md`, `0002-dispatcher-hosting.md`, `0003-rbac-model.md` (FR-016).
+- `docs/SECURITY.md` (FR-018) — OWASP Top-10 self-assessment + sub-criteria (a)-(e), citing the actual auth/validation/EF-parameterization/secrets code.
+- `docs/AI_USAGE_LOG.md` (FR-019).
+- `docs/coverage/DOMAIN_COVERAGE.md` (FR-013) — methodology + per-class breakdown for the measured 94.2% line-coverage figure on `NotifyHub.Domain` (both `Domain.Tests` and `Integration.Tests` runs merged via `dotnet-reportgenerator-globaltool`, filtered to `NotifyHub.Domain.*`).
+
 ## 8. Known limitations / deviations
 
 See `STATUS.md`:
 - "Documented deviations from PROJECT_CONTEXT.md" — `Cancelled` task status, ad-hoc replies through the dispatcher pipeline, "Blocked" audit action, thread-assignment target validation, escalation fallback Admin selection, escalation poll interval, task-board reassign scope, task creation requiring a thread first, reminder `trigger_reference` format (ticks vs. version counter), reschedule-supersede being poll-based not event-driven (no appointment-management endpoint exists), `GET /api/audit` being the first Admin-only (not default-authenticated) endpoint, `PATCH /api/templates/{id}` added beyond the literal step-6 work-item list, the 50k seed's thread-spread/status-mix design choices, `PerformanceSeedStep`'s config-driven test-factory caps.
 - "Known limitations (by design, not bugs)" — SignalR broadcasts to all sessions, no stale-"Sending" recovery sweep, `{{appointment_time}}` resolution, Worker not gating on Api migration, no frontend unit test suite.
-- "Final review checklist" — the `UnreadCount` atomicity question noted in §5 above (still open); the `ThreadsController.Detail` unpaginated-message-history item (also §5) was found and fixed within step 6, no longer open.
+- "Final review checklist" — both items are now closed: the `UnreadCount` atomicity question (§5 above) was confirmed to be a real read-then-write race and fixed with `ExecuteUpdateAsync`; the `ThreadsController.Detail` unpaginated-message-history item (also §5) was found and fixed within step 6. Nothing remains open.

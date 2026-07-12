@@ -101,9 +101,27 @@ public class WebhooksController(NotifyHubDbContext db, IHubContext<InboxHub> inb
             Body = request.Body,
             ReceivedAt = now,
         });
-        thread.UnreadCount++;
 
         await db.SaveChangesAsync(ct);
+
+        // Atomic UPDATE threads SET UnreadCount = UnreadCount + 1, not a read-modify-write
+        // on the tracked entity — otherwise concurrent inbound webhooks for the same thread
+        // can lose updates (both read the same starting value, both write the same +1 result).
+        // ExecuteUpdateAsync's SetProperty can't be translated by the InMemory provider (used
+        // by the fast test suite), which never exercises real concurrency anyway, so fall back
+        // to the tracked increment there. Checked by provider name (not IsInMemory(), which
+        // needs a package reference to Microsoft.EntityFrameworkCore.InMemory that this
+        // project doesn't otherwise have) to avoid a test-only dependency in production code.
+        if (db.Database.ProviderName == "Microsoft.EntityFrameworkCore.InMemory")
+        {
+            thread.UnreadCount++;
+            await db.SaveChangesAsync(ct);
+        }
+        else
+        {
+            await db.Threads.Where(t => t.Id == thread.Id)
+                .ExecuteUpdateAsync(s => s.SetProperty(t => t.UnreadCount, t => t.UnreadCount + 1), ct);
+        }
 
         await inboxHub.Clients.All.SendAsync("inboundMessageReceived", new
         {

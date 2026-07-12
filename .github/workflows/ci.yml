@@ -57,3 +57,13 @@ jobs:
       - name: Build web
         run: npm run build
         working-directory: notifyhub-web
+
+      - name: Dependency vulnerability scan (.NET)
+        run: |
+          output=$(dotnet list NotifyHub.sln package --vulnerable --include-transitive 2>&1)
+          echo "$output"
+          ! echo "$output" | grep -q "has the following vulnerable packages"
+
+      - name: Dependency vulnerability scan (npm)
+        run: npm audit --audit-level=high
+        working-directory: notifyhub-web

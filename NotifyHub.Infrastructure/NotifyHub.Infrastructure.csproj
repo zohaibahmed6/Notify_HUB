@@ -11,6 +11,9 @@
     </PackageReference>
     <PackageReference Include="Microsoft.Extensions.Identity.Core" Version="8.0.10" />
     <PackageReference Include="Pomelo.EntityFrameworkCore.MySql" Version="8.0.2" />
+    <!-- Pin vulnerable transitive deps (GHSA-qj66-m88j-hmgj, GHSA-hh2w-p6rv-4g7w, GHSA-8g4q-xg66-9fp4) to patched versions -->
+    <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="8.0.1" />
+    <PackageReference Include="System.Text.Json" Version="8.0.6" />
   </ItemGroup>
 
   <PropertyGroup>
