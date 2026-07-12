@@ -9,6 +9,17 @@ import { Label } from "@/components/ui/label";
 const ACTIONS = ["All", "send", "receipt", "opt-out", "assignment", "escalation", "blocked", "superseded"];
 const PAGE_SIZE = 25;
 
+// <input type="date"> always takes/returns yyyy-mm-dd regardless of locale.
+function toDateInputValue(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function defaultFrom(): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - 7);
+  return toDateInputValue(d);
+}
+
 // §6b: Admin sees the full log (any actor); Staff sees only their own actions via
 // /api/audit/mine — the server enforces this (§8), the client just doesn't render an
 // actor filter for Staff since it wouldn't do anything.
@@ -18,15 +29,19 @@ export default function AuditLogPage() {
 
   const [actor, setActor] = useState("");
   const [action, setAction] = useState("All");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  // Default to the last 7 days (inclusive of today) instead of unfiltered history.
+  const [from, setFrom] = useState(defaultFrom);
+  const [to, setTo] = useState(() => toDateInputValue(new Date()));
   const [page, setPage] = useState(1);
 
   const { data, isLoading } = useAuditLog(isAdmin, {
     actor: isAdmin && actor ? actor : undefined,
     action: action === "All" ? undefined : action,
     from: from ? new Date(from).toISOString() : undefined,
-    to: to ? new Date(to).toISOString() : undefined,
+    // Date input gives a day, not an instant — "to" must mean the end of that day
+    // (23:59:59.999 UTC), otherwise it collapses to the same midnight as "from" and a
+    // same-day range (e.g. from=to=2026-07-12) matches nothing.
+    to: to ? new Date(`${to}T23:59:59.999Z`).toISOString() : undefined,
     page,
     pageSize: PAGE_SIZE,
   });

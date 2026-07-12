@@ -162,7 +162,9 @@ All registered as `IDbSeedStep` in `NotifyHub.Api/Program.cs` (:55-61) and run u
 Api startup (`Program.cs` :105-106), including in every integration test that boots the Api
 pipeline — no environment gating. Order: `UserSeedStep` → `SecondStaffSeedStep` →
 `PatientAppointmentSeedStep` (10 demo patients+appointments) → `TemplateSeedStep` (4 templates) →
-`DemoOutboundMessageSeedStep` (5 demo messages) → `PerformanceSeedStep` (step 6, FR-010).
+`DemoOutboundMessageSeedStep` (10 demo messages: 5 appointment-reminder + 3 medication + 2 prescription, `DemoOutboundMessageSeedStep.cs:32-49` — corrected from a stale "5" here) → `PerformanceSeedStep` (step 6, FR-010, 45,000 outbound + 5,000 inbound at the default `targetMessageCount=50,000`, `OutboundRatio=0.9`).
+
+Deterministic seed-only baseline for `outbound_messages`: 45,000 (perf) + 10 (demo) = 45,010. Any count above that is expected, not a seeding bug: `ReminderScheduler.CreateDueRemindersAsync` (`NotifyHub.Infrastructure/Reminders/ReminderScheduler.cs:121-133`) keeps inserting new rows over wall-clock time for the 10 real `PatientAppointmentSeedStep` appointments as their 48h/2h reminder windows open (up to 2 per appointment) — distinguish via `TriggerReference` prefix: `perfseed:*` (45,000), `appointment:*:created`/`medication:*:seed`/`prescription:*:seed` (10), `appointment:*:reminder:*h:*` (live, growing).
 
 `PerformanceSeedStep` (`NotifyHub.Infrastructure/Seed/PerformanceSeedStep.cs:31-151`) — constructor
 parameter `targetMessageCount` (default 50,000), read from config key `Seed:PerformanceMessageCount`
@@ -223,7 +225,7 @@ rather than deferred — no longer an open item.
 
 ## 6. Frontend structure (`notifyhub-web/src/`)
 
-**Pages** (`src/pages/`): `LoginPage.tsx` (auth entry), `InboxPage.tsx` (thread list + `ConversationPanel`), `TaskBoardPage.tsx` (status-filtered task list + `NewTaskForm`/`TaskDetailPanel`), `TemplatesPage.tsx` (§6b, step 6 — list + create form + inline per-row edit form via a shared `TemplateForm` component defined in the same file), `AuditLogPage.tsx` (§6b, step 6 — role-branches on `user.role`: Admin gets an actor filter + `/api/audit`, Staff gets `/api/audit/mine`; action/date-range filters, paginated table, empty state).
+**Pages** (`src/pages/`): `LoginPage.tsx` (auth entry), `InboxPage.tsx` (thread list + `ConversationPanel`), `TaskBoardPage.tsx` (status-filtered task list + `NewTaskForm`/`TaskDetailPanel`), `TemplatesPage.tsx` (§6b, step 6 — list + create form + inline per-row edit form via a shared `TemplateForm` component defined in the same file), `AuditLogPage.tsx` (§6b, step 6 — role-branches on `user.role`: Admin gets an actor filter + `/api/audit`, Staff gets `/api/audit/mine`; action/date-range filters, paginated table, empty state). Date range: `from`/`to` are `<input type="date">` (day-granularity), defaulting on mount to the last 7 days (`from` = today-7, `to` = today, via `defaultFrom`/`toDateInputValue`). Converted to instants for the query string as UTC midnight for `from` and `T23:59:59.999Z` for `to` (`AuditLogPage.tsx:28-32`) — `to` must mean end-of-day, not start-of-day, otherwise a same-day `from`==`to` range collapses to one instant and matches nothing against `AuditController.QueryAsync`'s `OccurredAt <= to.Value` (:53-54).
 
 **Components**:
 - `components/layout/AppShell.tsx` — top nav; mounts the single shared `useInboxHub()` connection (:18). `NAV_LINKS` (:8-13) now includes Templates/Audit log alongside Inbox/Task board.
