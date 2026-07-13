@@ -4,6 +4,15 @@
 This file previously used a self-inferred 6-step breakdown that combined skeleton+auth into one step. Corrected against your actual plan (confirmed 2026-07-11): **1**=skeleton, **2**=auth, **3**=outbound pipeline (FR-001–004), **4**=inbound routing + task engine (FR-005–008), **5**=reminders (FR-009), **6**=audit + 50k seed (FR-010/011), **7**=docs/ADR/OWASP/AI-log (FR-012–019/FR-016–019). What this file previously labeled "Step 2" was actually step 3, and "Step 3" was actually step 4 — relabeled below; git commit messages from before this correction still say "step 2" and are left as-is (historical record, not rewritten).
 
 ## Current step
+Step 8 (2026-07-13/14, this session) — a large post-step-7 feature set requested directly by
+Zohaib (not numbered FR-xxx in `PROJECT_CONTEXT.md` — a fresh, informally-specified functional
+requirements list covering Task module enhancements, a Dashboard, branding, UI redesign lock-in,
+Template bookmarks, messaging (scheduling/quiet hours/rate limiting/new-patient SMS), User
+Management, a full Settings module, realistic seed data, and a top-nav task widget). Implemented
+as 14 small, independently-committed, independently-tested increments — see "Step 8 checklist"
+below. All 14 committed; nothing left open.
+
+## Current step (historical, step 7)
 Step 7 of 7 (docs) — README, 3 ADRs, OWASP self-assessment, AI usage log, FR-013 coverage number. Step 6 was reviewed and confirmed working (audit log correct for both roles, pagination/filters work, 50k seed correctly skips the live dispatcher) and is committed (`1c6c47b`). See "Step 7 checklist" below.
 
 ## Step 4 bug-fix + e2e round
@@ -78,6 +87,132 @@ Test fixtures use Playwright's `request` fixture to hit the API directly (create
 - [x] **Step 7 fix round, per Zohaib's review**: (1) checked whether Swagger needed gating behind `IsDevelopment()` — it already was (`Program.cs:114-118`), so `docs/SECURITY.md`'s A05 note was corrected instead of touching code (it's reachable in this build only because `docker-compose.yml` sets `ASPNETCORE_ENVIRONMENT=Development`). (2) Added a real dependency-vulnerability scan to CI (`dotnet list package --vulnerable --include-transitive` + `npm audit --audit-level=high`, both gating the build) — running it surfaced 4 genuine pre-existing High-severity transitive advisories (`Microsoft.Extensions.Caching.Memory 8.0.0`, `System.Text.Json 8.0.0` ×2, `System.Net.Http 4.3.0`, `System.Text.RegularExpressions 4.3.0`), not hypothetical ones; fixed by pinning direct `PackageReference`s to patched versions in the 5 affected `.csproj` files (Api/Worker/Infrastructure/Domain.Tests/Integration.Tests) — re-ran the scan clean, rebuilt, and all 112 fast tests still pass. `docs/SECURITY.md`'s A06 row and summary updated to reflect the closed gap rather than left stale.
 - [x] **`UnreadCount` atomicity, the last open Final review checklist item**: investigated and fixed — see the Final review checklist below for the read-then-write race found, the `ExecuteUpdateAsync` fix, and the new concurrent test proving it. Nothing remains open across the whole build.
 
+## Step 8 checklist
+
+All 14 increments below are independently committed; each backend increment shipped with its own
+EF Core migration and integration tests, each frontend increment was typechecked/built and
+verified end-to-end against the live Docker stack (screenshots taken, not just compiled).
+
+1. **Schema foundation** — `TaskItem.Description`/`TaskType`/`IsActive`, `User.Status`/`FullName`,
+   new `TaskType`/`UserStatus` enums. `IsActive` is a list-filter flag only (Zohaib confirmed:
+   "just a checkbox... filter defaults to Active"), deliberately independent of the pre-existing
+   workflow `Status` enum — no escalation/recurrence/BR-014 logic touched. Migration
+   `AddTaskAndUserFields` — EF's generated `AddColumn` defaults were hand-corrected post-generation
+   (`IsActive` → `true`, `Status`/`TaskType` → `"Active"`/`"General"` instead of the generated
+   `false`/`""`, since `""` isn't a valid enum member and would fail to deserialize existing rows).
+2. **Users backend + fallback resolver** — `UsersController` (list/create/assignable, Admin-only
+   except `assignable`). `PATCH /api/users/{id}/status`: transitioning to Inactive/OnLeave
+   auto-forwards that user's non-terminal tasks to a fallback Active Admin, atomically with the
+   status write, audited (`action:"forward"`). `FallbackUserResolver` extracted from
+   `EscalationJob`'s previously-inline "lowest-id Admin" lookup, now Active-only and reused by both
+   paths.
+3. **Global read-only enforcement** — `ActiveUserRequiredFilter`, registered in the same
+   `MvcOptions.Filters` list as the pre-existing `AuthorizeFilter` (so every current/future
+   controller is covered automatically, not opt-in per-attribute). Checks live DB `User.Status`
+   (not JWT claims — a claims check would let a just-deactivated user keep mutating for up to
+   `Jwt:AccessTokenMinutes`). Skips safe HTTP verbs and `[AllowAnonymous]` actions so Inactive/
+   OnLeave users can still log in/out (§7: "read-only," not "locked out").
+4. **Manual task forward** — `POST /api/tasks/{id}/forward` (`{targetUserId, note?}`), always
+   audited (closing a pre-existing gap where `PATCH /api/tasks/{id}`'s `AssignedStaffId` branch
+   was never audited), broadcasts a new `taskAssignmentChanged` SignalR event. Deliberately leaves
+   workflow `Status` untouched — forwarding an Escalated task keeps it Escalated for the new
+   assignee; BR-014's auto-revert still only fires when the *current* assignee acts on their own
+   task.
+5. **Task filters + Description auto-populate** — `TasksController.List` gains `description`/
+   `patientName`/`dueFrom`/`dueTo`/`isActive` (defaults `true` when omitted). `ThreadsController.
+   CreateTask`'s `Description` auto-populates from the thread's most recent message (inbound or
+   outbound, whichever is newer) when the client omits it — compares only each table's single
+   most-recent row, same "no full-history load" discipline as `GetMessagesPageAsync` (§5/FR-010).
+6. **Frontend user roster** — `useAssignableUsers()` (`GET /api/users/assignable`) replaces
+   `TaskBoardPageV2`'s old "dedupe usernames off already-fetched tasks" hack, which could never
+   surface a user with zero tasks currently assigned to them.
+7. **Frontend Task module UI** — Description/TaskType fields on create, Active/Inactive toggle +
+   Forward dialog on `TaskDetailSheet`, full filter bar on `TaskBoardPageV2` (Description/Patient/
+   Due date/Status/Active/Assignee). Due-date default (today−6/today 23:59) reuses a newly
+   extracted `src/lib/dateRangeFilter.ts` util — previously this exact logic was duplicated
+   verbatim between `AuditLogPage.tsx` and `AuditLogPageV2.tsx`; both now consume the same util
+   too.
+8. **Bookmarks + Template.IsActive (backend)** — new `Bookmark` entity/CRUD (Admin-only writes),
+   seeded with the two merge fields `TemplateRenderer` actually resolves at send time
+   (`{{patient_name}}`, `{{appointment_time}}`) rather than fabricating unresolvable ones.
+   `MessageTemplate.IsActive` (defaults `true`) + `GET /api/templates?isActive=` filter.
+9. **Bookmark dropdown + template filter (frontend)** — `TemplateForm` gains an "Insert bookmark"
+   dropdown (inserts at the textarea's cursor position via a ref) and an Active checkbox;
+   `TemplatesPageV2` gains an Active/Inactive/All filter + inactive badges.
+10. **Messaging backend** — `OutboundMessage.ScheduledAt` (dispatcher's due-query now also checks
+    it). New `SystemSetting` key-value table + typed `SettingsService`, backing Quiet Hours
+    (`QuietHoursCalculator`, handles the wrap-past-midnight case, e.g. 21:00–08:00) and per-patient
+    rate limiting (`RateLimitChecker`) — both pure Domain calculators matching
+    `RetryBackoffPolicy`'s shape, **both default disabled** so existing dispatch behavior is
+    unchanged until an Admin opts in via the new `SettingsController`
+    (`GET`/`PATCH /api/settings`, `GET /api/settings/system-info`). `MessageDispatcher` gates its
+    whole batch on Quiet Hours before touching any message. New `POST /api/threads` for
+    staff-initiated conversations with a brand-new patient (creates Patient+Thread+first message
+    in one call, 409 on duplicate phone).
+11. **New-conversation flow + Settings tabs (frontend)** — `ThreadList` gains a "New conversation"
+    dialog. `SettingsPage` rebuilt from a single legacy/redesign toggle into 7 tabs (General/SMS/
+    Task/Template/Notification/User Management/System) — SMS and User Management are fully live;
+    Template hosts Bookmark CRUD; Task/System are read-only; General/Notification are thin
+    client-only placeholders (no concrete field list was ever specified for these two, so nothing
+    was invented). **The legacy/redesign toggle UI is dropped here** — `UIVersionContext`'s default
+    (`"redesign"`) and the legacy page files themselves are untouched, only the manual switch
+    control is gone (no component calls `setVersion`/`toggleVersion` anymore after this).
+12. **Dashboard backend** — `GET /api/dashboard/summary`: caller's own task counts by status (+
+    org-wide for Admins), overdue counts, unread-thread count, a 10-row recent-activity feed
+    (Admin sees everyone's actions, Staff sees their own — mirrors `AuditController`'s existing
+    split). Pure read-side aggregation, no new business logic, built last since it depends on
+    Task/Thread/Audit all being stable.
+13. **Dashboard frontend + top-nav task widget** — `/` no longer redirects to `/inbox`; it renders
+    the new `DashboardPage` (stat cards, org-wide card for Admins, recent activity, quick links).
+    `TaskNavWidget` in `AppShell`'s header: a `Popover` badge-counting the caller's non-terminal
+    assigned tasks; selecting one navigates to `/tasks?task={id}`, reusing the pre-existing
+    deep-link mechanism that already opens `TaskDetailSheet` rather than building a second modal
+    renderer.
+14. **Polish** — Inbox composer gained an "Insert template" dropdown and a "Schedule" toggle
+    (`datetime-local` input, passed as `scheduledAt`) on `ConversationPanelV2`. `AppShell`'s
+    icon-only Settings button replaced with a text "Settings" `NAV_LINKS` entry (gear icon
+    removed). Hand-authored bell-glyph favicon (`public/favicon.svg`, indigo rounded-square +
+    white bell outline, matching `LoginPageV2`'s existing lucide `Bell` mark styling) linked from
+    `index.html` — first favicon this repo has ever had. Seed data: `PatientAppointmentSeedStep`'s
+    10 patients renamed from "Patient 01".."10" to realistic names (John Donald, Leonard Allen,
+    Wasim Khan, Mateen Anjum, Emily Carter, Robert Chen, Fatima Ali, Michael Brown, Olivia Turner,
+    Ahmed Hassan); `UserSeedStep`/`SecondStaffSeedStep` set `FullName` (Admin → "Dr. Jawad", Staff →
+    "Sarah Wilson", Staff2 → "David Lee") while login `Username`s stay config/env-driven as before
+    (security-sensitive, not renamed). New `SystemSettingSeedStep` seeds default rows for every
+    known setting key, idempotent per-key (not "any setting exists") so a future new key isn't
+    silently skipped on an already-seeded install.
+
+**Tests**: 78 Domain (14 new: `RateLimitCheckerTests`, `QuietHoursCalculatorTests`) + 82 Integration
+(30 new across `UsersControllerTests`, `ActiveUserRequiredFilterTests`, `BookmarksControllerTests`,
+`SettingsControllerTests`, `DashboardControllerTests`, plus additions to `TasksControllerTests`,
+`ThreadsControllerTests`, `MessageDispatcherOptOutTests`, `TemplatesControllerTests`) — **160/160
+fast backend tests passing**. Frontend: `tsc --noEmit` and `npm run build` clean after every
+increment. No new frontend unit tests (matches the pre-existing "no Vitest/RTL suite" convention,
+§ Known limitations) — every UI increment was instead driven live against the real Docker stack
+with Playwright (ad hoc verification scripts, not a committed suite) and screenshotted.
+
+**Docker/live verification** — done incrementally, not just at the end: rebuilt `api`/`web` images
+and recreated containers after each backend-touching increment, drove the actual app in a
+headless browser (login → target screen → interact → screenshot) rather than trusting
+build-success alone. Caught and fixed two real bugs this way, not in code review:
+- The migration-generated `AddColumn` defaults (`IsActive`→`false`, `Status`/`TaskType`→`""`)
+  would have corrupted every pre-existing row's `IsActive`/left invalid enum strings that fail to
+  deserialize on read — caught before the migration was ever applied to a real database, by
+  reading the generated migration file rather than trusting `dotnet ef migrations add`'s output
+  blindly (see increment 1).
+- The favicon returned `text/html` (Vite's SPA fallback) instead of `image/svg+xml` after the
+  first attempt, because `public/favicon.svg` was created *after* the last `docker compose build
+  web`, so the running image simply didn't contain it yet — caught by checking the actual response
+  `Content-Type` with `curl`, not just confirming the browser tab didn't error. Fixed by rebuilding.
+- Also caught (increment 14): after resetting the dev DB volume to verify the new seed names, the
+  first `GET /api/users` still returned `fullName: null` for all three seeded accounts — the `api`
+  image itself hadn't been rebuilt since the seed-step code changes (only `web` had, for the
+  favicon fix), so it was still running increment-13's binary. Rebuilding `api`/`worker`/`web`
+  together and resetting the volume again resolved it; confirmed via direct MySQL query
+  (`SELECT Id, Name, Phone FROM patients`) rather than trusting a single UI screenshot.
+- **Destructive-action flag**: resetting the dev DB (`docker compose down -v`) was flagged to
+  Zohaib and confirmed before running, per his standing preference from an earlier session.
+
 ## What's implemented
 - **Domain**: `ConversationThread`/`InboundMessage`/`TaskItem` per §7. `OptOutKeywordMatcher.IsOptOutRequest` — whole-body exact match (trimmed, case-insensitive) against STOP/UNSUBSCRIBE/CANCEL/END/QUIT, not substring, so "please stop calling" isn't misclassified. `TaskDueDateDefaults.DefaultDueAt` — urgent=4h/high=1d/medium=3d/low=7d from creation. `RecurrenceCalculator.NextOccurrence` — due-date-anchored (no drift), stops when the next due date reaches `recurrenceEndDate` or `occurrenceCount` exceeds `recurrenceMaxOccurrences`.
 - **Infrastructure**: EF configs for the three new tables, real FK from `outbound_messages.thread_id` → `threads.id` (was a plain nullable column since step 3), `(thread_id, created_at)` index. `EscalationJob.EscalateOverdueTasksAsync` — batches overdue, non-escalated/completed/cancelled tasks, escalates + reassigns to the lowest-id Admin (inference — BR-004 doesn't specify which Admin when more than one exists), leaves `original_owner_id` untouched (BR-007d). `MessageDispatcher.DispatchOneAsync` now checks `patient.OptOutAt` before every gateway call (not just at message creation) and skips template rendering for ad-hoc (templateless) messages.
@@ -115,6 +250,36 @@ This step was self-verified live in Docker this session — significantly more t
 - **`PATCH /api/templates/{id}` added, beyond your literal step-6 work-item list** — §6b's own acceptance criteria for the Templates screen says "create/**edit**", but the endpoint only had `GET`/`POST` before this step. Added rather than building an edit-less screen that contradicts its own spec row.
 - **50k seed spreads across ~1,000 new synthetic patients/threads rather than the existing 10 demo patients** (~50 messages/thread on average, 90/10 outbound/inbound split, all terminal-status so the live dispatcher never touches them) — concentrating 50k messages on today's 10 patients would give 5,000/thread, which wouldn't exercise `ThreadsController.List`'s pagination at all (still just 10 rows) and would trip the just-logged `Detail()` unpaginated-load risk into a real, demo-visible slowdown. Flag if a different distribution (e.g. reusing the existing 10 patients) is actually what you wanted.
 - **`PerformanceSeedStep`'s target count is capped in all three test factories** (`Seed:PerformanceMessageCount` = 50 in `CustomWebApplicationFactory`, 100 in `MySqlWebApplicationFactory`, production default 50,000) — `Program.cs` runs every registered `IDbSeedStep` unconditionally at startup with no environment gating, so without this override every integration test booting the Api pipeline would also seed 50k rows per test-class fixture.
+
+## Documented deviations from PROJECT_CONTEXT.md (step 8 additions)
+- **`TaskItem.IsActive` is a separate boolean field, not a replacement for the workflow `Status`
+  enum** — Zohaib's own framing ("just provide a checkbox... filter defaults to active selected")
+  confirmed this reading; the alternative (collapsing `Open/InProgress/Completed/Escalated/
+  Cancelled` down to `Active/Inactive/Cancelled`) would have broken escalation/BR-014/recurrence,
+  all of which key off the existing 5-value enum.
+- **Forwarding a task never changes its workflow `Status`**, even when forwarding an Escalated
+  task — not explicitly specified either way; chosen so BR-014's existing "auto-revert only when
+  the current assignee acts on their own task" semantics stay exactly as they were, rather than
+  silently redefining what counts as "acting on" a task.
+- **Auto-forward on user deactivation does not check `TaskItem.IsActive`** — that flag is
+  documented (above, and by Zohaib directly) as a list-filter concept only; gating auto-forward on
+  it would have been an invented workflow-eligibility rule not asked for.
+- **Quiet Hours and per-patient rate limiting both default to disabled** — the functional
+  requirement was to *implement* both features, not to silently start blocking/throttling every
+  existing message flow (including the 45,000-message performance seed and demo scenarios) the
+  moment this shipped. An Admin opts in via Settings > SMS with sensible pre-filled defaults
+  (21:00–08:00 UTC / 20 messages per 24h).
+- **General and Notification Settings tabs are thin/client-only placeholders** — no concrete field
+  list was ever specified for either, and inventing `SystemSetting` schema for unrequested fields
+  felt like a worse outcome than an honest "nothing to configure here yet" tab.
+- **The legacy/redesign toggle UI was removed during the Settings rebuild (increment 11), not
+  deferred to a later "UI lock" step** — General is meant to be thin/read-only per the point above,
+  and the toggle didn't fit any of the 7 requested tabs; `UIVersionContext`'s default and the
+  legacy page files themselves are still untouched, only the manual switch control is gone.
+- **Login usernames were not renamed to match the new realistic seed names** — `Seed:AdminUsername`/
+  `Seed:StaffUsername`/`Seed:Staff2Username` stay config/env-driven exactly as before (security-
+  sensitive, not something to hardcode); only the new `User.FullName` field ("Dr. Jawad"/"Sarah
+  Wilson"/"David Lee") carries the realistic names into the UI.
 
 ## Known limitations (by design, not bugs)
 - SignalR broadcasts go to `Clients.All` (every connected authenticated session) — matches "shared inbox" semantics (no per-staff filtering), consistent with §4's flat Admin/Staff visibility model, but means there's no way to scope a notification to only the assigned staff member if that's later desired.
@@ -159,3 +324,4 @@ To run the e2e suite: `docker-compose up -d` first, then see "Playwright e2e sui
 | 2026-07-12 | 7 | Docs (FR-012/013/014/015/016/017/018/019), closing out the plan. `README.md` (new). `docs/adr/0001-outbound-queue.md`/`0002-dispatcher-hosting.md`/`0003-rbac-model.md` (FR-016). `docs/SECURITY.md` — OWASP Top-10 self-assessment + FR-018(a)-(e) (FR-018). `docs/AI_USAGE_LOG.md` — phases, 3 sessions incl. 1 frontend, the `ThreadsController.Detail` pagination scoping mistake as the required "AI was wrong" example, 2 examples of AI beyond code gen (FR-019). `docs/coverage/DOMAIN_COVERAGE.md` — real measured FR-013 number: 94.2% line coverage on `NotifyHub.Domain` via `dotnet test --collect:"XPlat Code Coverage"` + `reportgenerator`, methodology and per-class breakdown documented (FR-013). FR-012/014/015/017 confirmed already satisfied by existing work, not rebuilt. Last numbered step — the only remaining open item across the whole build is the `UnreadCount` atomicity question in the Final review checklist (unconfirmed race, not proven to occur in practice). |
 | 2026-07-12 | 7 (fix) | Per your review feedback on the two `docs/SECURITY.md` residual gaps: Swagger was already gated behind `IsDevelopment()` (`Program.cs:114-118`) — no code change needed, corrected the doc's A05 note instead of adding a redundant guard. Added a real, gating CI dependency-vulnerability scan (`dotnet list package --vulnerable --include-transitive`, `npm audit --audit-level=high`) — this immediately surfaced 4 genuine pre-existing High-severity transitive advisories (Caching.Memory 8.0.0, System.Text.Json 8.0.0 ×2, System.Net.Http 4.3.0, System.Text.RegularExpressions 4.3.0), which would have turned CI red on the very next push; fixed by pinning direct `PackageReference`s to patched versions across the 5 affected `.csproj` files, re-verified the scan is clean, solution builds, and all 112 fast tests still pass. `docs/SECURITY.md` A06 row + summary updated to match. |
 | 2026-07-12 | 7 (final review) | Closed the last open Final review checklist item: `WebhooksController.Inbound`'s `thread.UnreadCount++` was confirmed read-then-write (a genuine lost-update race under concurrent inbound webhooks for the same thread), not already-safe. Fixed with EF Core's atomic `ExecuteUpdateAsync`/`SetProperty(t => t.UnreadCount, t => t.UnreadCount + 1)` — one `UPDATE ... SET UnreadCount = UnreadCount + 1` per request, no read-modify-write window — for real database providers; the fast test suite's InMemory provider can't translate `ExecuteUpdate`'s `SetProperty` (confirmed by running it — `InvalidOperationException`, not a hypothetical gap), so `Inbound` branches on `db.Database.ProviderName` (not the `IsInMemory()` extension, to avoid a test-only package reference in production code) and keeps the old tracked increment there, which is fine since InMemory tests are single-request and never exercise the race anyway. Proven atomic by a new real-MySQL test, `InboundWebhookThreadRaceMySqlTests.ConcurrentInbound_ForExistingThread_IncrementsUnreadCountExactlyN` (30 concurrent requests against one pre-existing thread, asserts `UnreadCount` lands at exactly 31 — MySQL-only, since it needs real concurrent-connection interleaving). Fast suite (`Category!=MySql`) still 112/112 green (64 Domain, 48 Integration) — this test is additive under `Category=MySql`, doesn't touch the fast-suite count. Nothing remains open across the whole build. |
+| 2026-07-13/14 | 8 (14 increments) | Large post-step-7 feature set from a fresh, informal requirements list (not FR-numbered): Task module (type/description/forwarding/active-flag/filters), a Dashboard landing page, a bell favicon, UI redesign lock-in, Template bookmarks, messaging (scheduled sends/Quiet Hours/per-patient rate limiting/new-patient SMS), User Management (Active/Inactive/OnLeave with auto-forward), a 7-tab Settings module, realistic seed data, and a top-nav task widget. See "Step 8 checklist" above for the full per-increment breakdown. 160/160 fast backend tests passing (78 Domain, 82 Integration — 44 new). Frontend `tsc`/`vite build` clean throughout; every UI increment driven live against the real Docker stack (login → screen → interact → screenshot), not just compiled — caught and fixed 3 real bugs this way (a data-corrupting migration default, a stale-image favicon 404-as-text/html, a stale-image seed-name no-op) rather than in code review. Dev DB volume reset flagged and confirmed with Zohaib before running (`docker compose down -v`, local dev data only). All 14 increments committed individually. |

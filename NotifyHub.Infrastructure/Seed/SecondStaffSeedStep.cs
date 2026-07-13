@@ -30,7 +30,7 @@ public class SecondStaffSeedStep(IConfiguration configuration, IPasswordHasher<U
                 $"Seed password for 'Seed:Staff2Password' does not meet the password policy: {string.Join(" ", failures)}");
         }
 
-        var user = new User { Username = username, Role = UserRole.Staff };
+        var user = new User { Username = username, FullName = "David Lee", Role = UserRole.Staff };
         user.PasswordHash = passwordHasher.HashPassword(user, password!);
 
         db.Users.Add(user);

@@ -8,7 +8,12 @@ file ever contradicts the code, the code wins — fix this file and flag the dis
 Last verified against commit `1c6c47b` (step 6, committed and reviewed) plus step 7's
 documentation additions (README, ADRs, security/AI-log docs, coverage report) and step 7's
 fix rounds (CI dependency-vulnerability scan + vulnerable transitive package pins;
-`WebhooksController.Inbound`'s `UnreadCount` increment made atomic) — none yet committed.
+`WebhooksController.Inbound`'s `UnreadCount` increment made atomic), plus step 8's 14-increment
+feature set (Task type/description/forwarding/active-flag/filters, Dashboard, favicon, UI
+redesign lock-in, Template bookmarks, scheduled sends/Quiet Hours/rate limiting/new-patient SMS,
+User Management with auto-forward, a 7-tab Settings module, realistic seed data, top-nav task
+widget — see `STATUS.md`'s "Step 8 checklist" for the full breakdown) — all 14 increments
+committed individually, each with its own migration/tests where applicable.
 
 ---
 

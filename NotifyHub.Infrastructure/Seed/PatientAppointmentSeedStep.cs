@@ -10,7 +10,21 @@ namespace NotifyHub.Infrastructure.Seed;
 /// 50k-message performance seed is a separate, later step (FR-010).
 public class PatientAppointmentSeedStep : IDbSeedStep
 {
-    private const int PatientCount = 10;
+    // Realistic sample names (not real patient data — BR-006) instead of "Patient 01"..
+    // placeholders, so seeded demo data reads like a real clinic roster.
+    private static readonly string[] PatientNames =
+    [
+        "John Donald",
+        "Leonard Allen",
+        "Wasim Khan",
+        "Mateen Anjum",
+        "Emily Carter",
+        "Robert Chen",
+        "Fatima Ali",
+        "Michael Brown",
+        "Olivia Turner",
+        "Ahmed Hassan",
+    ];
 
     public async Task RunAsync(NotifyHubDbContext db, CancellationToken ct)
     {
@@ -20,11 +34,11 @@ public class PatientAppointmentSeedStep : IDbSeedStep
         var now = DateTime.UtcNow;
         var patients = new List<Patient>();
 
-        for (var i = 1; i <= PatientCount; i++)
+        for (var i = 1; i <= PatientNames.Length; i++)
         {
             var patient = new Patient
             {
-                Name = $"Patient {i:D2}",
+                Name = PatientNames[i - 1],
                 Phone = $"+15550100{i:D3}",
             };
 

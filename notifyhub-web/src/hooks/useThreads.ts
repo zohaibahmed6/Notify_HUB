@@ -31,7 +31,8 @@ export function useReplyMutation(threadId: number) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (body: string) => apiClient.post(`/api/threads/${threadId}/messages`, { body }),
+    mutationFn: (body: string | { body: string; scheduledAt?: string }) =>
+      apiClient.post(`/api/threads/${threadId}/messages`, typeof body === "string" ? { body } : body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["thread", threadId] });
     },

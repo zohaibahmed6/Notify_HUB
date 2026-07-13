@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
-import { Search, Settings } from "lucide-react";
+import { Search } from "lucide-react";
 
 import { useAuth } from "@/context/AuthContext";
 import { useUIVersion } from "@/context/UIVersionContext";
@@ -21,6 +21,7 @@ const NAV_LINKS = [
   // it to Staff scoped to their own actions via /api/audit/mine) — a deliberate product
   // decision, guarded again in AuditLogPageV2 itself for direct-URL access.
   { to: "/audit", label: "Audit log", adminOnlyInRedesign: true },
+  { to: "/settings", label: "Settings" },
 ];
 
 export default function AppShell() {
@@ -92,13 +93,6 @@ export default function AppShell() {
             </Button>
           )}
           <TaskNavWidget />
-          <NavLink to="/settings" aria-label="Configuration">
-            {({ isActive }) => (
-              <Button variant="outline" size="icon" className={cn(isActive && "bg-accent")}>
-                <Settings className="size-4" />
-              </Button>
-            )}
-          </NavLink>
           <span className="text-sm text-muted-foreground">
             {user?.username} ({user?.role})
           </span>

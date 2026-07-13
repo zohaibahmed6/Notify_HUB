@@ -42,15 +42,19 @@ stack doesn't duplicate anything.
 
 ## Screens
 
-Login, Shared inbox (thread list + conversation panel, real-time via SignalR), Task board
-(priority/status, escalation), Templates & reminder rules (create/edit), Audit log (Admin sees all
-actors, Staff sees only their own actions). See `PROJECT_CONTEXT.md` §6b for the full spec per
-screen.
+Dashboard (post-login landing page: task summary, unread threads, recent activity), Shared inbox
+(thread list + conversation panel with template-insert/schedule-send composer, real-time via
+SignalR), Task board (type/description/priority/status/active, filters, forwarding, escalation),
+Templates & reminder rules (create/edit, bookmarks, Active/Inactive), Audit log (Admin sees all
+actors, Staff sees only their own actions), Settings (General/SMS/Task/Template/Notification/User
+Management/System tabs — Quiet Hours, per-patient rate limiting, and user Active/Inactive/OnLeave
+management all live here). See `PROJECT_CONTEXT.md` §6b for the original spec per screen, and
+`STATUS.md`'s Step 8 checklist for everything added on top of it.
 
 ## Tests
 
 ```
-dotnet test NotifyHub.sln --filter "Category!=MySql"   # fast suite: 112 tests, InMemory EF Core
+dotnet test NotifyHub.sln --filter "Category!=MySql"   # fast suite: 160 tests, InMemory EF Core
 dotnet test NotifyHub.sln --filter "Category=MySql"     # real-MySQL race test (needs docker compose up -d mysql)
 dotnet test NotifyHub.sln                                # everything CI runs
 ```

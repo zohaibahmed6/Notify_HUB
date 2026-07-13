@@ -20,18 +20,20 @@ public class UserSeedStep(IConfiguration configuration, IPasswordHasher<User> pa
         var admin = BuildUser(
             usernameKey: "Seed:AdminUsername",
             passwordKey: "Seed:AdminPassword",
-            role: UserRole.Admin);
+            role: UserRole.Admin,
+            fullName: "Dr. Jawad");
 
         var staff = BuildUser(
             usernameKey: "Seed:StaffUsername",
             passwordKey: "Seed:StaffPassword",
-            role: UserRole.Staff);
+            role: UserRole.Staff,
+            fullName: "Sarah Wilson");
 
         db.Users.AddRange(admin, staff);
         await db.SaveChangesAsync(ct);
     }
 
-    private User BuildUser(string usernameKey, string passwordKey, UserRole role)
+    private User BuildUser(string usernameKey, string passwordKey, UserRole role, string fullName)
     {
         var username = configuration[usernameKey];
         var password = configuration[passwordKey];
@@ -45,7 +47,7 @@ public class UserSeedStep(IConfiguration configuration, IPasswordHasher<User> pa
                 $"Seed password for '{usernameKey}' does not meet the password policy: {string.Join(" ", failures)}");
         }
 
-        var user = new User { Username = username, Role = role };
+        var user = new User { Username = username, FullName = fullName, Role = role };
         user.PasswordHash = passwordHasher.HashPassword(user, password!);
         return user;
     }
