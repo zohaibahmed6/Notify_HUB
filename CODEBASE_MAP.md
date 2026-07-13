@@ -311,7 +311,7 @@ rather than deferred — no longer an open item.
 **Pages** (`src/pages/`): `LoginPage.tsx` (auth entry), `InboxPage.tsx` (thread list + `ConversationPanel`), `TaskBoardPage.tsx` (status-filtered task list + `NewTaskForm`/`TaskDetailPanel`), `TemplatesPage.tsx` (§6b, step 6 — list + create form + inline per-row edit form via a shared `TemplateForm` component defined in the same file), `AuditLogPage.tsx` (§6b, step 6 — role-branches on `user.role`: Admin gets an actor filter + `/api/audit`, Staff gets `/api/audit/mine`; action/date-range filters, paginated table, empty state). Date range: `from`/`to` are `<input type="date">` (day-granularity), defaulting on mount to the last 7 days (`from` = today-7, `to` = today, via `defaultFrom`/`toDateInputValue`). Converted to instants for the query string as UTC midnight for `from` and `T23:59:59.999Z` for `to` (`AuditLogPage.tsx:28-32`) — `to` must mean end-of-day, not start-of-day, otherwise a same-day `from`==`to` range collapses to one instant and matches nothing against `AuditController.QueryAsync`'s `OccurredAt <= to.Value` (:53-54).
 
 **Components**:
-- `components/layout/AppShell.tsx` — top nav; mounts the single shared `useInboxHub()` connection (:18). `NAV_LINKS` (:8-13) now includes Templates/Audit log alongside Inbox/Task board.
+- `components/layout/AppShell.tsx` — top nav; mounts the single shared `useInboxHub()` connection (:18). `NAV_LINKS` (:8-13) now includes Dashboard/Templates/Audit log alongside Inbox/Task board (Dashboard added increment 13, `end: true` so it only matches the exact `/` path). Header also renders `components/v2/task-nav-widget.tsx`'s `TaskNavWidget` (increment 13, next to the Settings icon) — see §6a.
 - `components/inbox/ConversationPanel.tsx` — merged inbound/outbound view, reply, assign, auto-scroll-if-at-bottom. Messages are paginated server-side (step 6/FR-010): `useThread` only returns page 1 (most recent); local `olderMessages` state (:26) accumulates additional pages fetched directly via `apiClient` (bypassing TanStack Query's cache, since this is an append-only local scrollback) when the "Load earlier messages" button (:146-152, shown while `hasMoreOlder`) is clicked.
 - `components/inbox/CreateTaskForm.tsx` — inline "make task" form; now also collects `TaskType` (Select) and `Description` (Textarea, optional — blank submits fall through to the server's auto-populate-from-last-message default, increment 7).
 - `components/tasks/NewTaskForm.tsx` — thread-picker + priority + due date, now also `TaskType`/`Description` (same optional-blank behavior as `CreateTaskForm`, increment 7).
@@ -328,6 +328,7 @@ rather than deferred — no longer an open item.
 - `useBookmarks.ts` (increment 9): `useBookmarks()` (list, any authenticated user), `useCreateBookmarkMutation()`/`useUpdateBookmarkMutation()`/`useDeleteBookmarkMutation()` (Admin-only server-side, used by the Settings > Template tab, increment 11). `apiClient` gained a `.delete()` method to support this (`lib/apiClient.ts`).
 - `useUsers.ts` (this feature set, increment 6): `useAssignableUsers()` → `GET /api/users/assignable`, the roster every assignee-picker should use now — `TaskBoardPageV2.tsx`'s assignee filter switched to this from the old "dedupe usernames off already-fetched tasks" workaround (which could never surface a user with zero assigned tasks). Also `useUsers(filters)` (Admin list, powers the Settings > User Management tab, increment 11), `useCreateUserMutation()`, `useUpdateUserStatusMutation()` (invalidates both `["users"]` and `["tasks"]` since a status change can silently auto-forward tasks).
 - `useSettings.ts` (increment 11): `useSettings()`/`useUpdateSettingsMutation()` (`GET`/`PATCH /api/settings`), `useSystemInfo()` (`GET /api/settings/system-info`) — back the Settings > SMS and > System tabs.
+- `useDashboard.ts` (increment 13): `useDashboardSummary()` → `GET /api/dashboard/summary`.
 
 **Auth wiring**:
 - `context/AuthContext.tsx` — silent refresh-on-mount effect :41-57 (posts `/api/auth/refresh` with `skipAuth`, httpOnly cookie sent automatically); listens for `"auth:logout"` window event :36-38.
@@ -340,7 +341,7 @@ rather than deferred — no longer an open item.
 
 **API client**: `lib/apiClient.ts` — JWT attached :46-49; 401 handling :53-68 (de-dupes concurrent refreshes via shared `refreshPromise` :22/:54-58, retries once, else clears token store + dispatches `"auth:logout"` :65-67). Base URL derivation: `lib/apiBaseUrl.ts:9-10` (`${protocol}//${hostname}:5000`, `VITE_API_URL` override available).
 
-**Routing**: `main.tsx:17-21` mounts `BrowserRouter`. Table in `App.tsx:13-26`: `/login` public (:14); `/`→`/inbox` redirect (:17), `/inbox`/`/tasks`/`/templates`/`/audit` (:18-21, last two added step 6) all under `<ProtectedRoute>`+`<AppShell>` (:15-16); `*`→`/` (:24). Every route now renders through `VersionedRoute` (§6a) rather than the bare page component directly — not reflected in the line numbers above, which still describe the pre-redesign table shape.
+**Routing**: `main.tsx:17-21` mounts `BrowserRouter`. Table in `App.tsx:13-26`: `/login` public (:14); `/inbox`/`/tasks`/`/templates`/`/audit` (:18-21, last two added step 6) all under `<ProtectedRoute>`+`<AppShell>` (:15-16); `*`→`/` (:24). Every route now renders through `VersionedRoute` (§6a) rather than the bare page component directly — not reflected in the line numbers above, which still describe the pre-redesign table shape. **Increment 13**: `/` no longer redirects to `/inbox` — it renders the new unversioned `DashboardPage` (`src/pages/DashboardPage.tsx`) directly, same "no legacy variant needed" precedent as `SettingsPage`.
 
 ---
 
@@ -530,6 +531,21 @@ original redesign plan.
   `GET /api/settings`, User Management lists the 3 seeded users with working status dropdowns, and
   the new-conversation dialog creates a patient+thread+message that immediately appears selected
   in the Inbox with a `Queued` status badge.
+- **`DashboardPage` + top-nav task widget** (§10, increment 13) — `src/pages/DashboardPage.tsx`
+  (unversioned, no legacy equivalent — entirely new screen). Stat cards (my open/escalated/
+  overdue tasks, unread-thread count) + an Admin-only org-wide task-counts card + quick links to
+  Inbox/Task board + a recent-activity list (reuses `AUDIT_ACTION_CONFIG`/`StatusBadge` styling
+  from the Audit Log screen), all sourced from the one `useDashboardSummary()` call — no
+  screen-specific aggregation logic on the frontend. `components/v2/task-nav-widget.tsx`'s
+  `TaskNavWidget` (mounted in `AppShell.tsx`'s header): a `Popover` trigger showing a badge count
+  of the caller's non-terminal (Open/InProgress/Escalated) assigned tasks (`useTasks({
+  assignedStaffId, isActive: true })`, filtered client-side to those three statuses since
+  `useTasks` only supports a single server-side `status` value, not a set), popover body lists up
+  to 8; selecting one navigates to `/tasks?task={id}` — reuses `TaskBoardPageV2`'s existing
+  deep-link mechanism to open `TaskDetailSheet` rather than duplicating a second modal renderer.
+  Verified end-to-end: landing on `/` after login shows real stat-card numbers and recent-activity
+  rows pulled from the live seed data, and the nav widget's badge count and popover list both
+  match the caller's actual assigned tasks.
 
 ---
 
