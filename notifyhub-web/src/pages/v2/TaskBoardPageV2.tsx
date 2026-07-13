@@ -9,7 +9,10 @@ import { useThreads } from "@/hooks/useThreads";
 import { useAssignableUsers } from "@/hooks/useUsers";
 import { errorMessage } from "@/lib/errorMessage";
 import { cn } from "@/lib/utils";
+import { defaultFromDaysAgo, toDateInputValue, toInstantRange } from "@/lib/dateRangeFilter";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select,
@@ -40,20 +43,40 @@ const PRIORITIES: TaskPriority[] = ["Low", "Medium", "High", "Urgent"];
 
 export default function TaskBoardPageV2() {
   const { user } = useAuth();
-  const { data, isLoading } = useTasks();
-  const { data: threadsData } = useThreads();
   const { data: assignableUsers } = useAssignableUsers();
+
+  const [view, setView] = useState<"board" | "list">("board");
+  const [priorityFilter, setPriorityFilter] = useState<TaskPriority | "all">("all");
+  const [statusFilter, setStatusFilter] = useState<TaskStatus | "all">("all");
+  const [assigneeFilter, setAssigneeFilter] = useState<string>("all");
+  const [recurringOnly, setRecurringOnly] = useState(false);
+  const [showNewTaskDialog, setShowNewTaskDialog] = useState(false);
+
+  // §1: Description/Patient/Due date/Active are server-side filters (dueFrom/dueTo
+  // default to "current date - 6 days" / "current date 23:59", same behavior as the
+  // Audit Log page's own date-range default, just 6 days instead of 7). Status/Priority/
+  // Assignee/Recurring stay client-side over the fetched set — the Board view needs every
+  // status at once to populate its columns, so a server-side status filter would fight it.
+  const [descriptionFilter, setDescriptionFilter] = useState("");
+  const [patientFilter, setPatientFilter] = useState("");
+  const [dueFrom, setDueFrom] = useState(() => defaultFromDaysAgo(6));
+  const [dueTo, setDueTo] = useState(() => toDateInputValue(new Date()));
+  const [activeFilter, setActiveFilter] = useState<"Active" | "Inactive">("Active");
+
+  const dueRange = toInstantRange(dueFrom, dueTo);
+  const { data, isLoading } = useTasks({
+    description: descriptionFilter || undefined,
+    patientName: patientFilter || undefined,
+    isActive: activeFilter === "Active",
+    dueFrom: dueRange.from,
+    dueTo: dueRange.to,
+  });
+  const { data: threadsData } = useThreads();
   const updateTask = useUpdateTaskMutation();
 
   const tasks = data?.items ?? [];
   const threads = threadsData?.items ?? [];
   const threadNameById = useMemo(() => new Map(threads.map((t) => [t.id, t.patientName])), [threads]);
-
-  const [view, setView] = useState<"board" | "list">("board");
-  const [priorityFilter, setPriorityFilter] = useState<TaskPriority | "all">("all");
-  const [assigneeFilter, setAssigneeFilter] = useState<string>("all");
-  const [recurringOnly, setRecurringOnly] = useState(false);
-  const [showNewTaskDialog, setShowNewTaskDialog] = useState(false);
   const [collapsed, setCollapsed] = useState<Set<TaskStatus>>(
     () => new Set(COLUMNS.filter((c) => c.defaultCollapsed).map((c) => c.status)),
   );
@@ -99,13 +122,14 @@ export default function TaskBoardPageV2() {
     () =>
       tasks.filter((t) => {
         if (priorityFilter !== "all" && t.priority !== priorityFilter) return false;
+        if (statusFilter !== "all" && t.status !== statusFilter) return false;
         if (recurringOnly && !t.isRecurring) return false;
         if (assigneeFilter === "unassigned" && t.assignedStaffId !== null) return false;
         if (assigneeFilter !== "all" && assigneeFilter !== "unassigned" && String(t.assignedStaffId) !== assigneeFilter)
           return false;
         return true;
       }),
-    [tasks, priorityFilter, assigneeFilter, recurringOnly],
+    [tasks, priorityFilter, statusFilter, assigneeFilter, recurringOnly],
   );
 
   const distributionSegments = COLUMNS.map((c) => {
@@ -182,6 +206,20 @@ export default function TaskBoardPageV2() {
             </SelectContent>
           </Select>
 
+          <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as TaskStatus | "all")}>
+            <SelectTrigger className="h-9 w-[140px] text-sm">
+              <SelectValue placeholder="Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All statuses</SelectItem>
+              {COLUMNS.map((c) => (
+                <SelectItem key={c.status} value={c.status}>
+                  {c.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
           <Select value={assigneeFilter} onValueChange={setAssigneeFilter}>
             <SelectTrigger className="h-9 w-[150px] text-sm">
               <SelectValue placeholder="Assignee" />
@@ -194,6 +232,16 @@ export default function TaskBoardPageV2() {
                   {u.fullName ?? u.username}
                 </SelectItem>
               ))}
+            </SelectContent>
+          </Select>
+
+          <Select value={activeFilter} onValueChange={(v) => setActiveFilter(v as "Active" | "Inactive")}>
+            <SelectTrigger className="h-9 w-[110px] text-sm">
+              <SelectValue placeholder="Active" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="Active">Active</SelectItem>
+              <SelectItem value="Inactive">Inactive</SelectItem>
             </SelectContent>
           </Select>
 
@@ -211,6 +259,49 @@ export default function TaskBoardPageV2() {
           <Plus className="size-4" />
           New task
         </Button>
+      </div>
+
+      <div className="mb-4 flex flex-wrap items-end gap-3">
+        <div className="space-y-1.5">
+          <Label htmlFor="task-filter-description">Description</Label>
+          <Input
+            id="task-filter-description"
+            placeholder="Search description"
+            value={descriptionFilter}
+            onChange={(event) => setDescriptionFilter(event.target.value)}
+            className="h-9 w-48"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="task-filter-patient">Patient</Label>
+          <Input
+            id="task-filter-patient"
+            placeholder="Search patient"
+            value={patientFilter}
+            onChange={(event) => setPatientFilter(event.target.value)}
+            className="h-9 w-48"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="task-filter-due-from">Due from</Label>
+          <Input
+            id="task-filter-due-from"
+            type="date"
+            value={dueFrom}
+            onChange={(event) => setDueFrom(event.target.value)}
+            className="h-9"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="task-filter-due-to">Due to</Label>
+          <Input
+            id="task-filter-due-to"
+            type="date"
+            value={dueTo}
+            onChange={(event) => setDueTo(event.target.value)}
+            className="h-9"
+          />
+        </div>
       </div>
 
       {!isLoading && tasks.length > 0 && (

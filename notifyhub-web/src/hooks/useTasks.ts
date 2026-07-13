@@ -2,15 +2,30 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "@/lib/apiClient";
 import type { PagedResult } from "@/types/inbox";
-import type { TaskDto, TaskStatus, UpdateTaskRequest } from "@/types/tasks";
+import type { ForwardTaskRequest, TaskDto, TaskListFilters, TaskStatus, UpdateTaskRequest } from "@/types/tasks";
 
-export function useTasks(status?: TaskStatus | "All") {
-  const filter = status && status !== "All" ? status : undefined;
+/// Accepts either a bare status shorthand (legacy TaskBoardPage's usage) or a full filter
+/// object (TaskBoardPageV2's filter bar). `isActive` is omitted here by default so the
+/// server applies its own default (Active-only) — pass `isActive: false` explicitly to
+/// see inactive tasks, matching the "just a checkbox, Active selected by default" model.
+export function useTasks(statusOrFilters?: TaskStatus | "All" | TaskListFilters) {
+  const filters: TaskListFilters =
+    typeof statusOrFilters === "string" || statusOrFilters === undefined
+      ? { status: statusOrFilters }
+      : statusOrFilters;
+
+  const params = new URLSearchParams({ pageSize: "100" });
+  if (filters.status && filters.status !== "All") params.set("status", filters.status);
+  if (filters.assignedStaffId != null) params.set("assignedStaffId", String(filters.assignedStaffId));
+  if (filters.description) params.set("description", filters.description);
+  if (filters.patientName) params.set("patientName", filters.patientName);
+  if (filters.dueFrom) params.set("dueFrom", filters.dueFrom);
+  if (filters.dueTo) params.set("dueTo", filters.dueTo);
+  if (filters.isActive !== undefined) params.set("isActive", String(filters.isActive));
 
   return useQuery({
-    queryKey: ["tasks", filter],
-    queryFn: () =>
-      apiClient.get<PagedResult<TaskDto>>(`/api/tasks?pageSize=100${filter ? `&status=${filter}` : ""}`),
+    queryKey: ["tasks", filters],
+    queryFn: () => apiClient.get<PagedResult<TaskDto>>(`/api/tasks?${params.toString()}`),
   });
 }
 
@@ -32,6 +47,18 @@ export function useUpdateTaskMutation() {
   return useMutation({
     mutationFn: ({ id, ...body }: { id: number } & UpdateTaskRequest) =>
       apiClient.patch<TaskDto>(`/api/tasks/${id}`, body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["tasks"] });
+    },
+  });
+}
+
+export function useForwardTaskMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: number } & ForwardTaskRequest) =>
+      apiClient.post<TaskDto>(`/api/tasks/${id}/forward`, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["tasks"] });
     },

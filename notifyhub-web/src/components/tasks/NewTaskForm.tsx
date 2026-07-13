@@ -7,7 +7,8 @@ import { errorMessage } from "@/lib/errorMessage";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import type { TaskPriority } from "@/types/tasks";
+import { Textarea } from "@/components/ui/textarea";
+import { TASK_TYPES, type TaskPriority, type TaskType } from "@/types/tasks";
 
 const PRIORITIES: TaskPriority[] = ["Low", "Medium", "High", "Urgent"];
 
@@ -22,6 +23,8 @@ export function NewTaskForm({ onDone }: { onDone: () => void }) {
   const [threadId, setThreadId] = useState<number | "">("");
   const [priority, setPriority] = useState<TaskPriority>("Medium");
   const [dueAt, setDueAt] = useState("");
+  const [taskType, setTaskType] = useState<TaskType>("General");
+  const [description, setDescription] = useState("");
 
   const createTask = useCreateTaskMutation(threadId === "" ? -1 : threadId);
 
@@ -36,6 +39,9 @@ export function NewTaskForm({ onDone }: { onDone: () => void }) {
       await createTask.mutateAsync({
         priority,
         dueAt: dueAt ? new Date(dueAt).toISOString() : undefined,
+        taskType,
+        // Left blank -> server auto-populates from the thread's most recent message.
+        description: description || undefined,
       });
       toast.success("Task created");
       onDone();
@@ -87,6 +93,30 @@ export function NewTaskForm({ onDone }: { onDone: () => void }) {
             onChange={(event) => setDueAt(event.target.value)}
           />
         </div>
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="new-task-type">Task type</Label>
+        <select
+          id="new-task-type"
+          value={taskType}
+          onChange={(event) => setTaskType(event.target.value as TaskType)}
+          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        >
+          {TASK_TYPES.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="new-task-description">Description (optional — defaults to the thread's last message)</Label>
+        <Textarea
+          id="new-task-description"
+          rows={2}
+          value={description}
+          onChange={(event) => setDescription(event.target.value)}
+        />
       </div>
       <div className="flex justify-end gap-2">
         <Button type="button" variant="ghost" size="sm" onClick={onDone}>

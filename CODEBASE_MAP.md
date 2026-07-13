@@ -273,15 +273,15 @@ rather than deferred — no longer an open item.
 **Components**:
 - `components/layout/AppShell.tsx` — top nav; mounts the single shared `useInboxHub()` connection (:18). `NAV_LINKS` (:8-13) now includes Templates/Audit log alongside Inbox/Task board.
 - `components/inbox/ConversationPanel.tsx` — merged inbound/outbound view, reply, assign, auto-scroll-if-at-bottom. Messages are paginated server-side (step 6/FR-010): `useThread` only returns page 1 (most recent); local `olderMessages` state (:26) accumulates additional pages fetched directly via `apiClient` (bypassing TanStack Query's cache, since this is an append-only local scrollback) when the "Load earlier messages" button (:146-152, shown while `hasMoreOlder`) is clicked.
-- `components/inbox/CreateTaskForm.tsx` — inline "make task" form.
-- `components/tasks/NewTaskForm.tsx` — thread-picker + priority + due date (no standalone task endpoint).
-- `components/tasks/TaskDetailPanel.tsx` — fetching via `useTask(id)` (:12-19) is what triggers BR-014's server-side revert.
+- `components/inbox/CreateTaskForm.tsx` — inline "make task" form; now also collects `TaskType` (Select) and `Description` (Textarea, optional — blank submits fall through to the server's auto-populate-from-last-message default, increment 7).
+- `components/tasks/NewTaskForm.tsx` — thread-picker + priority + due date, now also `TaskType`/`Description` (same optional-blank behavior as `CreateTaskForm`, increment 7).
+- `components/tasks/TaskDetailPanel.tsx` — fetching via `useTask(id)` (:12-19) is what triggers BR-014's server-side revert. Legacy-only, unmodified — the redesign's equivalent is `task-detail-sheet.tsx` below.
 - `components/PriorityBadge.tsx`, `components/TaskStatusBadge.tsx` — color+label badges.
 - `components/ui/*` — shadcn primitives (generated).
 
 **Hooks** (`src/hooks/`):
 - `useThreads.ts`: `useThreads()` :7 (list), `useThread(id)` :14 (detail — `messages` is now `PagedResult<ThreadMessageDto>`, page 1 only, step 6/FR-010; invalidates `["threads"]` since opening resets unread), `useReplyMutation` :30, `useAssignMutation` :41, `useCreateTaskMutation` :53.
-- `useTasks.ts`: `useTasks(status?)` :7, `useTask(id)` :21 (triggers BR-014 revert), `useUpdateTaskMutation()` :29.
+- `useTasks.ts`: `useTasks(statusOrFilters?)` — accepts either a bare status shorthand (legacy `TaskBoardPage`) or a full `TaskListFilters` object (`TaskBoardPageV2`'s filter bar, increment 7: description/patientName/dueFrom/dueTo/isActive/assignedStaffId), `useTask(id)` (triggers BR-014 revert), `useUpdateTaskMutation()`, `useForwardTaskMutation()` (increment 7, `POST /api/tasks/{id}/forward`).
 - `useInboxHub.ts`: `useInboxHub()` :20 — owns SignalR connection lifecycle + query invalidation.
 - `useAudit.ts` (step 6): `useAuditLog(isAdmin, filters)` — picks `/api/audit` vs `/api/audit/mine` based on `isAdmin`, builds the query string from `actor`/`action`/`from`/`to`/`page`/`pageSize`.
 - `useTemplates.ts` (step 6): `useTemplates()` (list), `useCreateTemplateMutation()`, `useUpdateTemplateMutation()` (PATCH, invalidates `["templates"]`).
@@ -403,7 +403,20 @@ legacy file listed in §6 above is unmodified.
     escalated→in-progress revert exactly as before; "Assign to me"/"Complete" call the same
     `useUpdateTaskMutation()` instance the board owns (one shared mutation, matching legacy's
     single-instance-for-all-rows behavior). `?task={id}` drives the sheet the same way Inbox's
-    `?thread={id}` drives thread selection.
+    `?thread={id}` drives thread selection. **Increment 7 additions**: `TaskType`/`Description`
+    displayed (badge + text block if present); "Mark inactive"/"Mark active" toggle
+    (`useUpdateTaskMutation` with `isActive`); "Forward" button opens a `Dialog` with a
+    `useAssignableUsers()`-backed `Select` + optional note, calling the new
+    `useForwardTaskMutation()` (`POST /api/tasks/{id}/forward`).
+  - **Filter bar** (increment 7): Description/Patient (server-side substring filters),
+    Due from/Due to (server-side range, defaults to today-6/today via the new shared
+    `src/lib/dateRangeFilter.ts` util — `defaultFromDaysAgo(6)`/`toDateInputValue`/
+    `toInstantRange`, extracted from what was previously duplicated verbatim in
+    `AuditLogPage.tsx`/`AuditLogPageV2.tsx`, both now consume the same util), Active/Inactive
+    (server-side, defaults `"Active"`), Status (client-side, alongside the pre-existing
+    Priority/Assignee/Recurring-only filters — kept client-side since the Board view needs
+    every status at once to populate its columns). Assignee filter now sourced from
+    `useAssignableUsers()` (increment 6) instead of the old dedupe-from-tasks hack.
   - "New task" reuses the untouched legacy `NewTaskForm` in a `Dialog` (same reuse pattern as
     the command palette and Inbox's "Make task").
   - **Same thread-name cross-reference gap as the command palette**: cards/sheet fall back to
