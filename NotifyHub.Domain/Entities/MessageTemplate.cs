@@ -15,5 +15,7 @@ public class MessageTemplate
     /// Hours before/after the trigger event this template should fire — §9: positive integer.
     public int OffsetHours { get; set; }
 
+    public bool IsActive { get; set; } = true;
+
     public ICollection<OutboundMessage> OutboundMessages { get; set; } = new List<OutboundMessage>();
 }

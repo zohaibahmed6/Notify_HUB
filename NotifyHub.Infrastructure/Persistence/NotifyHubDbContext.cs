@@ -16,6 +16,7 @@ public class NotifyHubDbContext(DbContextOptions<NotifyHubDbContext> options) : 
     public DbSet<ConversationThread> Threads => Set<ConversationThread>();
     public DbSet<InboundMessage> InboundMessages => Set<InboundMessage>();
     public DbSet<TaskItem> Tasks => Set<TaskItem>();
+    public DbSet<Bookmark> Bookmarks => Set<Bookmark>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

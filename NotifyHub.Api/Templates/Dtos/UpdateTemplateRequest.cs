@@ -7,4 +7,5 @@ public class UpdateTemplateRequest
     public string? Body { get; set; }
     public string? TriggerType { get; set; }
     public int? OffsetHours { get; set; }
+    public bool? IsActive { get; set; }
 }

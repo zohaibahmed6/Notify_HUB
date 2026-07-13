@@ -38,7 +38,8 @@ manual per-entity registration) — every `IEntityTypeConfiguration<T>` in
 | `RefreshToken` → `refresh_tokens` | `RefreshToken.cs:3` | `RefreshTokenConfiguration.cs:7` | Id, UserId, TokenHash, ExpiresAt, RevokedAt | Unique index `TokenHash` (:18); index `UserId` (:25); FK on `User` side |
 | `Patient` → `patients` | `Patient.cs:4` | `PatientConfiguration.cs:7` | Id, Name, Phone, OptOutAt | Unique index `Phone` (:22) |
 | `Appointment` → `appointments` (stub) | `Appointment.cs:6` | `AppointmentConfiguration.cs:7` | Id, PatientId, ScheduledAt, Status | FK `Patient`, cascade delete (:22-25); index `PatientId` (:27) |
-| `MessageTemplate` → `message_templates` | `MessageTemplate.cs:5` | `MessageTemplateConfiguration.cs:7` | Id, Name, Body (≤1000), TriggerType, OffsetHours | No indexes |
+| `MessageTemplate` → `message_templates` | `MessageTemplate.cs:5` | `MessageTemplateConfiguration.cs:7` | Id, Name, Body (≤1000), TriggerType, OffsetHours, **IsActive** (added increment 8, default `true`) | No indexes |
+| `Bookmark` → `bookmarks` | `Bookmark.cs:5` (added increment 8) | `BookmarkConfiguration.cs:7` | Id, Label (≤100), Description (≤300), InsertText (≤1000) | No indexes, no relations — flat admin-curated snippet library (§5), e.g. Label="Patient Name"/InsertText="{{patient_name}}", inserted into a `MessageTemplate.Body` from the template editor's dropdown |
 | `OutboundMessage` → `outbound_messages` | `OutboundMessage.cs:5` | `OutboundMessageConfiguration.cs:7` | Id, PatientId, ThreadId?, TemplateId?, SenderType, TriggerReference?, RenderedBody?, Status, IdempotencyKey?, AttemptCount, NextRetryAt? | Unique index `IdempotencyKey` (:32); FKs Patient/Template/Thread all `Restrict` (:36-49); composite index `(Status, NextRetryAt)` (:52); composite index `(ThreadId, CreatedAt)` (:53) |
 | `DeliveryStatusHistory` → `delivery_status_history` | `DeliveryStatusHistory.cs:5` | `DeliveryStatusHistoryConfiguration.cs:7` | Id, MessageId, Status, OccurredAt | FK `Message`, cascade delete (:22-25); index `MessageId` (:27) |
 | `AuditLog` → `audit_log` | `AuditLog.cs:4` | `AuditLogConfiguration.cs:7` | Id, Actor, Action, EntityType, EntityId, OccurredAt, Detail? | Composite index `(EntityType, EntityId)` (:20); index `Actor` (:21); no FK (polymorphic ref) |
@@ -132,13 +133,26 @@ now calls this shared resolver instead of its own inline query — same behavior
 | POST `api/tasks/{id}/forward` | `Forward` (added increment 4) | default authenticated | manual task forwarding (§1) — body `{targetUserId, note?}`; rejects (400) a non-Active target; always audits (`action:"forward"`, detail includes the note if given) unlike the plain `PATCH` reassignment path above; broadcasts `taskAssignmentChanged`; deliberately leaves workflow `Status` untouched (forwarding an Escalated task keeps it Escalated for the new assignee — BR-014's auto-revert is about the current assignee acting on their own task, not who forwarded it to them) |
 
 ### `TemplatesController` — `NotifyHub.Api/Controllers/TemplatesController.cs` (`[Route("api/templates")]` :14)
-| Verb + route | Method:line | Auth |
-|---|---|---|
-| GET `api/templates` | `List` :17 | default authenticated |
-| POST `api/templates` | `Create` :35 | default authenticated |
-| PATCH `api/templates/{id}` | `Update` :59-89 | default authenticated |
+| Verb + route | Method:line | Auth | Notes |
+|---|---|---|---|
+| GET `api/templates` | `List` :17 | default authenticated | optional `isActive` filter (increment 8) — omit to see everything, unlike Tasks' "defaults to Active" |
+| POST `api/templates` | `Create` :35 | default authenticated | new templates default `IsActive=true` |
+| PATCH `api/templates/{id}` | `Update` :59-89 | default authenticated | now also applies `IsActive` (increment 8) |
 
 Applies only non-null fields from `UpdateTemplateRequest` (`NotifyHub.Api/Templates/Dtos/UpdateTemplateRequest.cs`) — added step 6 to close §6b's "create/edit" gap (only `GET`/`POST` existed before).
+
+### `BookmarksController` — `NotifyHub.Api/Controllers/BookmarksController.cs` (`[Route("api/bookmarks")]`, added increment 8)
+| Verb + route | Auth |
+|---|---|
+| GET `api/bookmarks` | default authenticated |
+| POST `api/bookmarks` | `[Authorize(Roles="Admin")]` |
+| PATCH `api/bookmarks/{id}` | `[Authorize(Roles="Admin")]` |
+| DELETE `api/bookmarks/{id}` | `[Authorize(Roles="Admin")]` |
+
+Simple CRUD, no pagination (small admin-curated list). `List`'s in-memory `.Select(ToDto)` (not
+inside the `IQueryable`) is deliberate — EF Core can't reliably translate a call to a static C#
+mapping method into SQL, unlike `TemplatesController.List`'s inline `new TemplateDto {...}`
+projection, which stays directly in the `Select()`.
 
 ### `AuditController` — `NotifyHub.Api/Controllers/AuditController.cs` (`[Route("api/audit")]` :17-19, step 6/FR-011)
 | Verb + route | Method:line | Auth | Notes |
@@ -205,6 +219,8 @@ All registered as `IDbSeedStep` in `NotifyHub.Api/Program.cs` (:55-61) and run u
 Api startup (`Program.cs` :105-106), including in every integration test that boots the Api
 pipeline — no environment gating. Order: `UserSeedStep` → `SecondStaffSeedStep` →
 `PatientAppointmentSeedStep` (10 demo patients+appointments) → `TemplateSeedStep` (4 templates) →
+`BookmarkSeedStep` (increment 8 — 2 bookmarks: "Patient Name"/`{{patient_name}}`, "Appointment
+Time"/`{{appointment_time}}`, matching exactly what `TemplateRenderer` resolves at send time) →
 `DemoOutboundMessageSeedStep` (10 demo messages: 5 appointment-reminder + 3 medication + 2 prescription, `DemoOutboundMessageSeedStep.cs:32-49` — corrected from a stale "5" here) → `PerformanceSeedStep` (step 6, FR-010, 45,000 outbound + 5,000 inbound at the default `targetMessageCount=50,000`, `OutboundRatio=0.9`).
 
 Deterministic seed-only baseline for `outbound_messages`: 45,000 (perf) + 10 (demo) = 45,010. Any count above that is expected, not a seeding bug: `ReminderScheduler.CreateDueRemindersAsync` (`NotifyHub.Infrastructure/Reminders/ReminderScheduler.cs:121-133`) keeps inserting new rows over wall-clock time for the 10 real `PatientAppointmentSeedStep` appointments as their 48h/2h reminder windows open (up to 2 per appointment) — distinguish via `TriggerReference` prefix: `perfseed:*` (45,000), `appointment:*:created`/`medication:*:seed`/`prescription:*:seed` (10), `appointment:*:reminder:*h:*` (live, growing).
@@ -468,7 +484,7 @@ Run: `dotnet test NotifyHub.Tests/NotifyHub.Domain.Tests`
 ### Integration (`NotifyHub.Tests/NotifyHub.Integration.Tests/`)
 | Test file | Factory |
 |---|---|
-| `AuthEndpointTests.cs`, `EscalationJobTests.cs`, `InboundWebhookTests.cs`, `MessageDispatcherOptOutTests.cs`, `TasksControllerTests.cs`, `ThreadsControllerTests.cs`, `ReminderSchedulerTests.cs`, `AuditControllerTests.cs`, `TemplatesControllerTests.cs`, `UsersControllerTests.cs` (added increment 2 — create/assignable-filtering/auto-forward-on-status-change), `ActiveUserRequiredFilterTests.cs` (added increment 3 — mutating-request 403 for Inactive users, GET still works, login still works even after the JWT was issued while Active) | `CustomWebApplicationFactory` (EF Core InMemory) |
+| `AuthEndpointTests.cs`, `EscalationJobTests.cs`, `InboundWebhookTests.cs`, `MessageDispatcherOptOutTests.cs`, `TasksControllerTests.cs`, `ThreadsControllerTests.cs`, `ReminderSchedulerTests.cs`, `AuditControllerTests.cs`, `TemplatesControllerTests.cs`, `UsersControllerTests.cs` (added increment 2 — create/assignable-filtering/auto-forward-on-status-change), `ActiveUserRequiredFilterTests.cs` (added increment 3 — mutating-request 403 for Inactive users, GET still works, login still works even after the JWT was issued while Active), `BookmarksControllerTests.cs` (added increment 8 — CRUD + role checks) | `CustomWebApplicationFactory` (EF Core InMemory) |
 | `OutboundPipelineTests.cs` | `ReliableGatewayWebApplicationFactory` (happy path) / `FailingGatewayWebApplicationFactory` (retry) — both subclass `CustomWebApplicationFactory` |
 | `InboundWebhookThreadRaceMySqlTests.cs` | `MySqlWebApplicationFactory` — real MySQL, `[Trait("Category","MySql")]`, exercises `FindOrCreateThreadAsync`'s race guard under genuine concurrent connections |
 | `PerformanceSeedStepTests.cs` | **No factory** — deliberately builds its own isolated `NotifyHubDbContext` (`UseInMemoryDatabase` with a fresh GUID name) instead of using `CustomWebApplicationFactory`, since that factory's automatic startup seeding (with `PerformanceSeedStep` registered as a real `IDbSeedStep`) would trip this step's own idempotency marker before the test calls `RunAsync` explicitly |

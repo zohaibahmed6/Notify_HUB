@@ -26,5 +26,7 @@ public class MessageTemplateConfiguration : IEntityTypeConfiguration<MessageTemp
             .IsRequired();
 
         builder.Property(t => t.OffsetHours).IsRequired();
+
+        builder.Property(t => t.IsActive).IsRequired();
     }
 }

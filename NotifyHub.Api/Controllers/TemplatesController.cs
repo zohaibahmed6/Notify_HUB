@@ -14,10 +14,17 @@ namespace NotifyHub.Api.Controllers;
 [Route("api/templates")]
 public class TemplatesController(NotifyHubDbContext db) : ControllerBase
 {
+    /// §5: `isActive` filter — omit to see everything (unlike Tasks, there's no
+    /// "defaults to Active" requirement for Templates, just a filter control on the screen).
     [HttpGet]
-    public async Task<ActionResult<IReadOnlyList<TemplateDto>>> List(CancellationToken ct)
+    public async Task<ActionResult<IReadOnlyList<TemplateDto>>> List(bool? isActive, CancellationToken ct)
     {
-        var templates = await db.MessageTemplates
+        var query = db.MessageTemplates.AsQueryable();
+
+        if (isActive is not null)
+            query = query.Where(t => t.IsActive == isActive.Value);
+
+        var templates = await query
             .OrderBy(t => t.Id)
             .Select(t => new TemplateDto
             {
@@ -26,6 +33,7 @@ public class TemplatesController(NotifyHubDbContext db) : ControllerBase
                 Body = t.Body,
                 TriggerType = t.TriggerType.ToString(),
                 OffsetHours = t.OffsetHours,
+                IsActive = t.IsActive,
             })
             .ToListAsync(ct);
 
@@ -84,6 +92,9 @@ public class TemplatesController(NotifyHubDbContext db) : ControllerBase
         if (request.OffsetHours is not null)
             template.OffsetHours = request.OffsetHours.Value;
 
+        if (request.IsActive is not null)
+            template.IsActive = request.IsActive.Value;
+
         await db.SaveChangesAsync(ct);
         return Ok(ToDto(template));
     }
@@ -95,5 +106,6 @@ public class TemplatesController(NotifyHubDbContext db) : ControllerBase
         Body = t.Body,
         TriggerType = t.TriggerType.ToString(),
         OffsetHours = t.OffsetHours,
+        IsActive = t.IsActive,
     };
 }

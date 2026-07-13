@@ -56,6 +56,7 @@ builder.Services.AddScoped<IDbSeedStep, UserSeedStep>();
 builder.Services.AddScoped<IDbSeedStep, SecondStaffSeedStep>();
 builder.Services.AddScoped<IDbSeedStep, PatientAppointmentSeedStep>();
 builder.Services.AddScoped<IDbSeedStep, TemplateSeedStep>();
+builder.Services.AddScoped<IDbSeedStep, BookmarkSeedStep>();
 builder.Services.AddScoped<IDbSeedStep, DemoOutboundMessageSeedStep>();
 // FR-010: default 50,000 in production; test factories override Seed:PerformanceMessageCount
 // to a small number so booting the Api pipeline in every integration test doesn't also seed
