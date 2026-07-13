@@ -194,6 +194,10 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
         if (targetUser is null)
             return Problem(statusCode: StatusCodes.Status400BadRequest, title: $"User {targetStaffId} does not exist.");
 
+        // §7: Inactive/OnLeave users must not receive new work.
+        if (targetUser.Status != UserStatus.Active)
+            return Problem(statusCode: StatusCodes.Status400BadRequest, title: $"User {targetUser.Username} is not Active and cannot be assigned.");
+
         thread.AssignedStaffId = targetStaffId;
         var callerUsername = User.FindFirstValue(ClaimTypes.Name)!;
         AuditLogger.Add(db, actor: callerUsername, action: "assignment", entityType: "Thread", entityId: thread.Id,

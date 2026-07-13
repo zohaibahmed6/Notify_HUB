@@ -98,6 +98,10 @@ public class TasksController(NotifyHubDbContext db) : ControllerBase
             if (targetUser is null)
                 return Problem(statusCode: StatusCodes.Status400BadRequest, title: $"User {request.AssignedStaffId} does not exist.");
 
+            // §7: Inactive/OnLeave users must not receive new work.
+            if (targetUser.Status != UserStatus.Active)
+                return Problem(statusCode: StatusCodes.Status400BadRequest, title: $"User {targetUser.Username} is not Active and cannot be assigned.");
+
             task.AssignedStaffId = request.AssignedStaffId;
         }
 

@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc.Authorization;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using NotifyHub.Api.Auth;
+using NotifyHub.Api.Users;
 
 namespace NotifyHub.Api.Extensions;
 
@@ -66,6 +67,12 @@ public static class AuthServiceCollectionExtensions
         services.Configure<MvcOptions>(options =>
         {
             options.Filters.Add(new AuthorizeFilter());
+
+            // §7: Inactive/OnLeave users are read-only. Runs in the Action-filter stage,
+            // strictly after AuthorizeFilter's Authorization stage, regardless of
+            // registration order (ASP.NET Core always runs authorization filters first) —
+            // so this only ever sees already-authenticated requests.
+            options.Filters.Add<ActiveUserRequiredFilter>();
         });
 
         return services;

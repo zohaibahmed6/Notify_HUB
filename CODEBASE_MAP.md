@@ -74,6 +74,19 @@ Default auth policy: every endpoint requires authentication unless marked otherw
 role-based fallback policy, so any authenticated user (Admin or Staff) passes unless a controller/
 action opts in to something stricter.
 
+**Global read-only enforcement (§7, this feature set)**: `ActiveUserRequiredFilter`
+(`NotifyHub.Api/Users/ActiveUserRequiredFilter.cs`), registered alongside `AuthorizeFilter` in the
+same `MvcOptions.Filters` list — an `IAsyncActionFilter`, so it always runs *after* `AuthorizeFilter`
+(an `IAuthorizationFilter`) regardless of registration order, i.e. only ever sees already-
+authenticated requests. Skips safe HTTP methods (GET/HEAD/OPTIONS) and any `[AllowAnonymous]`
+action (login/refresh/logout, webhooks, mock-gateway). For everything else, looks up the caller's
+live `User.Status` from the DB (deliberately not the JWT's claims — the access token is valid up to
+`Jwt:AccessTokenMinutes`, so a claims-based check would let a just-deactivated user keep mutating
+for up to 30 min) and returns 403 if not `Active`. Assignment-target validation was also added at
+this point: `ThreadsController.Assign` and `TasksController.Update`'s `AssignedStaffId` branch now
+both reject (400) a target user whose `Status != Active`, so Inactive/OnLeave users can't be handed
+new work through those paths either.
+
 ### `AuthController` — `NotifyHub.Api/Controllers/AuthController.cs` (`[Route("api/auth")]` :19)
 | Verb + route | Method:line | Auth |
 |---|---|---|
@@ -440,7 +453,7 @@ Run: `dotnet test NotifyHub.Tests/NotifyHub.Domain.Tests`
 ### Integration (`NotifyHub.Tests/NotifyHub.Integration.Tests/`)
 | Test file | Factory |
 |---|---|
-| `AuthEndpointTests.cs`, `EscalationJobTests.cs`, `InboundWebhookTests.cs`, `MessageDispatcherOptOutTests.cs`, `TasksControllerTests.cs`, `ThreadsControllerTests.cs`, `ReminderSchedulerTests.cs`, `AuditControllerTests.cs`, `TemplatesControllerTests.cs`, `UsersControllerTests.cs` (added increment 2 — create/assignable-filtering/auto-forward-on-status-change) | `CustomWebApplicationFactory` (EF Core InMemory) |
+| `AuthEndpointTests.cs`, `EscalationJobTests.cs`, `InboundWebhookTests.cs`, `MessageDispatcherOptOutTests.cs`, `TasksControllerTests.cs`, `ThreadsControllerTests.cs`, `ReminderSchedulerTests.cs`, `AuditControllerTests.cs`, `TemplatesControllerTests.cs`, `UsersControllerTests.cs` (added increment 2 — create/assignable-filtering/auto-forward-on-status-change), `ActiveUserRequiredFilterTests.cs` (added increment 3 — mutating-request 403 for Inactive users, GET still works, login still works even after the JWT was issued while Active) | `CustomWebApplicationFactory` (EF Core InMemory) |
 | `OutboundPipelineTests.cs` | `ReliableGatewayWebApplicationFactory` (happy path) / `FailingGatewayWebApplicationFactory` (retry) — both subclass `CustomWebApplicationFactory` |
 | `InboundWebhookThreadRaceMySqlTests.cs` | `MySqlWebApplicationFactory` — real MySQL, `[Trait("Category","MySql")]`, exercises `FindOrCreateThreadAsync`'s race guard under genuine concurrent connections |
 | `PerformanceSeedStepTests.cs` | **No factory** — deliberately builds its own isolated `NotifyHubDbContext` (`UseInMemoryDatabase` with a fresh GUID name) instead of using `CustomWebApplicationFactory`, since that factory's automatic startup seeding (with `PerformanceSeedStep` registered as a real `IDbSeedStep`) would trip this step's own idempotency marker before the test calls `RunAsync` explicitly |
