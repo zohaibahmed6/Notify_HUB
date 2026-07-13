@@ -1,0 +1,117 @@
+# AI Usage Log (FR-019)
+
+**Declared tools:** Claude (Claude Code, CLI agent) and ChatGPT — both used throughout the
+build, not only in an early planning phase.
+
+I used Claude Code for essentially all code generation, scaffolding, testing, and debugging,
+working directly against the repository. I used ChatGPT in parallel as a process/workflow
+sounding board and technical explainer — never for generating application code.
+
+## Phases covered
+
+| Phase | How AI was used |
+|---|---|
+| **Design** | I built `PROJECT_CONTEXT.md` — scope, data model, API surface, business rules — turn-by-turn in Claude chat before writing any code. Separately, given the tight window, I asked ChatGPT: *"I have only 3 days. What prompt should I provide to generate the SRS?"* — used its answer to shape how I kicked off the Claude session. I also asked ChatGPT to *"Explain Windows Service vs Worker"* in plain terms before locking in ADR 0002. |
+| **Scaffold** | I had Claude Code generate the solution structure, EF Core model + migrations, Docker/compose, and CI skeleton, then iterated with it against `dotnet build`/`dotnet test` output until it was clean. |
+| **Implement** | I built FR-001 through FR-011, the remaining screens, and the audit/seed work with Claude Code across the numbered build steps, reviewing and testing each step before moving to the next. |
+| **Test** | I had Claude Code write domain and integration tests alongside each feature, not after. I asked it to add a real-MySQL race test once it flagged an untested race condition unprompted. |
+| **Debug** | Live Docker walkthroughs surfaced real bugs I fixed in-session with Claude. Along the way I used ChatGPT for quick unblocking questions: *"Should I rebuild everything or just refresh the page after this frontend change?"* and *"What does this Docker log mean?"* when I hit an unfamiliar log line. |
+| **Docs** | I had Claude Code produce this file, the ADRs, the OWASP doc, `CODEBASE_MAP.md`, and `STATUS.md`, keeping them updated incrementally. I also asked ChatGPT directly: *"Analyze this AI usage log and tell me what is missing"* — its answer is what drove this revision. |
+
+**Other real ChatGPT prompts from the build, not tied to a single phase above:** *"Can I push to
+git now?"*, *"Does shifting to plan mode in Claude consume fewer tokens?"*, *"Provide me more
+token optimize approaches."* — day-to-day workflow and cost-efficiency questions rather than
+design/code questions, but genuine usage worth being honest about rather than omitting.
+
+## How I verified output
+
+My default habit through the build was to run generated code, not just read it: `docker-compose
+up`, hit the actual screen or endpoint, or run the relevant test suite before moving on to the
+next piece. Two concrete cases below are where that habit caught a real problem Claude's own
+report had missed.
+
+## Three representative sessions
+
+### 1. Frontend — shared inbox screen + real-time updates (step 4)
+
+I asked Claude Code to build `InboxPage`/`ConversationPanel`/`useInboxHub` end-to-end in one
+session: thread list, merged inbound/outbound conversation view (BR-008), reply/assign/make-task
+actions, and a SignalR client wired to `/hubs/inbox`. The part I was most worried about wasn't the
+SignalR wiring — it was §6c's UX rule that a new real-time message must append below an open draft
+*without touching the draft*, and auto-scroll *only if the view was already at the bottom*. I'd
+specified that constraint precisely in the spec beforehand, and Claude got the state-tracking
+(`wasAtBottomRef` in `ConversationPanel.tsx`) right on the first pass — I tested it manually with
+two open tabs to confirm before accepting it.
+
+### 2. Backend/Domain — outbound retry/backoff pipeline (step 3)
+
+I had Claude implement FR-003's idempotent-dispatch-with-backoff and BR-011's retry cap as a pure,
+unit-tested `RetryBackoffPolicy` class, kept separate from the EF Core/HTTP dispatcher logic
+deliberately, so the retry math could be tested with zero database dependency. Mid-session, Claude
+flagged a genuine spec ambiguity instead of guessing past it: BR-011 said "5 attempts" but FR-003
+listed 5 distinct backoff values, which only makes sense if "5 attempts" means 5 retries on top of
+the initial send (6 total). I confirmed that reading, and we set `RetryBackoffPolicy.MaxAttempts`
+to 6 and updated the tests to match.
+
+### 3. Backend + docs — audit log, 50k-message seed, and this documentation step (steps 6–7)
+
+I told Claude to check what already existed before building anything new for step 6. It grepped
+every `AuditLogger.Add` call site and reported that all 5 of FR-011's required audit event types
+were already wired from earlier steps, so we skipped redundant rework and built only the real
+gaps: the `/api/audit` endpoints, the Templates edit endpoint, and the 50k seed. Two things I
+caught myself during this step, by testing directly rather than reading code:
+
+- **Audit log date filter matched nothing on a single-day range.** I selected the same date for
+  "from" and "to" (12-07-2026 to 12-07-2026) to check one day's activity, and got zero results
+  even though matching entries existed. I traced it myself: both inputs were converting to
+  midnight (00:00:00) of that day, so a same-day range collapsed to one instant with no window at
+  all. I had Claude fix it so the "to" date converts to end-of-day (23:59:59.999) instead of
+  start-of-day, so a single selected day correctly covers the whole day (`AuditLogPage.tsx`).
+- **50k seed count didn't match what I actually checked.** Claude reported the performance seed
+  as tested and working. When I checked the outbound message count directly, it came out around
+  45k, not 50k. I didn't accept that at face value — I sent it back to Claude to recheck and
+  explain. Claude identified the real issue: the "50k" target is total messages (outbound +
+  inbound, ~90/10 split), so ~45k outbound is the expected number, not a shortfall. I had it correct
+  the documentation to state the real split explicitly instead of the ambiguous "50k messages"
+  framing that caused my confusion in the first place.
+
+## "AI was wrong / unsafe" example, and the fix
+
+During step 6, Claude found that `ThreadsController.Detail` loaded a thread's entire inbound+
+outbound message history unpaginated on every request. It logged this as "found, not fixed — out
+of scope for this step" in the first pass of `STATUS.md`'s review checklist, reasoning that
+FR-010's pagination requirement was really about the inbox list, not an individual thread's detail
+view. **I caught that reasoning was wrong**: FR-010's acceptance criteria says thread views must
+stay fast and paginated, in the affirmative, and a thread accumulating thousands of messages
+(directly provoked by the 50k-message seed being built in the same step) would make this a real,
+user-visible bug, not a hypothetical one. I pushed back on the "out of scope" framing and had
+Claude fix it properly: a genuine merge-pagination (`GetMessagesPageAsync`) that pulls only the
+needed rows from each table, plus a test proving it doesn't load full history, plus a frontend
+"Load earlier messages" affordance. The lesson I took from this: when Claude's literal work-item
+list and a requirement's plain-English wording disagree, I need it to flag that as a judgment call
+rather than silently resolving in favor of the narrower reading — and I said so explicitly for the
+rest of the build.
+
+## AI used beyond code generation
+
+1. **Root-cause diagnosis of a dependency conflict, not a code-writing task.** Between build
+   steps, `npm ci` started failing with an `ERESOLVE` peer-dependency error. I had Claude diagnose
+   whether this was pre-existing or caused by the session's own changes, check the npm registry for
+   a compatible version, apply the fix, and verify it with a from-scratch `npm ci` + build + dev
+   cycle — no source code was written or changed in this task.
+2. **This documentation step itself, prompted by ChatGPT.** I asked ChatGPT to analyze a draft of
+   this log and tell me what was missing — it flagged that my ChatGPT usage wasn't substantiated,
+   that the log read like Claude narrating itself rather than me describing my own verification,
+   and that I only had one clearly-documented correction across three sessions. That review is
+   directly why this version exists.
+3. **Coverage measurement.** I had Claude run `dotnet test --collect:"XPlat Code Coverage"` plus
+   `reportgenerator` to get a real, defensible 94.2% domain-coverage figure for FR-013, rather than
+   estimating one.
+
+## Tooling note
+
+I used Claude Code (terminal-based agentic coding tool) for all code generation, testing, and
+debugging directly against this repository, and ChatGPT in parallel for workflow questions,
+tool/token-usage advice, drafting the SRS-generation prompt, technical explanations, and reviewing
+this log's own completeness — consistent with my declared tool pair (Claude, ChatGPT). No other
+AI tool touched this repository during the build.
