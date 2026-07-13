@@ -128,7 +128,8 @@ now calls this shared resolver instead of its own inline query — same behavior
 |---|---|---|---|
 | GET `api/tasks` | `List` :19 | default authenticated | |
 | GET `api/tasks/{id}` | `Detail` :51 | default authenticated | BR-014 auto-revert if opened by assignee (:58-64) |
-| PATCH `api/tasks/{id}` | `Update` :69 | default authenticated | BR-014 auto-revert on assignee action (:119-124); recurrence spawn via `SpawnNextOccurrenceIfDue` (:133-159) |
+| PATCH `api/tasks/{id}` | `Update` :69 | default authenticated | BR-014 auto-revert on assignee action (:119-124); recurrence spawn via `SpawnNextOccurrenceIfDue` (:133-159); `AssignedStaffId` branch now rejects (400) a non-Active target (§7, increment 3) — but still never audited, a pre-existing gap increment 4's `Forward` action doesn't retroactively fix |
+| POST `api/tasks/{id}/forward` | `Forward` (added increment 4) | default authenticated | manual task forwarding (§1) — body `{targetUserId, note?}`; rejects (400) a non-Active target; always audits (`action:"forward"`, detail includes the note if given) unlike the plain `PATCH` reassignment path above; broadcasts `taskAssignmentChanged`; deliberately leaves workflow `Status` untouched (forwarding an Escalated task keeps it Escalated for the new assignee — BR-014's auto-revert is about the current assignee acting on their own task, not who forwarded it to them) |
 
 ### `TemplatesController` — `NotifyHub.Api/Controllers/TemplatesController.cs` (`[Route("api/templates")]` :14)
 | Verb + route | Method:line | Auth |
@@ -175,7 +176,7 @@ Race-safe find-or-create: `FindOrCreateThreadAsync` (:119-141) — see §5.
 | `inboundMessageReceived` | `WebhooksController.cs:108-114` | `{ threadId, patientId, body, receivedAt }` |
 | `outboundMessageSent` | `ThreadsController.cs:127` | `{ threadId }` |
 | `threadAssigned` | `ThreadsController.cs:161` | `{ threadId, assignedStaffId }` |
-| `taskAssignmentChanged` | `UsersController.cs` (auto-forward on status change, increment 2); `TasksController.cs` (manual forward, increment 4) | `{ taskId, assignedStaffId }` |
+| `taskAssignmentChanged` | `UsersController.cs` (auto-forward on status change, increment 2); `TasksController.cs` (manual forward, increment 4, implemented) | `{ taskId, assignedStaffId }` |
 
 ---
 

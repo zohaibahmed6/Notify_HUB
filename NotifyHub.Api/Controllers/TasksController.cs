@@ -1,11 +1,14 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using NotifyHub.Api.Common;
+using NotifyHub.Api.Inbox;
 using NotifyHub.Api.Tasks.Dtos;
 using NotifyHub.Domain.Entities;
 using NotifyHub.Domain.Enums;
 using NotifyHub.Domain.Tasks;
+using NotifyHub.Infrastructure.Auditing;
 using NotifyHub.Infrastructure.Persistence;
 
 namespace NotifyHub.Api.Controllers;
@@ -14,7 +17,7 @@ namespace NotifyHub.Api.Controllers;
 /// policy exactly (same reasoning as TemplatesController).
 [ApiController]
 [Route("api/tasks")]
-public class TasksController(NotifyHubDbContext db) : ControllerBase
+public class TasksController(NotifyHubDbContext db, IHubContext<InboxHub> inboxHub) : ControllerBase
 {
     [HttpGet]
     public async Task<ActionResult<PagedResult<TaskDto>>> List(
@@ -128,6 +131,40 @@ public class TasksController(NotifyHubDbContext db) : ControllerBase
         }
 
         await db.SaveChangesAsync(ct);
+        return Ok(ToDto(task));
+    }
+
+    /// §1: explicit manual forwarding, distinct from the plain PATCH AssignedStaffId path —
+    /// always audited (PATCH's AssignedStaffId branch never has been, a pre-existing gap
+    /// this doesn't retroactively fix) and rejects a non-Active target. Deliberately leaves
+    /// the workflow Status untouched: BR-014's Escalated->InProgress auto-revert is about
+    /// the *current assignee* taking action on their own task, not about who forwards it to
+    /// them, so forwarding an Escalated task keeps it Escalated for the new assignee.
+    [HttpPost("{id}/forward")]
+    public async Task<ActionResult<TaskDto>> Forward(long id, ForwardTaskRequest request, CancellationToken ct)
+    {
+        var task = await db.Tasks.Include(t => t.AssignedStaff).SingleOrDefaultAsync(t => t.Id == id, ct);
+        if (task is null)
+            return NotFound();
+
+        var targetUser = await db.Users.FindAsync([request.TargetUserId], ct);
+        if (targetUser is null)
+            return Problem(statusCode: StatusCodes.Status400BadRequest, title: $"User {request.TargetUserId} does not exist.");
+
+        if (targetUser.Status != UserStatus.Active)
+            return Problem(statusCode: StatusCodes.Status400BadRequest, title: $"User {targetUser.Username} is not Active and cannot be assigned.");
+
+        var previousAssignee = task.AssignedStaff?.Username ?? "unassigned";
+        task.AssignedStaffId = targetUser.Id;
+        task.AssignedStaff = targetUser; // keep the loaded nav in sync so ToDto below isn't stale
+
+        var callerUsername = User.FindFirstValue(ClaimTypes.Name)!;
+        var detail = $"forwarded to {targetUser.Username} (was {previousAssignee})" + (string.IsNullOrWhiteSpace(request.Note) ? "" : $": {request.Note}");
+        AuditLogger.Add(db, actor: callerUsername, action: "forward", entityType: "TaskItem", entityId: task.Id, detail: detail);
+
+        await db.SaveChangesAsync(ct);
+        await inboxHub.Clients.All.SendAsync("taskAssignmentChanged", new { taskId = task.Id, assignedStaffId = targetUser.Id }, ct);
+
         return Ok(ToDto(task));
     }
 

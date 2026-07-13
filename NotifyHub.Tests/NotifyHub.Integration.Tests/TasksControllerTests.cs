@@ -107,6 +107,63 @@ public class TasksControllerTests(CustomWebApplicationFactory factory) : IClassF
         Assert.Equal(NotifyHubTaskStatus.Escalated, updated.Status);
     }
 
+    [Fact]
+    public async Task Forward_ToActiveUser_ReassignsAndAudits()
+    {
+        var (client, staffId) = await _client.AsStaffAsync();
+        var task = await CreateTaskAsync("+19990001006", staffId, DateTime.UtcNow.AddDays(1));
+
+        var (_, adminId) = await factory.CreateClient().AsAdminAsync();
+
+        var response = await client.PostAsJsonAsync($"/api/tasks/{task.Id}/forward", new { targetUserId = adminId, note = "please pick this up" });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
+
+        var updated = await db.Tasks.SingleAsync(t => t.Id == task.Id);
+        Assert.Equal(adminId, updated.AssignedStaffId);
+        Assert.Equal(NotifyHubTaskStatus.Open, updated.Status); // untouched by forwarding
+
+        var audit = await db.AuditLogs.SingleAsync(a => a.EntityType == "TaskItem" && a.EntityId == task.Id && a.Action == "forward");
+        Assert.Contains("please pick this up", audit.Detail);
+    }
+
+    [Fact]
+    public async Task Forward_ToInactiveUser_Returns400()
+    {
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
+        var inactiveUser = new User { Username = "forward-target-inactive-9007", PasswordHash = "unused", Role = UserRole.Staff, Status = UserStatus.Inactive };
+        db.Users.Add(inactiveUser);
+        await db.SaveChangesAsync();
+
+        var (client, staffId) = await _client.AsStaffAsync();
+        var task = await CreateTaskAsync("+19990001007", staffId, DateTime.UtcNow.AddDays(1));
+
+        var response = await client.PostAsJsonAsync($"/api/tasks/{task.Id}/forward", new { targetUserId = inactiveUser.Id });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Forward_EscalatedTask_DoesNotChangeWorkflowStatus()
+    {
+        var (client, staffId) = await _client.AsStaffAsync();
+        var task = await CreateTaskAsync("+19990001008", staffId, DateTime.UtcNow.AddDays(-1), status: NotifyHubTaskStatus.Escalated);
+
+        var (_, adminId) = await factory.CreateClient().AsAdminAsync();
+        await client.PostAsJsonAsync($"/api/tasks/{task.Id}/forward", new { targetUserId = adminId });
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
+        var updated = await db.Tasks.SingleAsync(t => t.Id == task.Id);
+
+        Assert.Equal(NotifyHubTaskStatus.Escalated, updated.Status);
+        Assert.Equal(adminId, updated.AssignedStaffId);
+    }
+
     private async Task<TaskItem> CreateTaskAsync(
         string phone,
         long ownerId,
