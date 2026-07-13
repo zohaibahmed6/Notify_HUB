@@ -28,3 +28,10 @@ export interface ThreadDetailDto extends ThreadDto {
   // `pageSize` messages; higher page numbers page backward into older history.
   messages: PagedResult<ThreadMessageDto>;
 }
+
+export interface CreateConversationRequest {
+  name: string;
+  phone: string;
+  message: string;
+  scheduledAt?: string;
+}

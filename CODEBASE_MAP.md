@@ -321,7 +321,8 @@ rather than deferred — no longer an open item.
 - `useAudit.ts` (step 6): `useAuditLog(isAdmin, filters)` — picks `/api/audit` vs `/api/audit/mine` based on `isAdmin`, builds the query string from `actor`/`action`/`from`/`to`/`page`/`pageSize`.
 - `useTemplates.ts` (step 6): `useTemplates(isActive?)` (list, `isActive` filter added increment 9), `useCreateTemplateMutation()`, `useUpdateTemplateMutation()` (PATCH, invalidates `["templates"]`).
 - `useBookmarks.ts` (increment 9): `useBookmarks()` (list, any authenticated user), `useCreateBookmarkMutation()`/`useUpdateBookmarkMutation()`/`useDeleteBookmarkMutation()` (Admin-only server-side, used by the Settings > Template tab, increment 11). `apiClient` gained a `.delete()` method to support this (`lib/apiClient.ts`).
-- `useUsers.ts` (this feature set, increment 6): `useAssignableUsers()` → `GET /api/users/assignable`, the roster every assignee-picker should use now — `TaskBoardPageV2.tsx`'s assignee filter switched to this from the old "dedupe usernames off already-fetched tasks" workaround (which could never surface a user with zero assigned tasks). Also `useUsers(filters)` (Admin list), `useCreateUserMutation()`, `useUpdateUserStatusMutation()` (invalidates both `["users"]` and `["tasks"]` since a status change can silently auto-forward tasks).
+- `useUsers.ts` (this feature set, increment 6): `useAssignableUsers()` → `GET /api/users/assignable`, the roster every assignee-picker should use now — `TaskBoardPageV2.tsx`'s assignee filter switched to this from the old "dedupe usernames off already-fetched tasks" workaround (which could never surface a user with zero assigned tasks). Also `useUsers(filters)` (Admin list, powers the Settings > User Management tab, increment 11), `useCreateUserMutation()`, `useUpdateUserStatusMutation()` (invalidates both `["users"]` and `["tasks"]` since a status change can silently auto-forward tasks).
+- `useSettings.ts` (increment 11): `useSettings()`/`useUpdateSettingsMutation()` (`GET`/`PATCH /api/settings`), `useSystemInfo()` (`GET /api/settings/system-info`) — back the Settings > SMS and > System tabs.
 
 **Auth wiring**:
 - `context/AuthContext.tsx` — silent refresh-on-mount effect :41-57 (posts `/api/auth/refresh` with `skipAuth`, httpOnly cookie sent automatically); listens for `"auth:logout"` window event :36-38.
@@ -499,6 +500,31 @@ legacy file listed in §6 above is unmodified.
 
 All 5 redesign screens + the command palette are now built. Nothing left unbuilt from the
 original redesign plan.
+
+- **Inbox "New conversation" flow** (§6, increment 11) — `components/v2/thread-list.tsx` gained a
+  "New conversation" button above the search box, opening `components/v2/new-conversation-dialog.tsx`'s
+  `NewConversationDialog` (name/phone/message + optional `datetime-local` schedule field, calling the
+  new `useCreateConversationMutation()` in `hooks/useThreads.ts` → `POST /api/threads`). On success the
+  new thread is selected via the same `onSelect`/`?thread={id}` mechanism `ThreadList` already used.
+- **Settings module rebuilt** (§8, increment 11) — `pages/SettingsPage.tsx` (still unversioned, shared
+  by both UI modes per §6) now renders 7 tabs (shadcn `Tabs`) instead of just the legacy/redesign
+  toggle it held before: General (thin, read-only — `components/settings/general-tab.tsx`), SMS
+  (Quiet Hours + rate-limit forms — `sms-tab.tsx`, backed by `useSettings.ts`), Task (read-only
+  `TaskDueDateDefaults` display — `task-tab.tsx`, no backend), Template (Bookmark CRUD table —
+  `template-tab.tsx`, backed by `useBookmarks.ts`), Notification (thin, client-only browser
+  notification-permission toggle — `notification-tab.tsx`, no backend), User Management (Admin-only
+  tab+content, user table + status `Select` per row + create-user form — `user-management-tab.tsx`,
+  backed by `useUsers.ts`), System (read-only diagnostics — `system-tab.tsx`, backed by
+  `useSystemInfo()`). **The legacy/redesign toggle UI is gone** — dropped as part of this rebuild
+  rather than deferred to a later polish pass, since General is meant to be thin/read-only and the
+  toggle didn't fit any of the 7 requested tabs; `UIVersionContext`'s default (`"redesign"`) and
+  `VersionedRoute`/legacy page files are all still intentionally untouched (§6a's redesign-lock
+  decision), only the *manual switch UI* is gone. `AppShell.tsx`'s gear icon still links to
+  `/settings` unchanged (swapping it for a text "Settings" nav link is a later polish item).
+  Verified end-to-end against the live stack: all 7 tabs render, SMS tab loads real defaults from
+  `GET /api/settings`, User Management lists the 3 seeded users with working status dropdowns, and
+  the new-conversation dialog creates a patient+thread+message that immediately appears selected
+  in the Inbox with a `Queued` status badge.
 
 ---
 

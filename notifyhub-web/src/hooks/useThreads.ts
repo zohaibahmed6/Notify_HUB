@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "@/lib/apiClient";
-import type { PagedResult, ThreadDetailDto, ThreadDto } from "@/types/inbox";
+import type { CreateConversationRequest, PagedResult, ThreadDetailDto, ThreadDto } from "@/types/inbox";
 import type { CreateTaskRequest, TaskDto } from "@/types/tasks";
 
 export function useThreads() {
@@ -46,6 +46,17 @@ export function useAssignMutation(threadId: number) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["threads"] });
       queryClient.invalidateQueries({ queryKey: ["thread", threadId] });
+    },
+  });
+}
+
+export function useCreateConversationMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (body: CreateConversationRequest) => apiClient.post<ThreadDto>("/api/threads", body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["threads"] });
     },
   });
 }
