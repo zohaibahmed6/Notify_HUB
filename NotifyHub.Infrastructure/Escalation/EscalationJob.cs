@@ -4,6 +4,7 @@ using NotifyHub.Domain.Entities;
 using NotifyHub.Domain.Enums;
 using NotifyHub.Infrastructure.Auditing;
 using NotifyHub.Infrastructure.Persistence;
+using NotifyHub.Infrastructure.Users;
 
 namespace NotifyHub.Infrastructure.Escalation;
 
@@ -31,13 +32,7 @@ public class EscalationJob(NotifyHubDbContext db, ILogger<EscalationJob> logger)
         if (overdue.Count == 0)
             return 0;
 
-        // Inference: BR-004 doesn't specify which Admin when more than one exists —
-        // lowest-id Admin is used as a deterministic fallback triage point.
-        var fallbackAdminId = await db.Users
-            .Where(u => u.Role == UserRole.Admin)
-            .OrderBy(u => u.Id)
-            .Select(u => (long?)u.Id)
-            .FirstOrDefaultAsync(ct);
+        var fallbackAdminId = await FallbackUserResolver.ResolveFallbackAdminIdAsync(db, ct);
 
         foreach (var task in overdue)
         {
