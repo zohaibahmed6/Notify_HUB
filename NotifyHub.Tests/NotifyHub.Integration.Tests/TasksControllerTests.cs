@@ -164,6 +164,120 @@ public class TasksControllerTests(CustomWebApplicationFactory factory) : IClassF
         Assert.Equal(adminId, updated.AssignedStaffId);
     }
 
+    [Fact]
+    public async Task List_DefaultsToActiveOnly()
+    {
+        var (client, staffId) = await _client.AsStaffAsync();
+        var activeTask = await CreateTaskAsync("+19990001009", staffId, DateTime.UtcNow.AddDays(1));
+        var inactiveTask = await CreateTaskAsync("+19990001010", staffId, DateTime.UtcNow.AddDays(1));
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
+            var t = await db.Tasks.SingleAsync(x => x.Id == inactiveTask.Id);
+            t.IsActive = false;
+            await db.SaveChangesAsync();
+        }
+
+        var response = await client.GetFromJsonAsync<PagedResultShape>($"/api/tasks?pageSize=100");
+
+        Assert.Contains(response!.Items, t => t.Id == activeTask.Id);
+        Assert.DoesNotContain(response.Items, t => t.Id == inactiveTask.Id);
+    }
+
+    [Fact]
+    public async Task List_IsActiveFalse_ReturnsOnlyInactiveTasks()
+    {
+        var (client, staffId) = await _client.AsStaffAsync();
+        var task = await CreateTaskAsync("+19990001011", staffId, DateTime.UtcNow.AddDays(1));
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
+            var t = await db.Tasks.SingleAsync(x => x.Id == task.Id);
+            t.IsActive = false;
+            await db.SaveChangesAsync();
+        }
+
+        var response = await client.GetFromJsonAsync<PagedResultShape>($"/api/tasks?isActive=false&pageSize=100");
+
+        Assert.Contains(response!.Items, t => t.Id == task.Id);
+    }
+
+    [Fact]
+    public async Task List_FiltersByDescriptionAndDueDateRange()
+    {
+        var (client, staffId) = await _client.AsStaffAsync();
+        var dueAt = new DateTime(2026, 3, 1, 9, 0, 0, DateTimeKind.Utc);
+        var task = await CreateTaskAsync("+19990001012", staffId, dueAt);
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
+            var t = await db.Tasks.SingleAsync(x => x.Id == task.Id);
+            t.Description = "Patient requested a callback about repeat prescription";
+            await db.SaveChangesAsync();
+        }
+
+        var match = await client.GetFromJsonAsync<PagedResultShape>(
+            $"/api/tasks?description=repeat prescription&dueFrom=2026-02-28T00:00:00Z&dueTo=2026-03-02T00:00:00Z");
+        Assert.Contains(match!.Items, t => t.Id == task.Id);
+
+        var noMatch = await client.GetFromJsonAsync<PagedResultShape>("/api/tasks?description=nonexistent-text-xyz");
+        Assert.DoesNotContain(noMatch!.Items, t => t.Id == task.Id);
+    }
+
+    [Fact]
+    public async Task CreateTask_AutoPopulatesDescriptionFromLastMessage()
+    {
+        var (client, staffId) = await _client.AsStaffAsync();
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
+
+        var patient = new Patient { Name = "Description Auto-populate Patient", Phone = "+19990001013" };
+        db.Patients.Add(patient);
+        await db.SaveChangesAsync();
+
+        var thread = new ConversationThread { PatientId = patient.Id, AssignedStaffId = staffId };
+        db.Threads.Add(thread);
+        await db.SaveChangesAsync();
+
+        db.InboundMessages.Add(new InboundMessage { ThreadId = thread.Id, Body = "Older inbound message", ReceivedAt = DateTime.UtcNow.AddMinutes(-10) });
+        db.OutboundMessages.Add(new OutboundMessage
+        {
+            PatientId = patient.Id,
+            ThreadId = thread.Id,
+            SenderType = SenderType.Staff,
+            RenderedBody = "Newest outbound reply",
+            CreatedAt = DateTime.UtcNow,
+            Status = MessageStatus.Queued,
+            AttemptCount = 0,
+        });
+        await db.SaveChangesAsync();
+
+        var response = await client.PostAsJsonAsync($"/api/threads/{thread.Id}/tasks", new { });
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+
+        var dto = await response.Content.ReadFromJsonAsync<TaskDtoShape>();
+        Assert.Equal("Newest outbound reply", dto!.Description);
+        Assert.Equal("General", dto.TaskType);
+        Assert.True(dto.IsActive);
+    }
+
+    private class PagedResultShape
+    {
+        public List<TaskDtoShape> Items { get; set; } = [];
+    }
+
+    private class TaskDtoShape
+    {
+        public long Id { get; set; }
+        public string? Description { get; set; }
+        public string TaskType { get; set; } = default!;
+        public bool IsActive { get; set; }
+    }
+
     private async Task<TaskItem> CreateTaskAsync(
         string phone,
         long ownerId,

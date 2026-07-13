@@ -10,4 +10,10 @@ public class CreateTaskRequest
     public int? RecurrenceIntervalDays { get; set; }
     public DateTime? RecurrenceEndDate { get; set; }
     public int? RecurrenceMaxOccurrences { get; set; }
+
+    /// §1: pre-filled client-side from the thread's last message if omitted — see
+    /// ThreadsController.CreateTask's server-side fallback, which does the same thing so a
+    /// bare API call (no client) still gets a sensible default.
+    public string? Description { get; set; }
+    public string? TaskType { get; set; }
 }

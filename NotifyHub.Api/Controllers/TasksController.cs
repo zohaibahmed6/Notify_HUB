@@ -19,12 +19,21 @@ namespace NotifyHub.Api.Controllers;
 [Route("api/tasks")]
 public class TasksController(NotifyHubDbContext db, IHubContext<InboxHub> inboxHub) : ControllerBase
 {
+    /// §1: `description`/`patientName` are substring matches; `isActive` defaults to `true`
+    /// when the client doesn't pass it at all (the task screen's own default is "Active"
+    /// selected) — pass `isActive=false` explicitly to see inactive tasks, or omit the
+    /// distinction entirely isn't supported (matches the "just a checkbox" filter model).
     [HttpGet]
     public async Task<ActionResult<PagedResult<TaskDto>>> List(
-        string? status, long? assignedStaffId, int page = 1, int pageSize = 25, CancellationToken ct = default)
+        string? status, long? assignedStaffId, string? description, string? patientName,
+        DateTime? dueFrom, DateTime? dueTo, bool? isActive,
+        int page = 1, int pageSize = 25, CancellationToken ct = default)
     {
         (page, pageSize) = PagedResult<TaskDto>.Clamp(page, pageSize);
 
+        // Thread/Patient aren't eager-loaded (Include) since ToDto never reads them — the
+        // patientName filter below still works via EF Core's automatic SQL join through
+        // navigation-property access in a Where predicate, no Include required for that.
         var query = db.Tasks.Include(t => t.AssignedStaff).AsQueryable();
 
         if (status is not null)
@@ -41,6 +50,20 @@ public class TasksController(NotifyHubDbContext db, IHubContext<InboxHub> inboxH
 
         if (assignedStaffId is not null)
             query = query.Where(t => t.AssignedStaffId == assignedStaffId);
+
+        if (!string.IsNullOrWhiteSpace(description))
+            query = query.Where(t => t.Description != null && t.Description.Contains(description));
+
+        if (!string.IsNullOrWhiteSpace(patientName))
+            query = query.Where(t => t.Thread.Patient.Name.Contains(patientName));
+
+        if (dueFrom is not null)
+            query = query.Where(t => t.DueAt >= dueFrom.Value);
+
+        if (dueTo is not null)
+            query = query.Where(t => t.DueAt <= dueTo.Value);
+
+        query = query.Where(t => t.IsActive == (isActive ?? true));
 
         query = query.OrderBy(t => t.DueAt);
 
@@ -94,6 +117,24 @@ public class TasksController(NotifyHubDbContext db, IHubContext<InboxHub> inboxH
 
         if (request.DueAt is not null)
             task.DueAt = request.DueAt.Value;
+
+        if (request.Description is not null)
+            task.Description = request.Description;
+
+        if (request.TaskType is not null)
+        {
+            if (!Enum.TryParse<TaskType>(request.TaskType, ignoreCase: true, out var taskType))
+            {
+                return Problem(
+                    statusCode: StatusCodes.Status400BadRequest,
+                    title: $"Invalid task type '{request.TaskType}'. Valid values: {string.Join(", ", Enum.GetNames<TaskType>())}.");
+            }
+
+            task.TaskType = taskType;
+        }
+
+        if (request.IsActive is not null)
+            task.IsActive = request.IsActive.Value;
 
         if (request.AssignedStaffId is not null)
         {
@@ -191,6 +232,7 @@ public class TasksController(NotifyHubDbContext db, IHubContext<InboxHub> inboxH
             Status = NotifyHubTaskStatus.Open,
             AssignedStaffId = completed.OriginalOwnerId,
             OriginalOwnerId = completed.OriginalOwnerId,
+            TaskType = completed.TaskType, // category carries over; Description doesn't (it was tied to the message that prompted the completed occurrence, would go stale)
             IsRecurring = true,
             RecurrenceIntervalDays = completed.RecurrenceIntervalDays,
             RecurrenceEndDate = completed.RecurrenceEndDate,
@@ -214,5 +256,8 @@ public class TasksController(NotifyHubDbContext db, IHubContext<InboxHub> inboxH
         RecurrenceEndDate = t.RecurrenceEndDate,
         RecurrenceMaxOccurrences = t.RecurrenceMaxOccurrences,
         OccurrenceCount = t.OccurrenceCount,
+        Description = t.Description,
+        TaskType = t.TaskType.ToString(),
+        IsActive = t.IsActive,
     };
 }

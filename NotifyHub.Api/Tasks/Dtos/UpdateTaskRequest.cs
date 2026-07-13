@@ -9,4 +9,7 @@ public class UpdateTaskRequest
     public string? Priority { get; set; }
     public DateTime? DueAt { get; set; }
     public long? AssignedStaffId { get; set; }
+    public string? Description { get; set; }
+    public string? TaskType { get; set; }
+    public bool? IsActive { get; set; }
 }

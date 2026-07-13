@@ -15,4 +15,7 @@ public class TaskDto
     public DateTime? RecurrenceEndDate { get; set; }
     public int? RecurrenceMaxOccurrences { get; set; }
     public int OccurrenceCount { get; set; }
+    public string? Description { get; set; }
+    public string TaskType { get; set; } = default!;
+    public bool IsActive { get; set; }
 }

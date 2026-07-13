@@ -229,6 +229,14 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
             return Problem(statusCode: StatusCodes.Status400BadRequest, title: "RecurrenceIntervalDays is required when IsRecurring is true.");
         }
 
+        var taskType = TaskType.General;
+        if (request.TaskType is not null && !Enum.TryParse(request.TaskType, ignoreCase: true, out taskType))
+        {
+            return Problem(
+                statusCode: StatusCodes.Status400BadRequest,
+                title: $"Invalid task type '{request.TaskType}'. Valid values: {string.Join(", ", Enum.GetNames<TaskType>())}.");
+        }
+
         var now = DateTime.UtcNow;
         var dueAt = request.DueAt ?? TaskDueDateDefaults.DefaultDueAt(priority, now);
 
@@ -237,6 +245,12 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
         // this mirrors "whoever is handling this thread owns the follow-up").
         var callerId = long.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
         var assigneeId = thread.AssignedStaffId ?? callerId;
+
+        // §1: auto-populate Description from the thread's most recent message (inbound or
+        // outbound, whichever is newer) when the client didn't supply one — a server-side
+        // fallback so a bare API call still gets a sensible default, matching how the
+        // frontend pre-fills the same field before submit.
+        var description = request.Description ?? await LatestMessageBodyAsync(thread.Id, ct);
 
         var task = new TaskItem
         {
@@ -251,6 +265,8 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
             RecurrenceEndDate = request.RecurrenceEndDate,
             RecurrenceMaxOccurrences = request.RecurrenceMaxOccurrences,
             OccurrenceCount = 1,
+            Description = description,
+            TaskType = taskType,
         };
 
         db.Tasks.Add(task);
@@ -258,6 +274,35 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
 
         var assignee = await db.Users.FindAsync([assigneeId], ct);
         return Created($"/api/tasks/{task.Id}", ToTaskDto(task, assignee?.Username));
+    }
+
+    /// Compares the single most recent row from each table (both already indexed on their
+    /// own timestamp — same "no full history load" reasoning as GetMessagesPageAsync above,
+    /// just Take(1) instead of a page) rather than unioning and sorting the whole history.
+    private async Task<string?> LatestMessageBodyAsync(long threadId, CancellationToken ct)
+    {
+        var latestInbound = await db.InboundMessages
+            .Where(m => m.ThreadId == threadId)
+            .OrderByDescending(m => m.ReceivedAt)
+            .Select(m => new { m.Body, Timestamp = m.ReceivedAt })
+            .FirstOrDefaultAsync(ct);
+
+        var latestOutbound = await db.OutboundMessages
+            .Where(m => m.ThreadId == threadId)
+            .OrderByDescending(m => m.CreatedAt)
+            .Select(m => new { Body = m.RenderedBody, Timestamp = m.CreatedAt })
+            .FirstOrDefaultAsync(ct);
+
+        if (latestInbound is null && latestOutbound is null)
+            return null;
+
+        if (latestInbound is null)
+            return latestOutbound!.Body;
+
+        if (latestOutbound is null)
+            return latestInbound.Body;
+
+        return latestInbound.Timestamp >= latestOutbound.Timestamp ? latestInbound.Body : latestOutbound.Body;
     }
 
     private static ThreadDto ToDto(ConversationThread t) => new()
@@ -286,5 +331,8 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
         RecurrenceEndDate = t.RecurrenceEndDate,
         RecurrenceMaxOccurrences = t.RecurrenceMaxOccurrences,
         OccurrenceCount = t.OccurrenceCount,
+        Description = t.Description,
+        TaskType = t.TaskType.ToString(),
+        IsActive = t.IsActive,
     };
 }
