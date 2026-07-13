@@ -3,10 +3,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/lib/apiClient";
 import type { CreateTemplateRequest, TemplateDto, UpdateTemplateRequest } from "@/types/templates";
 
-export function useTemplates() {
+export function useTemplates(isActive?: boolean) {
+  const params = isActive === undefined ? "" : `?isActive=${isActive}`;
+
   return useQuery({
-    queryKey: ["templates"],
-    queryFn: () => apiClient.get<TemplateDto[]>("/api/templates"),
+    queryKey: ["templates", isActive],
+    queryFn: () => apiClient.get<TemplateDto[]>(`/api/templates${params}`),
   });
 }
 

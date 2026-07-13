@@ -300,7 +300,8 @@ rather than deferred — no longer an open item.
 - `useTasks.ts`: `useTasks(statusOrFilters?)` — accepts either a bare status shorthand (legacy `TaskBoardPage`) or a full `TaskListFilters` object (`TaskBoardPageV2`'s filter bar, increment 7: description/patientName/dueFrom/dueTo/isActive/assignedStaffId), `useTask(id)` (triggers BR-014 revert), `useUpdateTaskMutation()`, `useForwardTaskMutation()` (increment 7, `POST /api/tasks/{id}/forward`).
 - `useInboxHub.ts`: `useInboxHub()` :20 — owns SignalR connection lifecycle + query invalidation.
 - `useAudit.ts` (step 6): `useAuditLog(isAdmin, filters)` — picks `/api/audit` vs `/api/audit/mine` based on `isAdmin`, builds the query string from `actor`/`action`/`from`/`to`/`page`/`pageSize`.
-- `useTemplates.ts` (step 6): `useTemplates()` (list), `useCreateTemplateMutation()`, `useUpdateTemplateMutation()` (PATCH, invalidates `["templates"]`).
+- `useTemplates.ts` (step 6): `useTemplates(isActive?)` (list, `isActive` filter added increment 9), `useCreateTemplateMutation()`, `useUpdateTemplateMutation()` (PATCH, invalidates `["templates"]`).
+- `useBookmarks.ts` (increment 9): `useBookmarks()` (list, any authenticated user), `useCreateBookmarkMutation()`/`useUpdateBookmarkMutation()`/`useDeleteBookmarkMutation()` (Admin-only server-side, used by the Settings > Template tab, increment 11). `apiClient` gained a `.delete()` method to support this (`lib/apiClient.ts`).
 - `useUsers.ts` (this feature set, increment 6): `useAssignableUsers()` → `GET /api/users/assignable`, the roster every assignee-picker should use now — `TaskBoardPageV2.tsx`'s assignee filter switched to this from the old "dedupe usernames off already-fetched tasks" workaround (which could never surface a user with zero assigned tasks). Also `useUsers(filters)` (Admin list), `useCreateUserMutation()`, `useUpdateUserStatusMutation()` (invalidates both `["users"]` and `["tasks"]` since a status change can silently auto-forward tasks).
 
 **Auth wiring**:
@@ -446,6 +447,13 @@ legacy file listed in §6 above is unmodified.
   `components/v2/template-form.tsx` (`TemplateForm`, presentation-only — legacy's inline
   `TemplateForm` in `TemplatesPage.tsx` isn't exported, so this is a new component, not a
   refactor of legacy). `?template={id}` deep-links like the other screens.
+  - **Increment 9 additions**: an Active/Inactive/All filter `Select` above the list (drives
+    `useTemplates(isActive)`), an "Inactive" badge on list rows and the preview header for
+    templates with `IsActive=false`. `TemplateForm` gained an "Insert bookmark" dropdown
+    (`useBookmarks()`, inserts a bookmark's `InsertText` at the textarea's cursor position
+    via a ref) and an `Active` checkbox (`TemplateFormValues.isActive`, default `true`);
+    since `POST /api/templates` doesn't accept `IsActive`, creating a template as inactive is
+    a create-then-PATCH two-step in `TemplatesPageV2.handleCreate`.
   - **Merge-field preview** (`components/v2/merge-field-text.tsx`, `MergeFieldText`) — the
     piece the audit flagged as entirely missing. Two modes: "Raw source" highlights every
     `{{field}}` token as a literal chip; "Sample preview" substitutes illustrative values for

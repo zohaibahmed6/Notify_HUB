@@ -6,6 +6,7 @@ export interface TemplateDto {
   body: string;
   triggerType: TemplateTriggerType;
   offsetHours: number;
+  isActive: boolean;
 }
 
 export interface CreateTemplateRequest {
@@ -20,4 +21,5 @@ export interface UpdateTemplateRequest {
   body?: string;
   triggerType?: TemplateTriggerType;
   offsetHours?: number;
+  isActive?: boolean;
 }
