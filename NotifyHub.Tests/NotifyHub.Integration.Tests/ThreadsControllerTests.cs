@@ -199,6 +199,111 @@ public class ThreadsControllerTests(CustomWebApplicationFactory factory) : IClas
         Assert.True(task.DueAt > DateTime.UtcNow.AddDays(2) && task.DueAt < DateTime.UtcNow.AddDays(4));
     }
 
+    [Fact]
+    public async Task Reply_WithFutureScheduledAt_QueuesWithScheduledAtSet()
+    {
+        var thread = await CreateThreadAsync("+19990000101");
+        var (client, _) = await _client.AsStaffAsync();
+        var scheduledAt = DateTime.UtcNow.AddHours(2);
+
+        var response = await client.PostAsJsonAsync($"/api/threads/{thread.Id}/messages", new { body = "Later", scheduledAt });
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
+        var message = await db.OutboundMessages.SingleAsync(m => m.ThreadId == thread.Id);
+
+        Assert.NotNull(message.ScheduledAt);
+        Assert.Equal(scheduledAt, message.ScheduledAt!.Value, TimeSpan.FromSeconds(1));
+    }
+
+    [Fact]
+    public async Task Reply_WithPastScheduledAt_Returns400()
+    {
+        var thread = await CreateThreadAsync("+19990000102");
+        var (client, _) = await _client.AsStaffAsync();
+
+        var response = await client.PostAsJsonAsync($"/api/threads/{thread.Id}/messages", new { body = "Late", scheduledAt = DateTime.UtcNow.AddHours(-1) });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateConversation_CreatesPatientThreadAndMessage()
+    {
+        var (client, _) = await _client.AsStaffAsync();
+
+        var response = await client.PostAsJsonAsync("/api/threads", new
+        {
+            name = "Brand New Patient",
+            phone = "+19990000103",
+            message = "Welcome!",
+        });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var dto = await response.Content.ReadFromJsonAsync<ThreadDto>();
+        Assert.Equal("Brand New Patient", dto!.PatientName);
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
+        var patient = await db.Patients.SingleAsync(p => p.Phone == "+19990000103");
+        var message = await db.OutboundMessages.SingleAsync(m => m.PatientId == patient.Id);
+        Assert.Equal("Welcome!", message.RenderedBody);
+    }
+
+    [Fact]
+    public async Task CreateConversation_DuplicatePhone_Returns409()
+    {
+        await CreateThreadAsync("+19990000104");
+        var (client, _) = await _client.AsStaffAsync();
+
+        var response = await client.PostAsJsonAsync("/api/threads", new
+        {
+            name = "Duplicate Phone Patient",
+            phone = "+19990000104",
+            message = "Hello",
+        });
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Reply_ExceedingRateLimit_Returns429()
+    {
+        using (var scope = factory.Services.CreateScope())
+        {
+            var settingsService = scope.ServiceProvider.GetRequiredService<NotifyHub.Infrastructure.Settings.SettingsService>();
+            await settingsService.SetAsync(new Dictionary<string, string>
+            {
+                [NotifyHub.Infrastructure.Settings.SettingsService.RateLimitEnabledKey] = "true",
+                [NotifyHub.Infrastructure.Settings.SettingsService.RateLimitMaxMessagesKey] = "1",
+                [NotifyHub.Infrastructure.Settings.SettingsService.RateLimitWindowHoursKey] = "24",
+            }, CancellationToken.None);
+        }
+
+        try
+        {
+            var thread = await CreateThreadAsync("+19990000105");
+            var (client, _) = await _client.AsStaffAsync();
+
+            var first = await client.PostAsJsonAsync($"/api/threads/{thread.Id}/messages", new { body = "First" });
+            Assert.Equal(HttpStatusCode.NoContent, first.StatusCode);
+
+            var second = await client.PostAsJsonAsync($"/api/threads/{thread.Id}/messages", new { body = "Second" });
+            Assert.Equal(HttpStatusCode.TooManyRequests, second.StatusCode);
+        }
+        finally
+        {
+            using var scope = factory.Services.CreateScope();
+            var settingsService = scope.ServiceProvider.GetRequiredService<NotifyHub.Infrastructure.Settings.SettingsService>();
+            await settingsService.SetAsync(new Dictionary<string, string>
+            {
+                [NotifyHub.Infrastructure.Settings.SettingsService.RateLimitEnabledKey] = "false",
+            }, CancellationToken.None);
+        }
+    }
+
     private async Task<ConversationThread> CreateThreadAsync(string phone, bool patientOptedOut = false, int initialUnreadCount = 0)
     {
         using var scope = factory.Services.CreateScope();

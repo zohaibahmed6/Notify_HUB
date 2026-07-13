@@ -6,24 +6,33 @@ using NotifyHub.Domain.Enums;
 using NotifyHub.Domain.Messaging;
 using NotifyHub.Infrastructure.Auditing;
 using NotifyHub.Infrastructure.Persistence;
+using NotifyHub.Infrastructure.Settings;
 
 namespace NotifyHub.Infrastructure.Messaging;
 
 /// FR-001/FR-003: the core claim → render → dispatch step. A thin BackgroundService
 /// (Worker's DispatcherWorker) just calls this in a loop; kept separate from the loop
 /// itself so it's directly unit/integration-testable without hosting the Worker process.
-public class MessageDispatcher(NotifyHubDbContext db, HttpClient gatewayClient, ILogger<MessageDispatcher> logger)
+public class MessageDispatcher(NotifyHubDbContext db, HttpClient gatewayClient, ILogger<MessageDispatcher> logger, SettingsService settingsService)
 {
     private const int BatchSize = 10;
 
     public async Task<int> DispatchDueMessagesAsync(CancellationToken ct)
     {
+        // §6: a single gate for the whole batch — during quiet hours, due messages just
+        // stay Queued and are picked up on the next non-quiet poll. No per-message state
+        // change, so nothing needs "un-queuing" once quiet hours end.
+        if (await settingsService.IsQuietHoursNowAsync(ct))
+            return 0;
+
         var now = DateTime.UtcNow;
 
         var due = await db.OutboundMessages
             .Include(m => m.Patient)
             .Include(m => m.Template)
-            .Where(m => m.Status == MessageStatus.Queued && (m.NextRetryAt == null || m.NextRetryAt <= now))
+            .Where(m => m.Status == MessageStatus.Queued
+                && (m.NextRetryAt == null || m.NextRetryAt <= now)
+                && (m.ScheduledAt == null || m.ScheduledAt <= now))
             .OrderBy(m => m.CreatedAt)
             .Take(BatchSize)
             .ToListAsync(ct);

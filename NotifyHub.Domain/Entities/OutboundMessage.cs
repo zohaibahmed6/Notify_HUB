@@ -38,5 +38,10 @@ public class OutboundMessage
     public int AttemptCount { get; set; }
     public DateTime? NextRetryAt { get; set; }
 
+    /// §6: future-send time for staff-initiated messages; null means "send as soon as
+    /// dispatched" (existing default behavior, unchanged). Distinct from NextRetryAt, which
+    /// is purely a retry-backoff timestamp (BR-011).
+    public DateTime? ScheduledAt { get; set; }
+
     public ICollection<DeliveryStatusHistory> StatusHistory { get; set; } = new List<DeliveryStatusHistory>();
 }

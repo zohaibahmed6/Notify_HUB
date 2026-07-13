@@ -8,9 +8,11 @@ using NotifyHub.Api.Tasks.Dtos;
 using NotifyHub.Api.Threads.Dtos;
 using NotifyHub.Domain.Entities;
 using NotifyHub.Domain.Enums;
+using NotifyHub.Domain.Messaging;
 using NotifyHub.Domain.Tasks;
 using NotifyHub.Infrastructure.Auditing;
 using NotifyHub.Infrastructure.Persistence;
+using NotifyHub.Infrastructure.Settings;
 
 namespace NotifyHub.Api.Controllers;
 
@@ -18,7 +20,7 @@ namespace NotifyHub.Api.Controllers;
 /// policy exactly (same reasoning as TemplatesController).
 [ApiController]
 [Route("api/threads")]
-public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inboxHub) : ControllerBase
+public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inboxHub, SettingsService settingsService) : ControllerBase
 {
     [HttpGet]
     public async Task<ActionResult<PagedResult<ThreadDto>>> List(int page = 1, int pageSize = 25, CancellationToken ct = default)
@@ -147,6 +149,16 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
             return Problem(statusCode: StatusCodes.Status400BadRequest, title: "Patient has opted out; cannot send further messages.");
         }
 
+        if (request.ScheduledAt is not null && request.ScheduledAt <= DateTime.UtcNow)
+        {
+            return Problem(statusCode: StatusCodes.Status400BadRequest, title: "ScheduledAt must be in the future.");
+        }
+
+        if (await RateLimitExceededAsync(thread.PatientId, ct))
+        {
+            return Problem(statusCode: StatusCodes.Status429TooManyRequests, title: "Per-patient outbound message rate limit exceeded.");
+        }
+
         db.OutboundMessages.Add(new OutboundMessage
         {
             PatientId = thread.PatientId,
@@ -159,6 +171,7 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
             Status = MessageStatus.Queued,
             IdempotencyKey = null,
             AttemptCount = 0,
+            ScheduledAt = request.ScheduledAt,
         });
 
         await db.SaveChangesAsync(ct);
@@ -169,6 +182,80 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
         await inboxHub.Clients.All.SendAsync("outboundMessageSent", new { threadId = thread.Id }, ct);
 
         return NoContent();
+    }
+
+    /// §6: send SMS to a brand-new patient — creates the Patient + ConversationThread +
+    /// first OutboundMessage in one call. Phone uniqueness is enforced the same way
+    /// WebhooksController.FindOrCreateThreadAsync handles a concurrent insert (catch the
+    /// unique-index violation), even though a staff-initiated single request is far less
+    /// likely to race than concurrent inbound webhooks.
+    [HttpPost]
+    public async Task<ActionResult<ThreadDto>> CreateConversation(CreateConversationRequest request, CancellationToken ct)
+    {
+        if (request.ScheduledAt is not null && request.ScheduledAt <= DateTime.UtcNow)
+        {
+            return Problem(statusCode: StatusCodes.Status400BadRequest, title: "ScheduledAt must be in the future.");
+        }
+
+        if (await db.Patients.AnyAsync(p => p.Phone == request.Phone, ct))
+        {
+            return Problem(statusCode: StatusCodes.Status409Conflict, title: $"A patient with phone {request.Phone} already exists.");
+        }
+
+        var patient = new Patient { Name = request.Name, Phone = request.Phone };
+        db.Patients.Add(patient);
+
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException)
+        {
+            return Problem(statusCode: StatusCodes.Status409Conflict, title: $"A patient with phone {request.Phone} already exists.");
+        }
+
+        var thread = new ConversationThread { PatientId = patient.Id, UnreadCount = 0 };
+        db.Threads.Add(thread);
+        await db.SaveChangesAsync(ct);
+
+        db.OutboundMessages.Add(new OutboundMessage
+        {
+            PatientId = patient.Id,
+            ThreadId = thread.Id,
+            TemplateId = null,
+            SenderType = SenderType.Staff,
+            TriggerReference = null,
+            RenderedBody = request.Message,
+            CreatedAt = DateTime.UtcNow,
+            Status = MessageStatus.Queued,
+            IdempotencyKey = null,
+            AttemptCount = 0,
+            ScheduledAt = request.ScheduledAt,
+        });
+        await db.SaveChangesAsync(ct);
+
+        return Created($"/api/threads/{thread.Id}", ToDto(new ConversationThread
+        {
+            Id = thread.Id,
+            PatientId = patient.Id,
+            Patient = patient,
+            UnreadCount = 0,
+        }));
+    }
+
+    /// §6: enforced at message-creation time (not inside the dispatcher) — counts the
+    /// patient's OutboundMessages created within the configured window and feeds
+    /// RateLimitChecker, a pure Domain calculator matching RetryBackoffPolicy's shape.
+    private async Task<bool> RateLimitExceededAsync(long patientId, CancellationToken ct)
+    {
+        var rateLimit = await settingsService.GetRateLimitAsync(ct);
+        if (!rateLimit.Enabled)
+            return false;
+
+        var windowStart = DateTime.UtcNow.AddHours(-rateLimit.WindowHours);
+        var recentCount = await db.OutboundMessages.CountAsync(m => m.PatientId == patientId && m.CreatedAt >= windowStart, ct);
+
+        return !RateLimitChecker.IsAllowed(recentCount, rateLimit.MaxMessages);
     }
 
     /// BR-012: only succeeds if assigned_staff_id is currently null; concurrent assign

@@ -5,6 +5,7 @@ using NotifyHub.Domain.Entities;
 using NotifyHub.Domain.Enums;
 using NotifyHub.Infrastructure.Messaging;
 using NotifyHub.Infrastructure.Persistence;
+using NotifyHub.Infrastructure.Settings;
 using Xunit;
 
 namespace NotifyHub.Integration.Tests;
@@ -42,7 +43,7 @@ public class MessageDispatcherOptOutTests(CustomWebApplicationFactory factory) :
         await db.SaveChangesAsync();
 
         var gatewayClient = factory.Services.GetRequiredService<IHttpClientFactory>().CreateClient("self");
-        var dispatcher = new MessageDispatcher(db, gatewayClient, NullLogger<MessageDispatcher>.Instance);
+        var dispatcher = new MessageDispatcher(db, gatewayClient, NullLogger<MessageDispatcher>.Instance, new SettingsService(db));
 
         await dispatcher.DispatchDueMessagesAsync(CancellationToken.None);
 
@@ -53,5 +54,55 @@ public class MessageDispatcherOptOutTests(CustomWebApplicationFactory factory) :
 
         var audit = await db.AuditLogs.SingleAsync(a => a.EntityType == "OutboundMessage" && a.EntityId == message.Id && a.Action == "blocked");
         Assert.Equal("system", audit.Actor);
+    }
+
+    [Fact]
+    public async Task DispatchDueMessagesAsync_SkipsBatch_DuringQuietHours()
+    {
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
+        var settingsService = new SettingsService(db);
+
+        // A window that always contains "now", regardless of when the test runs.
+        var nowUtc = TimeOnly.FromDateTime(DateTime.UtcNow);
+        await settingsService.SetAsync(new Dictionary<string, string>
+        {
+            [SettingsService.QuietHoursEnabledKey] = "true",
+            [SettingsService.QuietHoursStartKey] = nowUtc.AddMinutes(-1).ToString("HH:mm"),
+            [SettingsService.QuietHoursEndKey] = nowUtc.AddMinutes(1).ToString("HH:mm"),
+        }, CancellationToken.None);
+
+        try
+        {
+            var patient = new Patient { Name = "Quiet Hours Test Patient", Phone = "+19990003002" };
+            db.Patients.Add(patient);
+            await db.SaveChangesAsync();
+
+            var message = new OutboundMessage
+            {
+                PatientId = patient.Id,
+                TemplateId = null,
+                SenderType = SenderType.Staff,
+                CreatedAt = DateTime.UtcNow.AddDays(-1),
+                Status = MessageStatus.Queued,
+                AttemptCount = 0,
+                RenderedBody = "Should not send during quiet hours",
+            };
+            db.OutboundMessages.Add(message);
+            await db.SaveChangesAsync();
+
+            var gatewayClient = factory.Services.GetRequiredService<IHttpClientFactory>().CreateClient("self");
+            var dispatcher = new MessageDispatcher(db, gatewayClient, NullLogger<MessageDispatcher>.Instance, settingsService);
+
+            var dispatchedCount = await dispatcher.DispatchDueMessagesAsync(CancellationToken.None);
+
+            Assert.Equal(0, dispatchedCount);
+            var stillQueued = await db.OutboundMessages.SingleAsync(m => m.Id == message.Id);
+            Assert.Equal(MessageStatus.Queued, stillQueued.Status);
+        }
+        finally
+        {
+            await settingsService.SetAsync(new Dictionary<string, string> { [SettingsService.QuietHoursEnabledKey] = "false" }, CancellationToken.None);
+        }
     }
 }

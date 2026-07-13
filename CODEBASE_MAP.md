@@ -40,7 +40,8 @@ manual per-entity registration) — every `IEntityTypeConfiguration<T>` in
 | `Appointment` → `appointments` (stub) | `Appointment.cs:6` | `AppointmentConfiguration.cs:7` | Id, PatientId, ScheduledAt, Status | FK `Patient`, cascade delete (:22-25); index `PatientId` (:27) |
 | `MessageTemplate` → `message_templates` | `MessageTemplate.cs:5` | `MessageTemplateConfiguration.cs:7` | Id, Name, Body (≤1000), TriggerType, OffsetHours, **IsActive** (added increment 8, default `true`) | No indexes |
 | `Bookmark` → `bookmarks` | `Bookmark.cs:5` (added increment 8) | `BookmarkConfiguration.cs:7` | Id, Label (≤100), Description (≤300), InsertText (≤1000) | No indexes, no relations — flat admin-curated snippet library (§5), e.g. Label="Patient Name"/InsertText="{{patient_name}}", inserted into a `MessageTemplate.Body` from the template editor's dropdown |
-| `OutboundMessage` → `outbound_messages` | `OutboundMessage.cs:5` | `OutboundMessageConfiguration.cs:7` | Id, PatientId, ThreadId?, TemplateId?, SenderType, TriggerReference?, RenderedBody?, Status, IdempotencyKey?, AttemptCount, NextRetryAt? | Unique index `IdempotencyKey` (:32); FKs Patient/Template/Thread all `Restrict` (:36-49); composite index `(Status, NextRetryAt)` (:52); composite index `(ThreadId, CreatedAt)` (:53) |
+| `OutboundMessage` → `outbound_messages` | `OutboundMessage.cs:5` | `OutboundMessageConfiguration.cs:7` | Id, PatientId, ThreadId?, TemplateId?, SenderType, TriggerReference?, RenderedBody?, Status, IdempotencyKey?, AttemptCount, NextRetryAt?, **ScheduledAt?** (added increment 10) | Unique index `IdempotencyKey` (:32); FKs Patient/Template/Thread all `Restrict` (:36-49); composite index `(Status, NextRetryAt)` (:52); composite index `(ThreadId, CreatedAt)` (:53) |
+| `SystemSetting` → `system_settings` | `SystemSetting.cs:5` (added increment 10) | `SystemSettingConfiguration.cs:7` | Key (PK, ≤100), Value (≤200) | No indexes — generic admin-editable key-value store (Quiet Hours, per-patient rate limiting), wrapped by `SettingsService` (typed accessors, no raw string parsing at call sites) |
 | `DeliveryStatusHistory` → `delivery_status_history` | `DeliveryStatusHistory.cs:5` | `DeliveryStatusHistoryConfiguration.cs:7` | Id, MessageId, Status, OccurredAt | FK `Message`, cascade delete (:22-25); index `MessageId` (:27) |
 | `AuditLog` → `audit_log` | `AuditLog.cs:4` | `AuditLogConfiguration.cs:7` | Id, Actor, Action, EntityType, EntityId, OccurredAt, Detail? | Composite index `(EntityType, EntityId)` (:20); index `Actor` (:21); no FK (polymorphic ref) |
 | `ConversationThread` → `threads` | `ConversationThread.cs:7` | `ConversationThreadConfiguration.cs:7` | Id, PatientId, AssignedStaffId?, UnreadCount | **Unique index `PatientId`** (:21 — the race-safety guarantee, see §5); FK `Patient` `Restrict` (:17-20); FK `AssignedStaff` `Restrict` (:23-26); index `AssignedStaffId` (:29) |
@@ -105,7 +106,8 @@ Refresh-token cookie name `notifyhub_refresh` (:26); set/clear in `SetRefreshCoo
 |---|---|---|---|
 | GET `api/threads` | `List` :23-41 | default authenticated | paginated |
 | GET `api/threads/{id}` | `Detail` :43-74 | default authenticated | resets `UnreadCount = 0` on open (:58-60); messages paginated via `GetMessagesPageAsync` (:89-132, step 6/FR-010 — see §5) instead of the old unpaginated `.Include(InboundMessages).Include(OutboundMessages)` |
-| POST `api/threads/{id}/messages` | `Reply` :139 | default authenticated | BR-001b opt-out check (:145-148); broadcasts `outboundMessageSent` (:169) |
+| POST `api/threads` | `CreateConversation` (added increment 10) | default authenticated | §6: staff-initiated conversation with a brand-new patient — body `{name, phone, message, scheduledAt?}`; creates `Patient`+`ConversationThread`+first `OutboundMessage` in one call; 409 on duplicate phone (pre-check + `catch (DbUpdateException)` fallback, same pattern as `WebhooksController.FindOrCreateThreadAsync`); 400 if `scheduledAt` isn't in the future |
+| POST `api/threads/{id}/messages` | `Reply` :139 | default authenticated | BR-001b opt-out check (:145-148); broadcasts `outboundMessageSent` (:169); **increment 10**: accepts optional `scheduledAt` (400 if not future), enforces the per-patient rate limit via `RateLimitExceededAsync` (429 if exceeded, no-op when `RateLimit:Enabled=false`) |
 | POST `api/threads/{id}/assign` | `Assign` :177 | default authenticated | self-assign OK; assigning others requires caller role Admin, else 403 (:190-191); broadcasts `threadAssigned` (:203) |
 | POST `api/threads/{id}/tasks` | `CreateTask` :209 | default authenticated | accepts `Description`/`TaskType` (increment 5); `Description` auto-populates server-side from `LatestMessageBodyAsync` (compares each table's single most-recent row, no full-history load) when the client omits it |
 
@@ -154,6 +156,19 @@ inside the `IQueryable`) is deliberate — EF Core can't reliably translate a ca
 mapping method into SQL, unlike `TemplatesController.List`'s inline `new TemplateDto {...}`
 projection, which stays directly in the `Select()`.
 
+### `SettingsController` — `NotifyHub.Api/Controllers/SettingsController.cs` (`[Route("api/settings")]`, added increment 10)
+| Verb + route | Auth | Notes |
+|---|---|---|
+| GET `api/settings` | default authenticated | Quiet Hours + rate-limit config, via `SettingsService` |
+| PATCH `api/settings` | `[Authorize(Roles="Admin")]` | partial update; validates `HH:mm` time strings and positive counts before writing |
+| GET `api/settings/system-info` | default authenticated | **not** `SystemSetting`-backed — live diagnostics: `db.Database.CanConnectAsync()`, dispatcher/escalation/reminder poll intervals (the last two read straight from `IConfiguration`, same keys `EscalationWorker`/`ReminderWorker` use) |
+
+`SettingsService` (`NotifyHub.Infrastructure/Settings/SettingsService.cs`) — typed accessors
+(`GetQuietHoursAsync`, `GetRateLimitAsync`, `IsQuietHoursNowAsync`) over the generic
+`SystemSetting` key-value table; `SetAsync` upserts. Both Quiet Hours and rate limiting default
+to **disabled** (seeded by `SystemSettingSeedStep`) so existing dispatch behavior is unchanged
+until an Admin opts in via `PATCH api/settings`.
+
 ### `AuditController` — `NotifyHub.Api/Controllers/AuditController.cs` (`[Route("api/audit")]` :17-19, step 6/FR-011)
 | Verb + route | Method:line | Auth | Notes |
 |---|---|---|---|
@@ -199,7 +214,7 @@ Race-safe find-or-create: `FindOrCreateThreadAsync` (:119-141) — see §5.
 | Job | File:line | Trigger | What it does |
 |---|---|---|---|
 | `DispatcherWorker` | `NotifyHub.Worker/DispatcherWorker.cs:8-35` | Fixed 5s poll loop (:10, hardcoded, not config-driven); 5s error-retry delay (:11) | Resolves `MessageDispatcher` per scope, calls `DispatchDueMessagesAsync` (:22) |
-| `MessageDispatcher` | `NotifyHub.Infrastructure/Messaging/MessageDispatcher.cs` | Called by `DispatcherWorker` | `DispatchDueMessagesAsync` (:19-35): batch of 10 `Queued` messages due now, ordered by `CreatedAt`. `DispatchOneAsync` (:37-90): opt-out short-circuit (:42-50), renders template if set (:54-59), POSTs to mock gateway (:66-67), on failure increments attempt count and either terminalizes via `RetryBackoffPolicy.IsTerminal` (:77-81) or requeues with backoff (:83-86). `RenderAsync` (:92-113) parses `TriggerReference` for `{{appointment_time}}` (:101-109). |
+| `MessageDispatcher` | `NotifyHub.Infrastructure/Messaging/MessageDispatcher.cs` | Called by `DispatcherWorker` | **Increment 10**: `DispatchDueMessagesAsync` now starts with a single Quiet Hours gate (`SettingsService.IsQuietHoursNowAsync` — if true, returns 0 immediately, no per-message state change; due messages simply stay `Queued` and get picked up on the next non-quiet poll) and the due-query also requires `ScheduledAt == null \|\| ScheduledAt <= now`. Otherwise unchanged: batch of 10 `Queued` messages due now, ordered by `CreatedAt`. `DispatchOneAsync` (:37-90): opt-out short-circuit (:42-50), renders template if set (:54-59), POSTs to mock gateway (:66-67), on failure increments attempt count and either terminalizes via `RetryBackoffPolicy.IsTerminal` (:77-81) or requeues with backoff (:83-86). `RenderAsync` (:92-113) parses `TriggerReference` for `{{appointment_time}}` (:101-109). Constructor now also takes `SettingsService` — any direct `new MessageDispatcher(...)` call site (tests) needs the 4th arg. |
 | `EscalationWorker` | `NotifyHub.Worker/EscalationWorker.cs:8-36` | Config-driven poll, `Escalation:PollIntervalSeconds` default 60s (:17); 5s error-retry delay (:13) | Resolves `EscalationJob` per scope, calls `EscalateOverdueTasksAsync` (:26) |
 | `EscalationJob` | `NotifyHub.Infrastructure/Escalation/EscalationJob.cs` | Called by `EscalationWorker` | `EscalateOverdueTasksAsync` (:19-61): batch of 100 overdue non-terminal tasks (:23-29), resolves lowest-id Admin as fallback (:36-40), sets `Escalated` + audits (:45-47), reassigns + audits "auto-reassigned" if not already assigned to that admin (:49-54) |
 | `ReminderWorker` | `NotifyHub.Worker/ReminderWorker.cs:8-36` | Config-driven poll, `Reminders:PollIntervalSeconds` default 900s/15min (:17, locked decision per §14); 5s error-retry delay (:13) | Resolves `ReminderScheduler` per scope, calls `RunAsync` (:26) |
@@ -221,7 +236,9 @@ pipeline — no environment gating. Order: `UserSeedStep` → `SecondStaffSeedSt
 `PatientAppointmentSeedStep` (10 demo patients+appointments) → `TemplateSeedStep` (4 templates) →
 `BookmarkSeedStep` (increment 8 — 2 bookmarks: "Patient Name"/`{{patient_name}}`, "Appointment
 Time"/`{{appointment_time}}`, matching exactly what `TemplateRenderer` resolves at send time) →
-`DemoOutboundMessageSeedStep` (10 demo messages: 5 appointment-reminder + 3 medication + 2 prescription, `DemoOutboundMessageSeedStep.cs:32-49` — corrected from a stale "5" here) → `PerformanceSeedStep` (step 6, FR-010, 45,000 outbound + 5,000 inbound at the default `targetMessageCount=50,000`, `OutboundRatio=0.9`).
+`SystemSettingSeedStep` (increment 10 — default rows for every known setting key, idempotent
+per-key rather than "any setting exists" so a future new key isn't skipped on an already-seeded
+install; both Quiet Hours and rate limiting default disabled) → `DemoOutboundMessageSeedStep` (10 demo messages: 5 appointment-reminder + 3 medication + 2 prescription, `DemoOutboundMessageSeedStep.cs:32-49` — corrected from a stale "5" here) → `PerformanceSeedStep` (step 6, FR-010, 45,000 outbound + 5,000 inbound at the default `targetMessageCount=50,000`, `OutboundRatio=0.9`).
 
 Deterministic seed-only baseline for `outbound_messages`: 45,000 (perf) + 10 (demo) = 45,010. Any count above that is expected, not a seeding bug: `ReminderScheduler.CreateDueRemindersAsync` (`NotifyHub.Infrastructure/Reminders/ReminderScheduler.cs:121-133`) keeps inserting new rows over wall-clock time for the 10 real `PatientAppointmentSeedStep` appointments as their 48h/2h reminder windows open (up to 2 per appointment) — distinguish via `TriggerReference` prefix: `perfseed:*` (45,000), `appointment:*:created`/`medication:*:seed`/`prescription:*:seed` (10), `appointment:*:reminder:*h:*` (live, growing).
 
@@ -257,6 +274,8 @@ factory, to test the step's own idempotency without colliding with the automatic
 | Reminder due-window calculation (FR-009) | `NotifyHub.Domain/Messaging/ReminderDueCalculator.cs:9-10` (`IsDue`) | `now < scheduledAt && now >= scheduledAt.AddHours(-offsetHours)` — true once the offset window opens, false once the appointment has occurred |
 | Reminder trigger-reference build/parse (BR-009/BR-010) | `NotifyHub.Domain/Messaging/ReminderTriggerReference.cs:16-17` (`Build`), `:21-38` (`TryParse`) | Format `appointment:{appointmentId}:reminder:{offsetHours}h:{scheduledAt.Ticks}` — embeds `ScheduledAt` itself (not a version counter, see STATUS.md deviations) so a reschedule always yields a new reference; `TryParse` rejects non-reminder formats (e.g. seed data's `appointment:{id}:created`) |
 | Reminder scheduling + reschedule-supersede (FR-009/BR-003/BR-010) | `NotifyHub.Infrastructure/Reminders/ReminderScheduler.cs` (see §4) | Poll-based supersede-then-create, reusing `outbound_messages`/`IdempotencyKeyGenerator`/`MessageDispatcher` unchanged |
+| Per-patient rate limiting (§6, increment 10) | `NotifyHub.Domain/Messaging/RateLimitChecker.cs` (`IsAllowed`) | Pure comparison (`recentMessageCount < maxMessagesPerWindow`); the recent-count query itself lives in `ThreadsController.RateLimitExceededAsync` (counts `OutboundMessages` for the patient created within `SettingsService`'s configured window) |
+| Quiet Hours window (§6, increment 10) | `NotifyHub.Domain/Messaging/QuietHoursCalculator.cs` (`IsQuietNow`) | `TimeOnly` comparison against a start/end window; handles the same-day case (`start < end`) and the wraps-past-midnight case (`start >= end`, e.g. 21:00-08:00) identically; zero-width window (`start == end`) is defined as never-quiet |
 | Thread message-history pagination (FR-010) | `NotifyHub.Api/Controllers/ThreadsController.cs:89-132` (`GetMessagesPageAsync`) | Merge-paginates `inbound_messages`/`outbound_messages` (independently ordered by `ReceivedAt`/`CreatedAt`) without ever loading a thread's full history: pulls only `skip+pageSize` rows DESC from each table (provably sufficient — see the method's doc comment, :76-88), merges in memory, slices to the requested page, re-sorts ascending for chat reading order. Page 1 = most recent messages. |
 
 **Fixed** (was logged in STATUS.md's Final review checklist as an open item): the `Inbound`
@@ -486,13 +505,13 @@ original redesign plan.
 ## 7. Test structure
 
 ### Domain (`NotifyHub.Tests/NotifyHub.Domain.Tests/`) — no DB
-Files: `PasswordPolicyTests.cs`, `TemplateRendererTests.cs`, `IdempotencyKeyGeneratorTests.cs`, `RetryBackoffPolicyTests.cs`, `OptOutKeywordMatcherTests.cs`, `TaskDueDateDefaultsTests.cs`, `RecurrenceCalculatorTests.cs`, `ReminderDueCalculatorTests.cs`, `ReminderTriggerReferenceTests.cs`.
+Files: `PasswordPolicyTests.cs`, `TemplateRendererTests.cs`, `IdempotencyKeyGeneratorTests.cs`, `RetryBackoffPolicyTests.cs`, `OptOutKeywordMatcherTests.cs`, `TaskDueDateDefaultsTests.cs`, `RecurrenceCalculatorTests.cs`, `ReminderDueCalculatorTests.cs`, `ReminderTriggerReferenceTests.cs`, `RateLimitCheckerTests.cs`, `QuietHoursCalculatorTests.cs` (last two added increment 10).
 Run: `dotnet test NotifyHub.Tests/NotifyHub.Domain.Tests`
 
 ### Integration (`NotifyHub.Tests/NotifyHub.Integration.Tests/`)
 | Test file | Factory |
 |---|---|
-| `AuthEndpointTests.cs`, `EscalationJobTests.cs`, `InboundWebhookTests.cs`, `MessageDispatcherOptOutTests.cs`, `TasksControllerTests.cs`, `ThreadsControllerTests.cs`, `ReminderSchedulerTests.cs`, `AuditControllerTests.cs`, `TemplatesControllerTests.cs`, `UsersControllerTests.cs` (added increment 2 — create/assignable-filtering/auto-forward-on-status-change), `ActiveUserRequiredFilterTests.cs` (added increment 3 — mutating-request 403 for Inactive users, GET still works, login still works even after the JWT was issued while Active), `BookmarksControllerTests.cs` (added increment 8 — CRUD + role checks) | `CustomWebApplicationFactory` (EF Core InMemory) |
+| `AuthEndpointTests.cs`, `EscalationJobTests.cs`, `InboundWebhookTests.cs`, `MessageDispatcherOptOutTests.cs`, `TasksControllerTests.cs`, `ThreadsControllerTests.cs`, `ReminderSchedulerTests.cs`, `AuditControllerTests.cs`, `TemplatesControllerTests.cs`, `UsersControllerTests.cs` (added increment 2 — create/assignable-filtering/auto-forward-on-status-change), `ActiveUserRequiredFilterTests.cs` (added increment 3 — mutating-request 403 for Inactive users, GET still works, login still works even after the JWT was issued while Active), `BookmarksControllerTests.cs` (added increment 8 — CRUD + role checks), `SettingsControllerTests.cs` (added increment 10 — get/update/role-check/system-info), scheduled-send/rate-limit tests added to `ThreadsControllerTests.cs` and a quiet-hours-skips-the-batch test added to `MessageDispatcherOptOutTests.cs` (both increment 10) | `CustomWebApplicationFactory` (EF Core InMemory) |
 | `OutboundPipelineTests.cs` | `ReliableGatewayWebApplicationFactory` (happy path) / `FailingGatewayWebApplicationFactory` (retry) — both subclass `CustomWebApplicationFactory` |
 | `InboundWebhookThreadRaceMySqlTests.cs` | `MySqlWebApplicationFactory` — real MySQL, `[Trait("Category","MySql")]`, exercises `FindOrCreateThreadAsync`'s race guard under genuine concurrent connections |
 | `PerformanceSeedStepTests.cs` | **No factory** — deliberately builds its own isolated `NotifyHubDbContext` (`UseInMemoryDatabase` with a fresh GUID name) instead of using `CustomWebApplicationFactory`, since that factory's automatic startup seeding (with `PerformanceSeedStep` registered as a real `IDbSeedStep`) would trip this step's own idempotency marker before the test calls `RunAsync` explicitly |
