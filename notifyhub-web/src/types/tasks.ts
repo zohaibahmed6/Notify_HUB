@@ -1,5 +1,27 @@
 export type TaskPriority = "Low" | "Medium" | "High" | "Urgent";
 export type TaskStatus = "Open" | "InProgress" | "Completed" | "Escalated" | "Cancelled";
+export type TaskType =
+  | "RepeatRx"
+  | "Recall"
+  | "AppointmentBooking"
+  | "FollowUp"
+  | "Finance"
+  | "General"
+  | "ClinicalReview"
+  | "Administrative"
+  | "Other";
+
+export const TASK_TYPES: TaskType[] = [
+  "RepeatRx",
+  "Recall",
+  "AppointmentBooking",
+  "FollowUp",
+  "Finance",
+  "General",
+  "ClinicalReview",
+  "Administrative",
+  "Other",
+];
 
 export interface TaskDto {
   id: number;
@@ -15,6 +37,9 @@ export interface TaskDto {
   recurrenceEndDate: string | null;
   recurrenceMaxOccurrences: number | null;
   occurrenceCount: number;
+  description: string | null;
+  taskType: TaskType;
+  isActive: boolean;
 }
 
 export interface CreateTaskRequest {
@@ -24,6 +49,8 @@ export interface CreateTaskRequest {
   recurrenceIntervalDays?: number;
   recurrenceEndDate?: string;
   recurrenceMaxOccurrences?: number;
+  description?: string;
+  taskType?: TaskType;
 }
 
 export interface UpdateTaskRequest {
@@ -31,4 +58,22 @@ export interface UpdateTaskRequest {
   priority?: TaskPriority;
   dueAt?: string;
   assignedStaffId?: number;
+  description?: string;
+  taskType?: TaskType;
+  isActive?: boolean;
+}
+
+export interface ForwardTaskRequest {
+  targetUserId: number;
+  note?: string;
+}
+
+export interface TaskListFilters {
+  status?: TaskStatus | "All";
+  assignedStaffId?: number;
+  description?: string;
+  patientName?: string;
+  dueFrom?: string;
+  dueTo?: string;
+  isActive?: boolean;
 }
