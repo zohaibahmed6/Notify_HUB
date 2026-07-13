@@ -34,7 +34,7 @@ manual per-entity registration) — every `IEntityTypeConfiguration<T>` in
 
 | Entity → table | Entity file | Config file | Key fields | Relationships / indexes |
 |---|---|---|---|---|
-| `User` → `users` | `NotifyHub.Domain/Entities/User.cs:5` | `UserConfiguration.cs:7` | Id, Username, PasswordHash, Role | Unique index `Username` (:18) |
+| `User` → `users` | `NotifyHub.Domain/Entities/User.cs:5` | `UserConfiguration.cs:7` | Id, Username, PasswordHash, Role, **FullName?, Status** (added, see below) | Unique index `Username` (:18) |
 | `RefreshToken` → `refresh_tokens` | `RefreshToken.cs:3` | `RefreshTokenConfiguration.cs:7` | Id, UserId, TokenHash, ExpiresAt, RevokedAt | Unique index `TokenHash` (:18); index `UserId` (:25); FK on `User` side |
 | `Patient` → `patients` | `Patient.cs:4` | `PatientConfiguration.cs:7` | Id, Name, Phone, OptOutAt | Unique index `Phone` (:22) |
 | `Appointment` → `appointments` (stub) | `Appointment.cs:6` | `AppointmentConfiguration.cs:7` | Id, PatientId, ScheduledAt, Status | FK `Patient`, cascade delete (:22-25); index `PatientId` (:27) |
@@ -44,9 +44,22 @@ manual per-entity registration) — every `IEntityTypeConfiguration<T>` in
 | `AuditLog` → `audit_log` | `AuditLog.cs:4` | `AuditLogConfiguration.cs:7` | Id, Actor, Action, EntityType, EntityId, OccurredAt, Detail? | Composite index `(EntityType, EntityId)` (:20); index `Actor` (:21); no FK (polymorphic ref) |
 | `ConversationThread` → `threads` | `ConversationThread.cs:7` | `ConversationThreadConfiguration.cs:7` | Id, PatientId, AssignedStaffId?, UnreadCount | **Unique index `PatientId`** (:21 — the race-safety guarantee, see §5); FK `Patient` `Restrict` (:17-20); FK `AssignedStaff` `Restrict` (:23-26); index `AssignedStaffId` (:29) |
 | `InboundMessage` → `inbound_messages` | `InboundMessage.cs:4` | `InboundMessageConfiguration.cs:7` | Id, ThreadId, Body (≤1000), ReceivedAt | FK `Thread`, cascade delete (:18-21); composite index `(ThreadId, ReceivedAt)` (:24) |
-| `TaskItem` → `tasks` | `TaskItem.cs:7` | `TaskItemConfiguration.cs:7` | Id, ThreadId, Priority, DueAt, Status, AssignedStaffId?, OriginalOwnerId, IsRecurring, RecurrenceIntervalDays?, RecurrenceEndDate?, RecurrenceMaxOccurrences?, OccurrenceCount | FK `Thread` cascade (:29-32); FK `AssignedStaff`/`OriginalOwner` `Restrict` (:34-42); composite index `(Status, DueAt)` (:45, drives escalation job); index `AssignedStaffId` (:46) |
+| `TaskItem` → `tasks` | `TaskItem.cs:7` | `TaskItemConfiguration.cs:7` | Id, ThreadId, Priority, DueAt, Status, AssignedStaffId?, OriginalOwnerId, IsRecurring, RecurrenceIntervalDays?, RecurrenceEndDate?, RecurrenceMaxOccurrences?, OccurrenceCount, **Description? (≤1000), TaskType, IsActive** (added — see below) | FK `Thread` cascade (:29-32); FK `AssignedStaff`/`OriginalOwner` `Restrict` (:34-42); composite index `(Status, DueAt)` (:45, drives escalation job); index `AssignedStaffId` (:46) |
 
-Enums: `UserRole` (`Enums/UserRole.cs:3`), `MessageStatus` (`:3`, Queued/Sending/Sent/Delivered/Failed/**Superseded** — 6th value added in step 5, terminal, set only by `ReminderScheduler` on a rescheduled appointment's stale queued reminder, BR-010; never picked up by `MessageDispatcher`'s `Status == Queued` query so nothing else needed to change),
+**Schema additions (this feature set, increment 1)**: `TaskItem.Description` (string?, ≤1000 chars,
+auto-populated from the thread's last message at creation — see §3's `ThreadsController.CreateTask`
+once increment 5 lands), `TaskItem.TaskType` (new enum, see below, required, default `General`),
+`TaskItem.IsActive` (bool, default `true` — a list-filter flag only, independent of the workflow
+`Status` column; does not gate escalation/recurrence/forwarding). `User.FullName` (string?, display
+name distinct from login `Username`), `User.Status` (new enum `UserStatus`: Active/Inactive/OnLeave,
+default `Active`). Migration `20260713171136_AddTaskAndUserFields` — note the generated
+`AddColumn` defaults were hand-corrected post-generation (`IsActive` → `true`, `Status`/`TaskType`
+→ `"Active"`/`"General"` instead of EF's generated `false`/`""`, since `""` isn't a valid enum
+member and would fail to deserialize on read for pre-existing rows).
+
+Enums: `UserRole` (`Enums/UserRole.cs:3`), **`UserStatus`** (`Enums/UserStatus.cs:3`,
+Active/Inactive/OnLeave), **`TaskType`** (`Enums/TaskType.cs:3`, RepeatRx/Recall/
+AppointmentBooking/FollowUp/Finance/General/ClinicalReview/Administrative/Other), `MessageStatus` (`:3`, Queued/Sending/Sent/Delivered/Failed/**Superseded** — 6th value added in step 5, terminal, set only by `ReminderScheduler` on a rescheduled appointment's stale queued reminder, BR-010; never picked up by `MessageDispatcher`'s `Status == Queued` query so nothing else needed to change),
 `TriggerType` (`:3`, AppointmentReminder/MedicationAlert/PrescriptionAlert), `SenderType` (`:3`,
 System/Staff), `AppointmentStatus` (`:4`), `NotifyHubTaskStatus` (`:6`, Open/InProgress/Completed/
 Escalated/**Cancelled** — 5th value added per BR-007b, see STATUS.md), `TaskPriority` (`:3`, Low/
@@ -254,7 +267,151 @@ rather than deferred — no longer an open item.
 
 **API client**: `lib/apiClient.ts` — JWT attached :46-49; 401 handling :53-68 (de-dupes concurrent refreshes via shared `refreshPromise` :22/:54-58, retries once, else clears token store + dispatches `"auth:logout"` :65-67). Base URL derivation: `lib/apiBaseUrl.ts:9-10` (`${protocol}//${hostname}:5000`, `VITE_API_URL` override available).
 
-**Routing**: `main.tsx:17-21` mounts `BrowserRouter`. Table in `App.tsx:13-26`: `/login` public (:14); `/`→`/inbox` redirect (:17), `/inbox`/`/tasks`/`/templates`/`/audit` (:18-21, last two added step 6) all under `<ProtectedRoute>`+`<AppShell>` (:15-16); `*`→`/` (:24).
+**Routing**: `main.tsx:17-21` mounts `BrowserRouter`. Table in `App.tsx:13-26`: `/login` public (:14); `/`→`/inbox` redirect (:17), `/inbox`/`/tasks`/`/templates`/`/audit` (:18-21, last two added step 6) all under `<ProtectedRoute>`+`<AppShell>` (:15-16); `*`→`/` (:24). Every route now renders through `VersionedRoute` (§6a) rather than the bare page component directly — not reflected in the line numbers above, which still describe the pre-redesign table shape.
+
+---
+
+## 6a. UI redesign (v2) — presentation-layer only, no backend/API changes
+
+A parallel "redesign" presentation exists behind a runtime toggle, entirely additive — every
+legacy file listed in §6 above is unmodified.
+
+- **Version toggle**: `src/config/uiVersion.ts` (localStorage key `notifyhub:ui-version`, build-time
+  default via `VITE_UI_VERSION`) + `src/context/UIVersionContext.tsx` (`useUIVersion()` →
+  `{version, setVersion, toggleVersion}`). Toggle button lives in `AppShell.tsx` (existing "Legacy
+  UI/New UI" button, unchanged).
+- **Route swap**: `src/routes/VersionedRoute.tsx` renders `Legacy` or `Redesign` per route based on
+  `version`; wired into every route in `App.tsx`. Redesign screens live in `src/pages/v2/*PageV2.tsx`
+  — currently pass-through stubs re-exporting the legacy page, replaced one at a time as each screen
+  ships (Step 4 of the redesign process).
+- **CSS scope**: `UIVersionContext.tsx` toggles a `redesign` class on `document.documentElement`
+  (mirrors how a dark-mode toggle would drive `.dark`). `src/index.css` defines `.redesign` and
+  `.redesign.dark` blocks that override the same shadcn CSS-variable token names
+  (`--background`/`--primary`/`--popover`/etc.) with a distinct palette (cool slate neutrals +
+  indigo/violet accent) — legacy screens never get this class, so they keep the untouched default
+  shadcn zinc/slate theme (`:root`/`.dark` blocks, unchanged). Because every shared primitive
+  (`Button`/`Card`/`Input`/`Badge`) already consumes these token names, they reskin automatically
+  under the redesign scope with no per-component changes. Also added: `--popover`/`--popover-foreground`
+  tokens (missing from the original token set — needed by `dialog`/`popover`/`select`/`dropdown-menu`/
+  `command`, all newly added below) to `:root`/`.dark` too, since they were absent for every scope, not
+  redesign-specific.
+- **shadcn primitives added** (`src/components/ui/*`, via `npx shadcn add`, all Radix-based):
+  `dialog`, `dropdown-menu`, `sheet`, `command` (+ `cmdk` dep), `select`, `popover`, `table`,
+  `skeleton`, `avatar`, `tooltip`, `tabs`, `separator`, `scroll-area`. Available to both legacy and
+  redesign code paths, but legacy doesn't reference any of them.
+- **Shared redesign primitives** (`src/components/v2/`, redesign-only — legacy never imports these):
+  - `status-badge.tsx` — `StatusBadge` component + `StatusTone` (`neutral`/`progress`/`success`/
+    `danger`/`info`/`muted`), icon+color+label pairing used everywhere the app shows a state.
+  - `status-config.ts` — per-domain config maps driving `StatusBadge`: `DELIVERY_STATUS_CONFIG`
+    (keyed on `ThreadMessageDto.status`), `TASK_STATUS_CONFIG`/`TASK_PRIORITY_CONFIG` (keyed on
+    `TaskStatus`/`TaskPriority`), `AUDIT_ACTION_CONFIG` (keyed on the 7 literal `AuditLogDto.action`
+    strings emitted by `AuditLogger.Add` call sites — `send`/`receipt`/`opt-out`/`assignment`/
+    `escalation`/`blocked`/`superseded`), `TRIGGER_TYPE_CONFIG` (keyed on `TemplateTriggerType`).
+  - `initials-avatar.tsx` — `InitialsAvatar`, deterministic per-name color (simple string hash into
+    a fixed tone palette) + initials, no new dependency.
+  - `empty-state.tsx` — generic `EmptyState` shell; callers supply their own title/description so
+    each screen's existing invitation-style copy (§6c) carries over unchanged.
+  - `skeletons.tsx` — `ListRowSkeleton`/`TableRowSkeleton`/`CardGridSkeleton`, built on the new
+    `Skeleton` primitive, replace the plain "Loading..." text per screen.
+  - `sparkline.tsx` — `Sparkline` (mini bar chart) + `DistributionBar` (segmented proportion bar),
+    plain SVG/CSS, no charting library — for the audit-activity and task-status-distribution strips
+    planned in Step 4. Callers pre-aggregate data client-side from what `useThreads`/`useTasks`/
+    `useTemplates`/`useAuditLog` already fetch; these components do no fetching themselves.
+- **Command palette** (`Cmd/Ctrl+K`, redesign-only) — `AppShell.tsx`: `paletteOpen` state, a
+  `keydown` listener (added/removed via `useEffect`, only when `isRedesign`), and a header trigger
+  button (`Search... ⌘K`) all gated on `version === "redesign"`; no separate `AppShellV2`. Renders
+  `components/v2/command-palette.tsx`'s `CommandPalette`, controlled via `open`/`onOpenChange` props.
+  - Reads `useThreads()`/`useTasks()`/`useTemplates()` (already-cached TanStack Query data, no new
+    fetch) into three `CommandGroup`s (Threads/Tasks/Templates) plus a "Quick actions" group
+    ("New task"/"New template"), filtered client-side by `cmdk`'s built-in matcher against each
+    `CommandItem`'s `value`. Task rows cross-reference `threadNameById` (built from the threads
+    list) so tasks are searchable/labeled by patient name, not just task id.
+  - Selecting a thread/task/template result navigates to `/inbox?thread={id}`,
+    `/tasks?task={id}`, or `/templates?template={id}` — these query params are inert today (the
+    `*PageV2.tsx` stubs re-export the legacy pages, which don't read them); each redesigned screen
+    is expected to read its param and deep-link to that item once built.
+  - "New task" opens a `Dialog` wrapping the existing (untouched) `NewTaskForm`
+    (`components/tasks/NewTaskForm.tsx`). "New template" opens a `Dialog` wrapping a new
+    `components/v2/quick-create-template-form.tsx` (`QuickCreateTemplateForm`) — a standalone
+    create-only form using `useCreateTemplateMutation` directly, written because legacy
+    `TemplatesPage.tsx`'s `TemplateForm` is a private unexported function in that (untouched) file.
+- **`LoginPageV2.tsx`** — built. Same validation (required username/password, inline field errors)
+  and auth flow (`useAuth().login`, `navigate("/", { replace: true })` on success, `toast.error`
+  on failure) as legacy `LoginPage.tsx` — presentation-only change. Centered card on a static
+  radial-gradient canvas (`hsl(var(--primary) / 0.14)`, no animation), a generated bell mark (no
+  logo asset exists), `Loader2` spinner in the submit button while `isLoggingIn`. Outside
+  `AppShell`, so no command palette here, matching the redesign plan.
+- **`InboxPageV2.tsx`** — built. Two-pane layout (`ThreadList` + `ConversationPanelV2`, both
+  `components/v2/`), same hooks/mutations as legacy (`useThreads`, `useThread`,
+  `useAssignMutation`, `useReplyMutation`, direct `apiClient` pagination for older messages) —
+  presentation-only.
+  - `ThreadList` — client-side search (substring over `patientName`/`assignedStaffUsername`),
+    `InitialsAvatar` per row, unread-count badge, opted-out indicator. **Deliberately no
+    last-message preview/timestamp**: `ThreadDto`/`GET /api/threads` carries no last-message
+    field, and fetching each thread's detail just to populate a sidebar preview would cost one
+    extra request per visible row (up to 100) — flagged as a real gap vs. the original plan, not
+    silently faked.
+  - `ConversationPanelV2` — same message-bubble/pagination/scroll logic as legacy
+    `ConversationPanel.tsx`, plus the new piece: a `StatusBadge` (from `status-config.ts`'s
+    `DELIVERY_STATUS_CONFIG`) rendered under each outbound bubble from `ThreadMessageDto.status`
+    (previously fetched, never rendered). Reuses the untouched legacy `CreateTaskForm` as-is for
+    "Make task" (same reuse pattern as the command palette's "New task").
+  - `?thread={id}` query param (`useSearchParams`) drives selection both ways — the command
+    palette's thread links now resolve to the actual conversation, not just the Inbox route.
+- **`TaskBoardPageV2.tsx`** — built. Kanban board (`components/v2/task-card.tsx`'s `TaskCard`,
+  one column per `TaskStatus`; Completed/Cancelled collapsed by default, toggleable) plus a
+  `Board`/`List` tab toggle (list = same cards, flat, sorted by `dueAt`) — both views over the
+  same `useTasks()` (all statuses, unfiltered — the board draws the status split client-side,
+  unlike legacy's single-status server query) and `useThreads()` (for thread-name
+  cross-referencing on cards, same pattern as the command palette).
+  - Filters (priority `Select`, assignee `Select`, recurring-only toggle) are client-side over
+    the fetched task list. Distribution strip (`DistributionBar`) above the board reflects the
+    filtered set.
+  - Clicking a card opens `components/v2/task-detail-sheet.tsx`'s `TaskDetailSheet` — same
+    `useTask(taskId)` hook as legacy `TaskDetailPanel`, so opening it still fires BR-014's
+    escalated→in-progress revert exactly as before; "Assign to me"/"Complete" call the same
+    `useUpdateTaskMutation()` instance the board owns (one shared mutation, matching legacy's
+    single-instance-for-all-rows behavior). `?task={id}` drives the sheet the same way Inbox's
+    `?thread={id}` drives thread selection.
+  - "New task" reuses the untouched legacy `NewTaskForm` in a `Dialog` (same reuse pattern as
+    the command palette and Inbox's "Make task").
+  - **Same thread-name cross-reference gap as the command palette**: cards/sheet fall back to
+    `Thread #{id}` when the task's thread isn't in the first 100 threads `useThreads()` fetched
+    (`GET /api/threads` sorts newest-first) — only matters for tasks tied to old/inactive
+    threads, not a bug, just the documented degrade path.
+- **`TemplatesPageV2.tsx`** — built. List + live-preview split pane (Postmark pattern):
+  left = compact rows (name, `TRIGGER_TYPE_CONFIG` badge, offset-hours), right = selected
+  template's rendered preview or its edit form. Same validation and mutations as legacy
+  (`useCreateTemplateMutation`/`useUpdateTemplateMutation`), factored into a reusable
+  `components/v2/template-form.tsx` (`TemplateForm`, presentation-only — legacy's inline
+  `TemplateForm` in `TemplatesPage.tsx` isn't exported, so this is a new component, not a
+  refactor of legacy). `?template={id}` deep-links like the other screens.
+  - **Merge-field preview** (`components/v2/merge-field-text.tsx`, `MergeFieldText`) — the
+    piece the audit flagged as entirely missing. Two modes: "Raw source" highlights every
+    `{{field}}` token as a literal chip; "Sample preview" substitutes illustrative values for
+    exactly the two fields `NotifyHub.Domain/Messaging/TemplateRenderer.cs` actually resolves
+    at send time (`patient_name` always, `appointment_time` for `AppointmentReminder` sends) —
+    any other field name stays shown as an unresolved token in both modes, mirroring
+    `TemplateRenderer.Render`'s real "leave unknown fields as-is" behavior rather than
+    fabricating values for fields the backend wouldn't actually fill in.
+- **`AuditLogPageV2.tsx`** — built, all 5 redesign screens now complete. GitHub/Datadog-style
+  table: sticky header, `TableRow` hover highlight, monospace actor/timestamp columns,
+  client-side column sort (re-sorts the current page only — server pagination unchanged),
+  `Action` column via `StatusBadge`/`AUDIT_ACTION_CONFIG` (icon+color per the 7 action types),
+  a day-by-day `Sparkline` above the table (counts from the current page/filter only, not a
+  true full-history aggregate — no new endpoint).
+  - **Product decision, not a technical one**: the redesign restricts this screen to Admin
+    only — legacy's Staff-scoped `/api/audit/mine` ("your own actions") view is intentionally
+    dropped in the new UI. Enforced twice: `AppShell.tsx`'s `NAV_LINKS` gets a new
+    `adminOnlyInRedesign` flag filtered out of `visibleNavLinks` when `isRedesign &&
+    user?.role !== "Admin"` (nav link hidden), and `AuditLogPageV2` itself renders an
+    "Admins only" `EmptyState` and skips calling `useAuditLog` entirely for non-Admins, so a
+    direct `/audit` visit by Staff doesn't fall through to the `/api/audit/mine` view either.
+    Legacy is completely unaffected (`AppShell.tsx`'s `NAV_LINKS` array itself, and legacy's
+    `AuditLogPage.tsx`, are unchanged — only the redesign's render-time filter is new).
+
+All 5 redesign screens + the command palette are now built. Nothing left unbuilt from the
+original redesign plan.
 
 ---
 

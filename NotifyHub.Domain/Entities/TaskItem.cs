@@ -28,4 +28,11 @@ public class TaskItem
     public DateTime? RecurrenceEndDate { get; set; }
     public int? RecurrenceMaxOccurrences { get; set; }
     public int OccurrenceCount { get; set; } = 1;
+
+    public string? Description { get; set; }
+    public TaskType TaskType { get; set; } = TaskType.General;
+
+    /// List-filter flag only, independent of the workflow Status above — not a workflow
+    /// eligibility concept (does not gate escalation/recurrence/forwarding).
+    public bool IsActive { get; set; } = true;
 }

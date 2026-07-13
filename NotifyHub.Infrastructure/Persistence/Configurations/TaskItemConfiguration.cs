@@ -26,6 +26,15 @@ public class TaskItemConfiguration : IEntityTypeConfiguration<TaskItem>
 
         builder.Property(t => t.OccurrenceCount).IsRequired();
 
+        builder.Property(t => t.Description).HasMaxLength(1000);
+
+        builder.Property(t => t.TaskType)
+            .HasConversion<string>()
+            .HasMaxLength(30)
+            .IsRequired();
+
+        builder.Property(t => t.IsActive).IsRequired();
+
         builder.HasOne(t => t.Thread)
             .WithMany(th => th.Tasks)
             .HasForeignKey(t => t.ThreadId)
