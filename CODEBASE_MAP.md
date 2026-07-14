@@ -190,7 +190,7 @@ Shared query logic: `QueryAsync` (:37-63).
 ### `WebhooksController` — `NotifyHub.Api/Controllers/WebhooksController.cs` (`[Route("api/webhooks")]` :18, class-level `[AllowAnonymous][SharedSecret]` :19-20)
 | Verb + route | Method:line | Notes |
 |---|---|---|
-| POST `api/webhooks/gateway-receipt` | `GatewayReceipt` :26 | shared-secret only |
+| POST `api/webhooks/gateway-receipt` | `GatewayReceipt` :26 | shared-secret only; broadcasts `messageStatusUpdated` after the status write when `message.ThreadId` is set (P9-02) — see SignalR table below |
 | POST `api/webhooks/inbound` | `Inbound` :81 | shared-secret only; broadcasts `inboundMessageReceived` (:108-114) |
 
 Race-safe find-or-create: `FindOrCreateThreadAsync` (:119-141) — see §5.
@@ -216,6 +216,7 @@ Race-safe find-or-create: `FindOrCreateThreadAsync` (:119-141) — see §5.
 | `outboundMessageSent` | `ThreadsController.cs:127` | `{ threadId }` |
 | `threadAssigned` | `ThreadsController.cs:161` | `{ threadId, assignedStaffId }` |
 | `taskAssignmentChanged` | `UsersController.cs` (auto-forward on status change, increment 2); `TasksController.cs` (manual forward, increment 4, implemented) | `{ taskId, assignedStaffId }` |
+| `messageStatusUpdated` | `WebhooksController.GatewayReceipt` (P9-02) | `{ threadId, messageId, status }` — `status` is `message.Status.ToString()` (`Delivered`/`Queued`/`Failed`, whichever `GatewayReceipt` just set). Root cause of the pre-P9-02 "double tick" bug: `GatewayReceipt` updated the DB with no broadcast at all, so a delivery-status change was only ever visible after some unrelated refetch. `MockGatewayController.Send`'s earlier `Sent` transition deliberately still doesn't broadcast (out of P9-02's stated scope), so the single-tick `Sent` state is rarely seen live, only on a page load that happens to land mid-transition. Frontend: `useInboxHub.ts` invalidates `["thread", threadId]` only (not `["threads"]` — a status change doesn't affect the thread-list summary fields). Verified live end-to-end this session (see STATUS.md) via a scripted SignalR client — confirmed `outboundMessageSent` then `messageStatusUpdated {..., status:"Delivered"}` both arrive for a real reply. |
 
 ---
 

@@ -15,6 +15,12 @@ interface OutboundMessageSentEvent {
   threadId: number;
 }
 
+interface MessageStatusUpdatedEvent {
+  threadId: number;
+  messageId: number;
+  status: string;
+}
+
 /** FR-007: shared inbox real-time — invalidates the affected queries on server push so
  * every connected session (e.g. two open browser tabs) converges without polling. */
 export function useInboxHub() {
@@ -35,6 +41,14 @@ export function useInboxHub() {
 
     connection.on("outboundMessageSent", (event: OutboundMessageSentEvent) => {
       queryClient.invalidateQueries({ queryKey: ["threads"] });
+      queryClient.invalidateQueries({ queryKey: ["thread", event.threadId] });
+    });
+
+    // P9-02: delivery-status changes (Queued -> Sent -> Delivered/Failed) now push live
+    // instead of only ever being visible after an unrelated refetch — the actual fix for
+    // the "double tick" bug (WebhooksController.GatewayReceipt previously updated the DB
+    // with no broadcast at all).
+    connection.on("messageStatusUpdated", (event: MessageStatusUpdatedEvent) => {
       queryClient.invalidateQueries({ queryKey: ["thread", event.threadId] });
     });
 

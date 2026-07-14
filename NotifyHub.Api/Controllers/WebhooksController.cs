@@ -71,6 +71,21 @@ public class WebhooksController(NotifyHubDbContext db, IHubContext<InboxHub> inb
         }
 
         await db.SaveChangesAsync(ct);
+
+        // P9-02: the actual root cause of the "double tick" bug — no broadcast fired when
+        // a receipt updated a message's delivery status, only at creation time
+        // (outboundMessageSent). Same pattern as that broadcast/threadAssigned. Only
+        // messages tied to a real thread have anything to invalidate client-side.
+        if (message.ThreadId is not null)
+        {
+            await inboxHub.Clients.All.SendAsync("messageStatusUpdated", new
+            {
+                threadId = message.ThreadId,
+                messageId = message.Id,
+                status = message.Status.ToString(),
+            }, ct);
+        }
+
         return Ok();
     }
 
