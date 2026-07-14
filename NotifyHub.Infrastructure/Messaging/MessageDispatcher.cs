@@ -19,13 +19,21 @@ public class MessageDispatcher(NotifyHubDbContext db, HttpClient gatewayClient, 
 
     public async Task<int> DispatchDueMessagesAsync(CancellationToken ct)
     {
+        var now = DateTime.UtcNow;
+
+        // P9-07: checked unconditionally, before the Quiet Hours gate below — a message
+        // sitting Queued through its whole 12h window while Quiet Hours suppresses the
+        // batch entirely is the realistic way expiry gets hit in practice (BR-011's own
+        // retry/backoff, max ~31 min across 6 attempts, almost never reaches 12h on its
+        // own). If this ran after the Quiet Hours early-return, expiry would never fire
+        // during the exact scenario that causes it.
+        await ExpireOverdueMessagesAsync(now, ct);
+
         // §6: a single gate for the whole batch — during quiet hours, due messages just
         // stay Queued and are picked up on the next non-quiet poll. No per-message state
         // change, so nothing needs "un-queuing" once quiet hours end.
         if (await settingsService.IsQuietHoursNowAsync(ct))
             return 0;
-
-        var now = DateTime.UtcNow;
 
         var due = await db.OutboundMessages
             .Include(m => m.Patient)
@@ -41,6 +49,40 @@ public class MessageDispatcher(NotifyHubDbContext db, HttpClient gatewayClient, 
             await DispatchOneAsync(message, ct);
 
         return due.Count;
+    }
+
+    /// P9-07: marks Expired any Queued message whose ExpiresAt window has passed, before
+    /// any dispatch attempt is made for it — same terminal-status pattern as Superseded
+    /// (BR-010), never picked up again by the Status == Queued due-query above.
+    private async Task ExpireOverdueMessagesAsync(DateTime now, CancellationToken ct)
+    {
+        var overdue = await db.OutboundMessages
+            .Where(m => m.Status == MessageStatus.Queued && m.ExpiresAt != null && m.ExpiresAt <= now)
+            .ToListAsync(ct);
+
+        if (overdue.Count == 0)
+            return;
+
+        foreach (var message in overdue)
+        {
+            message.Status = MessageStatus.Expired;
+            // Fact-based, not a guess at the specific cause (e.g. "quiet hours") this
+            // codebase has no per-message signal for — distinguishes only what's actually
+            // knowable: whether a send was ever attempted before the window closed.
+            message.ExpiryReason = message.AttemptCount == 0
+                ? "Message expired before any send attempt was made."
+                : $"Message expired after {message.AttemptCount} send attempt(s).";
+            db.DeliveryStatusHistories.Add(new DeliveryStatusHistory
+            {
+                MessageId = message.Id,
+                Status = MessageStatus.Expired,
+                OccurredAt = now,
+            });
+            AuditLogger.Add(db, actor: "system", action: "expired", entityType: "OutboundMessage", entityId: message.Id,
+                detail: message.ExpiryReason);
+        }
+
+        await db.SaveChangesAsync(ct);
     }
 
     private async Task DispatchOneAsync(OutboundMessage message, CancellationToken ct)

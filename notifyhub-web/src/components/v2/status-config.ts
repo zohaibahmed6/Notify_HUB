@@ -10,6 +10,7 @@ import {
   Clock,
   ClipboardList,
   CornerUpRight,
+  Hourglass,
   Minus,
   Pill,
   Send,
@@ -42,6 +43,9 @@ export const DELIVERY_STATUS_CONFIG: Record<string, StatusBadgeConfig> = {
   Delivered: { icon: CheckCheck, tone: "success", label: "Delivered" },
   Failed: { icon: XCircle, tone: "danger", label: "Failed" },
   Superseded: { icon: CornerUpRight, tone: "muted", label: "Superseded" },
+  // P9-07: terminal, never picked up again by the dispatcher — same "muted" tone as
+  // Superseded (a never-sent-but-not-a-delivery-failure outcome), not "danger" like Failed.
+  Expired: { icon: Hourglass, tone: "muted", label: "Expired" },
 };
 
 export const TASK_STATUS_CONFIG: Record<TaskStatus, StatusBadgeConfig> = {

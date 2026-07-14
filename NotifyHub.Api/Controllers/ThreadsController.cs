@@ -159,6 +159,7 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
             return Problem(statusCode: StatusCodes.Status429TooManyRequests, title: "Per-patient outbound message rate limit exceeded.");
         }
 
+        var replyCreatedAt = DateTime.UtcNow;
         db.OutboundMessages.Add(new OutboundMessage
         {
             PatientId = thread.PatientId,
@@ -168,11 +169,12 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
             SentByUsername = User.FindFirstValue(ClaimTypes.Name),
             TriggerReference = null,
             RenderedBody = request.Body,
-            CreatedAt = DateTime.UtcNow,
+            CreatedAt = replyCreatedAt,
             Status = MessageStatus.Queued,
             IdempotencyKey = null,
             AttemptCount = 0,
             ScheduledAt = request.ScheduledAt,
+            ExpiresAt = MessageExpiryCalculator.CalculateExpiresAt(replyCreatedAt, request.ScheduledAt),
         });
 
         await db.SaveChangesAsync(ct);
@@ -219,6 +221,7 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
         db.Threads.Add(thread);
         await db.SaveChangesAsync(ct);
 
+        var messageCreatedAt = DateTime.UtcNow;
         db.OutboundMessages.Add(new OutboundMessage
         {
             PatientId = patient.Id,
@@ -228,11 +231,12 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
             SentByUsername = User.FindFirstValue(ClaimTypes.Name),
             TriggerReference = null,
             RenderedBody = request.Message,
-            CreatedAt = DateTime.UtcNow,
+            CreatedAt = messageCreatedAt,
             Status = MessageStatus.Queued,
             IdempotencyKey = null,
             AttemptCount = 0,
             ScheduledAt = request.ScheduledAt,
+            ExpiresAt = MessageExpiryCalculator.CalculateExpiresAt(messageCreatedAt, request.ScheduledAt),
         });
         await db.SaveChangesAsync(ct);
 

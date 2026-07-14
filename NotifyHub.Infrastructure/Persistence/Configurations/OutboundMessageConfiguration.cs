@@ -21,6 +21,8 @@ public class OutboundMessageConfiguration : IEntityTypeConfiguration<OutboundMes
 
         builder.Property(m => m.SentByUsername).HasMaxLength(100);
 
+        builder.Property(m => m.ExpiryReason).HasMaxLength(200);
+
         builder.Property(m => m.RenderedBody).HasMaxLength(1000);
 
         builder.Property(m => m.CreatedAt).IsRequired();
@@ -53,5 +55,8 @@ public class OutboundMessageConfiguration : IEntityTypeConfiguration<OutboundMes
         // §10 indexes required for FR-010 (paginated/indexed inbox at 50k-message scale).
         builder.HasIndex(m => new { m.Status, m.NextRetryAt });
         builder.HasIndex(m => new { m.ThreadId, m.CreatedAt });
+
+        // P9-07: drives the dispatcher's per-poll expiry sweep (Status == Queued && ExpiresAt <= now).
+        builder.HasIndex(m => new { m.Status, m.ExpiresAt });
     }
 }

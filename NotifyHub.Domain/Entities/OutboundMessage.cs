@@ -49,5 +49,17 @@ public class OutboundMessage
     /// is purely a retry-backoff timestamp (BR-011).
     public DateTime? ScheduledAt { get; set; }
 
+    /// P9-07: Standard SMS default expiry is 12h from CreatedAt (immediate sends) or
+    /// ScheduledAt (scheduled sends) — computed and stored at creation
+    /// (MessageExpiryCalculator). Nullable rather than the plan's literal "(DateTime)":
+    /// pre-P9-07 rows have nothing to backfill from, and the dispatcher's expiry sweep
+    /// only ever queries Status == Queued rows anyway, where a null ExpiresAt just means
+    /// "never expires" (matches every pre-existing creation path this increment didn't
+    /// touch, e.g. the old ReminderScheduler — retired in P9-08, so left alone here).
+    public DateTime? ExpiresAt { get; set; }
+
+    /// Set only when Status transitions to Expired; null otherwise.
+    public string? ExpiryReason { get; set; }
+
     public ICollection<DeliveryStatusHistory> StatusHistory { get; set; } = new List<DeliveryStatusHistory>();
 }
