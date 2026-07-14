@@ -363,6 +363,42 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
         return Created($"/api/tasks/{task.Id}", ToTaskDto(task, assignee?.Username));
     }
 
+    /// P9-04: resolves a template's merge fields to real values for the composer's insert-
+    /// template preview — {{patient_name}} from the thread's actual patient,
+    /// {{appointment_time}} from the patient's next real Scheduled appointment if one
+    /// exists, else a generated future dummy time (so the preview always renders something
+    /// plausible instead of leaving the token unresolved). The frontend fills this into the
+    /// composer's editable textbox — not a locked preview. BR-013 is unaffected: rendered_body
+    /// is still snapshotted at actual dispatch time (MessageDispatcher.RenderAsync) regardless
+    /// of what was shown here, using whatever text staff ends up sending.
+    [HttpGet("{id}/templates/{templateId}/preview")]
+    public async Task<ActionResult<TemplatePreviewDto>> PreviewTemplate(long id, long templateId, CancellationToken ct)
+    {
+        var thread = await db.Threads.Include(t => t.Patient).SingleOrDefaultAsync(t => t.Id == id, ct);
+        if (thread is null)
+            return NotFound();
+
+        var template = await db.MessageTemplates.FindAsync([templateId], ct);
+        if (template is null)
+            return NotFound();
+
+        var fields = new Dictionary<string, string>
+        {
+            ["patient_name"] = thread.Patient.Name,
+        };
+
+        var now = DateTime.UtcNow;
+        var nextAppointment = await db.Appointments
+            .Where(a => a.PatientId == thread.PatientId && a.Status == AppointmentStatus.Scheduled && a.ScheduledAt > now)
+            .OrderBy(a => a.ScheduledAt)
+            .FirstOrDefaultAsync(ct);
+
+        var appointmentTime = nextAppointment?.ScheduledAt ?? now.Date.AddDays(3).AddHours(10);
+        fields["appointment_time"] = appointmentTime.ToString("u");
+
+        return Ok(new TemplatePreviewDto { RenderedBody = TemplateRenderer.Render(template.Body, fields) });
+    }
+
     /// Compares the single most recent row from each table (both already indexed on their
     /// own timestamp — same "no full history load" reasoning as GetMessagesPageAsync above,
     /// just Take(1) instead of a page) rather than unioning and sorting the whole history.

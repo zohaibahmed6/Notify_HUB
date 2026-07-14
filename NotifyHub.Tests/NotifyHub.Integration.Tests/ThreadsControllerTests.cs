@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using NotifyHub.Api.Threads.Dtos;
 using NotifyHub.Domain.Entities;
+using NotifyHub.Domain.Enums;
 using NotifyHub.Infrastructure.Persistence;
 using Xunit;
 
@@ -302,6 +303,68 @@ public class ThreadsControllerTests(CustomWebApplicationFactory factory) : IClas
                 [NotifyHub.Infrastructure.Settings.SettingsService.RateLimitEnabledKey] = "false",
             }, CancellationToken.None);
         }
+    }
+
+    /// P9-04: {{patient_name}} always resolves from the thread's real patient;
+    /// {{appointment_time}} falls back to a generated future dummy time when the patient
+    /// has no real upcoming Scheduled appointment.
+    [Fact]
+    public async Task PreviewTemplate_ResolvesPatientName_AndDummyAppointmentTime_WhenNoneExists()
+    {
+        var thread = await CreateThreadAsync("+19990000201");
+        long templateId;
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
+            var template = new MessageTemplate
+            {
+                Name = "Preview test template",
+                Body = "Hi {{patient_name}}, see you at {{appointment_time}}.",
+                TriggerType = TriggerType.AppointmentReminder,
+                OffsetHours = 48,
+            };
+            db.MessageTemplates.Add(template);
+            await db.SaveChangesAsync();
+            templateId = template.Id;
+        }
+
+        var (client, _) = await _client.AsStaffAsync();
+        var response = await client.GetAsync($"/api/threads/{thread.Id}/templates/{templateId}/preview");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<TemplatePreviewDto>();
+        Assert.Contains("Test Patient +19990000201", body!.RenderedBody);
+        Assert.DoesNotContain("{{appointment_time}}", body.RenderedBody);
+        Assert.DoesNotContain("{{patient_name}}", body.RenderedBody);
+    }
+
+    [Fact]
+    public async Task PreviewTemplate_ResolvesRealUpcomingAppointment_WhenOneExists()
+    {
+        var thread = await CreateThreadAsync("+19990000202");
+        var scheduledAt = DateTime.UtcNow.AddDays(5);
+        long templateId;
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
+            db.Appointments.Add(new Appointment { PatientId = thread.PatientId, ScheduledAt = scheduledAt, Status = AppointmentStatus.Scheduled });
+            var template = new MessageTemplate
+            {
+                Name = "Preview test template 2",
+                Body = "See you at {{appointment_time}}.",
+                TriggerType = TriggerType.AppointmentReminder,
+                OffsetHours = 48,
+            };
+            db.MessageTemplates.Add(template);
+            await db.SaveChangesAsync();
+            templateId = template.Id;
+        }
+
+        var (client, _) = await _client.AsStaffAsync();
+        var response = await client.GetAsync($"/api/threads/{thread.Id}/templates/{templateId}/preview");
+
+        var body = await response.Content.ReadFromJsonAsync<TemplatePreviewDto>();
+        Assert.Contains(scheduledAt.ToString("u"), body!.RenderedBody);
     }
 
     private async Task<ConversationThread> CreateThreadAsync(string phone, bool patientOptedOut = false, int initialUnreadCount = 0)

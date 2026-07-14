@@ -111,9 +111,23 @@ export function ConversationPanelV2({ threadId, onBack }: { threadId: number; on
     }
   };
 
-  const handleInsertTemplate = (templateId: string) => {
+  // P9-04: resolves {{patient_name}}/{{appointment_time}} to real values (this thread's
+  // patient, a real upcoming appointment or a generated future dummy time) before filling
+  // the composer — the result lands in the editable textarea, same as any ad-hoc reply,
+  // not a locked preview. Falls back to the raw template body if the preview call fails,
+  // rather than leaving the composer empty.
+  const handleInsertTemplate = async (templateId: string) => {
     const template = templates?.find((t) => String(t.id) === templateId);
-    if (template) setDraft(template.body);
+    if (!template) return;
+    try {
+      const preview = await apiClient.get<{ renderedBody: string }>(
+        `/api/threads/${threadId}/templates/${templateId}/preview`,
+      );
+      setDraft(preview.renderedBody);
+    } catch (error) {
+      toast.error(errorMessage(error, "Couldn't resolve template fields, inserting raw text"));
+      setDraft(template.body);
+    }
   };
 
   if (isLoading || !thread) {
