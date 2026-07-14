@@ -48,6 +48,7 @@ public class MessagesControllerTests(CustomWebApplicationFactory factory) : ICla
                     Status = MessageStatus.Delivered,
                     CreatedAt = DateTime.UtcNow,
                     AttemptCount = 0,
+                    PduCount = 3, // P9-09: receipt already landed
                 },
                 new OutboundMessage
                 {
@@ -58,6 +59,7 @@ public class MessagesControllerTests(CustomWebApplicationFactory factory) : ICla
                     Status = MessageStatus.Queued,
                     CreatedAt = DateTime.UtcNow,
                     AttemptCount = 0,
+                    PduCount = null, // P9-09: no receipt yet, contributes 0 to the total
                 });
             await db.SaveChangesAsync();
         }
@@ -68,6 +70,11 @@ public class MessagesControllerTests(CustomWebApplicationFactory factory) : ICla
         Assert.Equal(2, all!.TotalCount);
         Assert.Contains(all.Items, i => i.SenderUsername == CustomWebApplicationFactory.StaffUsername);
         Assert.Contains(all.Items, i => i.SenderUsername == "System");
+        // P9-09: TotalPduCount sums across the whole filtered set (3 + null-as-0 = 3), and
+        // the still-Queued row's PduCount is null (pending — no receipt yet).
+        Assert.Equal(3, all.TotalPduCount);
+        Assert.Equal(3, all.Items.Single(i => i.Status == "Delivered").PduCount);
+        Assert.Null(all.Items.Single(i => i.Status == "Queued").PduCount);
 
         var systemOnly = await client.GetFromJsonAsync<SmsHistoryPagedResult>("/api/messages?phone=%2B19990000401&username=System");
         Assert.Equal(1, systemOnly!.TotalCount);

@@ -7,6 +7,7 @@ using NotifyHub.Api.Webhooks;
 using NotifyHub.Api.Webhooks.Dtos;
 using NotifyHub.Domain.Entities;
 using NotifyHub.Domain.Enums;
+using NotifyHub.Domain.Messaging;
 using NotifyHub.Infrastructure.Auditing;
 using NotifyHub.Infrastructure.Persistence;
 
@@ -57,10 +58,15 @@ public class MockGatewayController(
 
         var client = httpClientFactory.CreateClient("self");
 
+        // P9-09: PDU count is the "carrier"'s (mock gateway's) computation from the actual
+        // sent text, included in the receipt — not recomputed by NotifyHub's own
+        // dispatcher, mirroring how a real carrier API returns segment counts.
+        var pduCount = PduSegmentCalculator.CalculateSegmentCount(message.RenderedBody ?? "");
+
         try
         {
             var response = await client.PostAsJsonAsync("api/webhooks/gateway-receipt",
-                new GatewayReceiptRequest { MessageId = message.Id, Delivered = delivered }, ct);
+                new GatewayReceiptRequest { MessageId = message.Id, Delivered = delivered, PduCount = pduCount }, ct);
             response.EnsureSuccessStatusCode();
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

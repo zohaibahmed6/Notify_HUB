@@ -67,6 +67,11 @@ public class MessagesController(NotifyHubDbContext db) : ControllerBase
 
         var totalCount = await query.CountAsync(ct);
 
+        // Sum of PduCount across the *whole filtered set*, not just the current page —
+        // P9-09's summary-row requirement. Rows with no receipt yet (PduCount null)
+        // contribute 0 via ?? 0, matching "pending" rows not counting toward the total.
+        var totalPduCount = await query.SumAsync(m => (int?)m.PduCount ?? 0, ct);
+
         var items = await query
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
@@ -80,8 +85,7 @@ public class MessagesController(NotifyHubDbContext db) : ControllerBase
                 Status = m.Status.ToString(),
                 ScheduledTime = m.ScheduledAt,
                 ExpiryTime = m.ExpiresAt, // wired for real now that P9-07 added ExpiresAt
-                // PduCount: wired once P9-09 adds the column.
-                PduCount = null,
+                PduCount = m.PduCount, // wired for real now that P9-09 added the column
             })
             .ToListAsync(ct);
 
@@ -91,9 +95,7 @@ public class MessagesController(NotifyHubDbContext db) : ControllerBase
             Page = page,
             PageSize = pageSize,
             TotalCount = totalCount,
-            // Sum of PduCount across the whole filtered set, not just this page — always 0
-            // until P9-09 adds the column.
-            TotalPduCount = 0,
+            TotalPduCount = totalPduCount,
         });
     }
 

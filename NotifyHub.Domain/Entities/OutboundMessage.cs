@@ -77,5 +77,12 @@ public class OutboundMessage
     /// (rule 22: same pipeline), not Reminder-specific storage.
     public DateTime? SentAt { get; set; }
 
+    /// P9-09: segment count as computed by the mock gateway (stand-in for a real carrier)
+    /// from the actually-sent text, sourced from the gateway-receipt webhook — never
+    /// computed by NotifyHub's own dispatcher. Null until the first receipt lands
+    /// (Queued/Sending show a pending placeholder in the SMS History report), then
+    /// immutable — never recalculated on subsequent retry receipts.
+    public int? PduCount { get; set; }
+
     public ICollection<DeliveryStatusHistory> StatusHistory { get; set; } = new List<DeliveryStatusHistory>();
 }

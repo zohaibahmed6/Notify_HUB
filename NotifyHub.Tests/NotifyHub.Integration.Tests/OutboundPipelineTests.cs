@@ -63,6 +63,11 @@ public class OutboundPipelineHappyPathTests(ReliableGatewayWebApplicationFactory
         Assert.Equal(MessageStatus.Delivered, updated.Status);
         Assert.Equal(0, updated.AttemptCount);
         Assert.False(string.IsNullOrWhiteSpace(updated.RenderedBody));
+        // P9-09: PDU count sourced from the mock gateway's delivery receipt, not
+        // recomputed by the dispatcher — "Rendered for integration test." is short
+        // GSM-7 text, well under the 160-char single-segment limit.
+        Assert.Equal(1, updated.PduCount);
+        Assert.NotNull(updated.SentAt); // P9-08 rule 32, set alongside the Sent transition
 
         var history = await assertDb.DeliveryStatusHistories
             .Where(h => h.MessageId == messageId)

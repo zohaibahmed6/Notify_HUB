@@ -32,6 +32,12 @@ public class WebhooksController(NotifyHubDbContext db, IHubContext<InboxHub> inb
 
         var now = DateTime.UtcNow;
 
+        // P9-09: set once, from whichever receipt lands first — immutable afterward (rule
+        // 5, same audit-integrity principle as RenderedBody/BR-013), regardless of
+        // Delivered/Failed outcome or how many further retry receipts follow.
+        if (message.PduCount is null && request.PduCount is not null)
+            message.PduCount = request.PduCount;
+
         if (request.Delivered)
         {
             message.Status = MessageStatus.Delivered;
