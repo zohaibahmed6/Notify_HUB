@@ -307,6 +307,8 @@ Seed scale: 50,000 messages (explicit). Paginated + indexed inbox (explicit). St
 | Build session (step 4) | Gap flagged: §11a's 4-value tasks.status enum has no state satisfying BR-007b ("cancelling ends the series"). Resolved: added `cancelled` as a 5th value | Zohaib |
 | Build session (step 4 bug-fix) | Live testing found: (1) reply/assign returned 200 with an empty body, which the frontend misread as failure; (2) page refresh forced re-login — traced to a real §6a conflict (in-memory-only tokens can't survive a reload); (3) BR-014's revert-on-open never fired since the frontend had no "open task" UI at all, only row actions. Resolved: (1) those endpoints return 204; (2) refresh token moved to an httpOnly cookie with a silent refresh on app mount (§6a updated); (3) Task board rows are now clickable, firing the GET that triggers the revert. The Playwright suite built to cover this also caught a 4th, previously-unreported gap: staff replies (`POST /api/threads/{id}/messages`) never broadcast over SignalR at all (only assignment did), so a reply never appeared live in another open tab — fixed by adding an `outboundMessageSent` broadcast, mirroring the existing `threadAssigned` one | Zohaib |
 
+| Build session (2026-07-14) | Step 9 planning session locked a further informal requirements list in `STEP9_PLAN.md` (repo root) — P9-00 responsive design + P9-01 through P9-12, superseding/retiring the reminder-scheduler interval decision above (§14 row "Reminder scheduler interval: 15 minutes") and the Templates screen's `OffsetHours` field, both moot once P9-08/P9-01e ship. `STEP9_PLAN.md` is the source of truth for that session's decisions, not restated here | Zohaib |
+
 *Append new decisions here — do not rewrite history.*
 
 ---

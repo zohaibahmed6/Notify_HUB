@@ -38,14 +38,14 @@ export default function DashboardPage() {
       <p className="mb-6 text-sm text-muted-foreground">Here's what's happening in NotifyHub.</p>
 
       {isLoading || !summary ? (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
           {Array.from({ length: 4 }).map((_, i) => (
             <Skeleton key={i} className="h-20 w-full" />
           ))}
         </div>
       ) : (
         <>
-          <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-4">
             <StatCard label="My open tasks" value={summary.myTasks.open + summary.myTasks.inProgress} icon={Clock} tone="neutral" />
             <StatCard label="My escalated" value={summary.myTasks.escalated} icon={ArrowUp} tone="danger" />
             <StatCard label="My overdue" value={summary.myTasks.overdue} icon={AlertTriangle} tone="danger" />
@@ -58,7 +58,7 @@ export default function DashboardPage() {
                 <CardTitle className="text-base">Org-wide tasks</CardTitle>
                 <CardDescription>Visible to Admins only.</CardDescription>
               </CardHeader>
-              <CardContent className="grid grid-cols-2 gap-3 sm:grid-cols-4 text-sm">
+              <CardContent className="grid grid-cols-1 gap-3 sm:grid-cols-4 text-sm">
                 <div>
                   <div className="text-muted-foreground">Open</div>
                   <div className="text-lg font-medium">{summary.orgTasks.open}</div>
@@ -101,15 +101,15 @@ export default function DashboardPage() {
               ) : (
                 <ul className="divide-y">
                   {summary.recentActivity.map((entry) => (
-                    <li key={entry.id} className="flex items-center justify-between gap-3 py-2 text-sm">
-                      <div className="flex items-center gap-2">
+                    <li key={entry.id} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 py-2 text-sm">
+                      <div className="flex min-w-0 items-center gap-2">
                         <StatusBadge {...(AUDIT_ACTION_CONFIG[entry.action] ?? UNKNOWN_STATUS_CONFIG)} size="xs" />
                         <span className="font-medium">{entry.actor}</span>
-                        <span className="text-muted-foreground">
+                        <span className="truncate text-muted-foreground">
                           {entry.entityType} #{entry.entityId}
                         </span>
                       </div>
-                      <span className="text-xs text-muted-foreground">{new Date(entry.occurredAt).toLocaleString()}</span>
+                      <span className="shrink-0 text-xs text-muted-foreground">{new Date(entry.occurredAt).toLocaleString()}</span>
                     </li>
                   ))}
                 </ul>

@@ -21,11 +21,13 @@ export function ThreadList({
   isLoading,
   selectedThreadId,
   onSelect,
+  className,
 }: {
   threads: ThreadDto[];
   isLoading: boolean;
   selectedThreadId: number | null;
   onSelect: (id: number) => void;
+  className?: string;
 }) {
   const [query, setQuery] = useState("");
   const [newConversationOpen, setNewConversationOpen] = useState(false);
@@ -41,7 +43,7 @@ export function ThreadList({
   }, [threads, query]);
 
   return (
-    <aside className="flex h-full w-80 shrink-0 flex-col border-r">
+    <aside className={cn("flex h-full w-full shrink-0 flex-col border-r md:w-80", className)}>
       <div className="shrink-0 space-y-2 border-b p-2">
         <div className="relative">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />

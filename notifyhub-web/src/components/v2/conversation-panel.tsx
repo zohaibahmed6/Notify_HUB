@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { toast } from "sonner";
-import { CalendarClock, ChevronUp, FileText, MessageSquareOff, UserPlus } from "lucide-react";
+import { ArrowLeft, CalendarClock, ChevronUp, FileText, MessageSquareOff, UserPlus } from "lucide-react";
 
 import { useAssignMutation, useReplyMutation, useThread } from "@/hooks/useThreads";
 import { useTemplates } from "@/hooks/useTemplates";
@@ -23,7 +23,7 @@ const MESSAGES_PAGE_SIZE = 25;
 // Same data flow as the legacy ConversationPanel (same hooks, same pagination/scroll
 // behavior) — restyled, plus a delivery-status chip per outbound message (new:
 // ThreadMessageDto.status was already returned by the API but never rendered).
-export function ConversationPanelV2({ threadId }: { threadId: number }) {
+export function ConversationPanelV2({ threadId, onBack }: { threadId: number; onBack?: () => void }) {
   const { data: thread, isLoading } = useThread(threadId);
   const { data: templates } = useTemplates(true);
   const assign = useAssignMutation(threadId);
@@ -136,6 +136,12 @@ export function ConversationPanelV2({ threadId }: { threadId: number }) {
     <div className="flex h-full flex-col">
       <div className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-3">
         <div className="flex min-w-0 items-center gap-3">
+          {onBack && (
+            <Button variant="ghost" size="icon" className="-ml-2 shrink-0 md:hidden" onClick={onBack}>
+              <ArrowLeft className="size-4" />
+              <span className="sr-only">Back to threads</span>
+            </Button>
+          )}
           <InitialsAvatar name={thread.patientName} />
           <div className="min-w-0">
             <div className="truncate font-medium">{thread.patientName}</div>

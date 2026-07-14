@@ -195,7 +195,33 @@ export default function AuditLogPageV2() {
         <EmptyState icon={ScrollText} title="No audit entries found" description="Try widening your filters." />
       ) : (
         <>
-          <div className="min-h-0 flex-1 overflow-auto rounded-lg border">
+          {/* Mobile: stacked card rows instead of a horizontally-scrolling table — every
+              column stays visible, just arranged vertically per entry (P9-00). */}
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto md:hidden">
+            {sortedLogs.map((log) => {
+              const config = AUDIT_ACTION_CONFIG[log.action] ?? UNKNOWN_STATUS_CONFIG;
+              return (
+                <div key={log.id} className="rounded-lg border p-3 text-sm">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono text-xs">{log.actor}</span>
+                    <StatusBadge {...config} />
+                  </div>
+                  <div className="mt-2 grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-xs">
+                    <span className="text-muted-foreground">Entity</span>
+                    <span>
+                      {log.entityType} #{log.entityId}
+                    </span>
+                    <span className="text-muted-foreground">Occurred at</span>
+                    <span className="font-mono">{new Date(log.occurredAt).toLocaleString()}</span>
+                    <span className="text-muted-foreground">Detail</span>
+                    <span>{log.detail ?? "—"}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="hidden min-h-0 flex-1 overflow-auto rounded-lg border md:block">
             <Table>
               <TableHeader>
                 <TableRow className="hover:bg-transparent">

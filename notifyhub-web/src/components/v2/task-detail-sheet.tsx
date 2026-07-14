@@ -146,7 +146,7 @@ export function TaskDetailSheet({
             </div>
 
             <SheetFooter className="mt-auto flex-col gap-2 sm:flex-col">
-              <div className="flex w-full gap-2">
+              <div className="flex w-full flex-col gap-2 sm:flex-row">
                 <Button variant="outline" className="flex-1" onClick={handleToggleActive} disabled={updateTask.isPending}>
                   {task.isActive ? "Mark inactive" : "Mark active"}
                 </Button>
@@ -156,7 +156,7 @@ export function TaskDetailSheet({
                 </Button>
               </div>
               {isActionable && (
-                <div className="flex w-full gap-2">
+                <div className="flex w-full flex-col gap-2 sm:flex-row">
                   <Button variant="outline" className="flex-1" onClick={() => onAssignToMe(task.id)} disabled={isMutating}>
                     Assign to me
                   </Button>

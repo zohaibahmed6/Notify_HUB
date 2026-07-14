@@ -21,7 +21,7 @@ export default function SettingsPage() {
       <p className="mb-6 text-sm text-muted-foreground">Configure how NotifyHub looks and behaves.</p>
 
       <Tabs defaultValue="general">
-        <TabsList className="mb-4 flex-wrap">
+        <TabsList className="mb-4 h-auto flex-wrap justify-start gap-1">
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="sms">SMS</TabsTrigger>
           <TabsTrigger value="task">Task</TabsTrigger>

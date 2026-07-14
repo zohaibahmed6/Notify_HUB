@@ -554,6 +554,48 @@ original redesign plan.
 
 ---
 
+## 6e. Responsive design (Step 9 / P9-00)
+
+Reflowed the v2 screens with Tailwind breakpoints (`sm`/`md`/`lg`, no new breakpoint system) —
+same components at every width, nothing dropped, only rearranged:
+- `components/layout/AppShell.tsx` — nav links collapse into a hamburger (`Menu` icon,
+  `md:hidden`) opening a `Sheet` drawer (nav links + user identity) below `md`; the
+  command-palette trigger becomes icon-only on `<sm`; username hides below `md`.
+- `pages/v2/InboxPageV2.tsx` — `ThreadList`/`ConversationPanelV2` go single-pane below `md`
+  (list hidden once a thread is selected, panel hidden until one is) instead of squeezing
+  both side-by-side; `ConversationPanelV2` gained an `onBack?` prop rendering a `md:hidden`
+  back arrow that clears the selection. Same pattern applied to `pages/v2/TemplatesPageV2.tsx`'s
+  list/detail split pane (`handleBack` clears `?template=` and the `selected` state).
+- `pages/v2/AuditLogPageV2.tsx` — the `Table` is `hidden md:block`; a `md:hidden` stacked
+  card-list (same `sortedLogs` data, one card per row, every column still shown) replaces it
+  below `md`, instead of horizontal-scrolling the table.
+- `pages/v2/TaskBoardPageV2.tsx` — kanban board already horizontal-scrolled
+  (`overflow-x-auto`) and had a List-tab fallback pre-existing; no structural change needed,
+  satisfies the "every column reachable, not hidden" requirement as-is.
+- `components/v2/task-detail-sheet.tsx` — the two paired action-button rows in the footer
+  stack vertically below `sm` (`flex-col sm:flex-row`) instead of cramming two full-width
+  buttons into a 75vw-wide `Sheet` on narrow screens.
+- `pages/DashboardPage.tsx` — stat-card grids (`StatCard` row, org-wide task-counts row) are
+  `grid-cols-1 sm:grid-cols-4` (full stack on mobile, not a 2-column grid); recent-activity
+  rows wrap (`flex-wrap`) instead of clipping long actor/entity text against the timestamp.
+- `pages/SettingsPage.tsx` — `TabsList` (7 tabs) gained `h-auto` alongside its existing
+  `flex-wrap`; the primitive's default `h-10` was clipping a second wrapped row of tabs at
+  narrow widths (pre-existing bug independent of P9-00, fixed while in this file).
+
+Verification: `tsc -b`/`vite build` both clean; `docker compose up -d --build web` rebuilt
+and reserved (Dockerfile bakes source at build time, no dev-server volume mount, so a
+container rebuild is required to pick up any frontend change — not just a restart). No
+browser/screenshot tool was available this session (unlike step 8's live click-through
+verification, noted in STATUS.md) — verified via type-check/build plus reading the rendered
+Tailwind classes, not a real-viewport visual pass; flagged as a real gap, not silently
+claimed as done. The Playwright e2e suite was run as a functional smoke check but every spec
+failed on `loginViaUi`'s `page.waitForURL("**/inbox")` — pre-existing staleness from
+increment 13 (`LoginPage.tsx`/`LoginPageV2.tsx` both `navigate("/")`, and `/` has rendered
+`DashboardPage` instead of redirecting to `/inbox` since increment 13), not a P9-00
+regression. Out of scope to fix here (not part of `STEP9_PLAN.md`); flagged in STATUS.md.
+
+---
+
 ## 7. Test structure
 
 ### Domain (`NotifyHub.Tests/NotifyHub.Domain.Tests/`) — no DB

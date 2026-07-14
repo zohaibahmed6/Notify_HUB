@@ -4,13 +4,44 @@
 This file previously used a self-inferred 6-step breakdown that combined skeleton+auth into one step. Corrected against your actual plan (confirmed 2026-07-11): **1**=skeleton, **2**=auth, **3**=outbound pipeline (FR-001–004), **4**=inbound routing + task engine (FR-005–008), **5**=reminders (FR-009), **6**=audit + 50k seed (FR-010/011), **7**=docs/ADR/OWASP/AI-log (FR-012–019/FR-016–019). What this file previously labeled "Step 2" was actually step 3, and "Step 3" was actually step 4 — relabeled below; git commit messages from before this correction still say "step 2" and are left as-is (historical record, not rewritten).
 
 ## Current step
-Step 8 (2026-07-13/14, this session) — a large post-step-7 feature set requested directly by
-Zohaib (not numbered FR-xxx in `PROJECT_CONTEXT.md` — a fresh, informally-specified functional
-requirements list covering Task module enhancements, a Dashboard, branding, UI redesign lock-in,
-Template bookmarks, messaging (scheduling/quiet hours/rate limiting/new-patient SMS), User
-Management, a full Settings module, realistic seed data, and a top-nav task widget). Implemented
-as 14 small, independently-committed, independently-tested increments — see "Step 8 checklist"
-below. All 14 committed; nothing left open.
+Step 9 (2026-07-14, in progress) — locked spec in `STEP9_PLAN.md` (repo root), a further
+informally-specified increment list from a 2026-07-14 planning session with Zohaib (P9-00
+responsive design + P9-01 through P9-12). Building in the file's stated order, one
+independently-committed increment at a time. P9-00 (responsive design pass) done — see
+"Step 9 checklist" below; P9-01 onward in progress.
+
+## Step 9 checklist
+- [x] **P9-00 — Responsive design pass** on the v2 screens (`AppShell`, `InboxPageV2`,
+      `TemplatesPageV2`, `AuditLogPageV2`, `TaskDetailSheet`, `DashboardPage`,
+      `SettingsPage`'s tab list) — see `CODEBASE_MAP.md` §6e for the per-file breakdown.
+      `tsc -b`/`vite build` clean; `docker compose up -d --build web` verified the container
+      serves the rebuilt bundle. No browser/screenshot tool was available this session, so
+      this was **not** visually click-through-verified in a real viewport like step 8's
+      screens were — verified via type-check/build and reading the applied Tailwind
+      breakpoints instead. Flagging this as a real gap: a follow-up visual pass (resize the
+      browser at each of `AppShell`/Inbox/Templates/Audit log/Task board/Task detail
+      sheet/Dashboard/Settings) is recommended before treating P9-00 as fully done.
+- [x] **Pre-existing e2e staleness found (not caused by P9-00)**: the whole Playwright suite
+      fails at `loginViaUi` (`e2e/helpers.ts:79`, `page.waitForURL("**/inbox")`) because
+      `LoginPage.tsx`/`LoginPageV2.tsx` have `navigate("/")` on success, and `/` has rendered
+      `DashboardPage` instead of redirecting to `/inbox` since increment 13 (step 8) —
+      `helpers.ts` was never updated for that change. Confirmed by reading both login pages'
+      `navigate()` calls; not something this session touched. Left as-is (fixing the e2e
+      suite isn't in `STEP9_PLAN.md`'s scope) but flagged here so it isn't mistaken for a
+      P9-00 regression next time the suite is run.
+- [ ] P9-01 — quick fixes (command palette removal, Forward dialog exclusion, sheet
+      auto-close, task form date/time split, remove `OffsetHours` from Templates UI)
+- [ ] P9-02 — SignalR delivery-status double-tick fix
+- [ ] P9-03 — shared `DateTimePicker`
+- [ ] P9-04 — template bookmark resolution in composer
+- [ ] P9-05 — template edits propagate to queued messages
+- [ ] P9-06 — SMS History report
+- [ ] P9-07 — message expiry engine
+- [ ] P9-08 — reminder SMS engine (retires `ReminderScheduler`/`ReminderWorker`)
+- [ ] P9-09 — PDU segment count
+- [ ] P9-10 — task forwarding rules
+- [ ] P9-11 — recurring task configuration UI
+- [ ] P9-12 — user on-leave From/To dates
 
 ## Current step (historical, step 7)
 Step 7 of 7 (docs) — README, 3 ADRs, OWASP self-assessment, AI usage log, FR-013 coverage number. Step 6 was reviewed and confirmed working (audit log correct for both roles, pagination/filters work, 50k seed correctly skips the live dispatcher) and is committed (`1c6c47b`). See "Step 7 checklist" below.
@@ -325,3 +356,4 @@ To run the e2e suite: `docker-compose up -d` first, then see "Playwright e2e sui
 | 2026-07-12 | 7 (fix) | Per your review feedback on the two `docs/SECURITY.md` residual gaps: Swagger was already gated behind `IsDevelopment()` (`Program.cs:114-118`) — no code change needed, corrected the doc's A05 note instead of adding a redundant guard. Added a real, gating CI dependency-vulnerability scan (`dotnet list package --vulnerable --include-transitive`, `npm audit --audit-level=high`) — this immediately surfaced 4 genuine pre-existing High-severity transitive advisories (Caching.Memory 8.0.0, System.Text.Json 8.0.0 ×2, System.Net.Http 4.3.0, System.Text.RegularExpressions 4.3.0), which would have turned CI red on the very next push; fixed by pinning direct `PackageReference`s to patched versions across the 5 affected `.csproj` files, re-verified the scan is clean, solution builds, and all 112 fast tests still pass. `docs/SECURITY.md` A06 row + summary updated to match. |
 | 2026-07-12 | 7 (final review) | Closed the last open Final review checklist item: `WebhooksController.Inbound`'s `thread.UnreadCount++` was confirmed read-then-write (a genuine lost-update race under concurrent inbound webhooks for the same thread), not already-safe. Fixed with EF Core's atomic `ExecuteUpdateAsync`/`SetProperty(t => t.UnreadCount, t => t.UnreadCount + 1)` — one `UPDATE ... SET UnreadCount = UnreadCount + 1` per request, no read-modify-write window — for real database providers; the fast test suite's InMemory provider can't translate `ExecuteUpdate`'s `SetProperty` (confirmed by running it — `InvalidOperationException`, not a hypothetical gap), so `Inbound` branches on `db.Database.ProviderName` (not the `IsInMemory()` extension, to avoid a test-only package reference in production code) and keeps the old tracked increment there, which is fine since InMemory tests are single-request and never exercise the race anyway. Proven atomic by a new real-MySQL test, `InboundWebhookThreadRaceMySqlTests.ConcurrentInbound_ForExistingThread_IncrementsUnreadCountExactlyN` (30 concurrent requests against one pre-existing thread, asserts `UnreadCount` lands at exactly 31 — MySQL-only, since it needs real concurrent-connection interleaving). Fast suite (`Category!=MySql`) still 112/112 green (64 Domain, 48 Integration) — this test is additive under `Category=MySql`, doesn't touch the fast-suite count. Nothing remains open across the whole build. |
 | 2026-07-13/14 | 8 (14 increments) | Large post-step-7 feature set from a fresh, informal requirements list (not FR-numbered): Task module (type/description/forwarding/active-flag/filters), a Dashboard landing page, a bell favicon, UI redesign lock-in, Template bookmarks, messaging (scheduled sends/Quiet Hours/per-patient rate limiting/new-patient SMS), User Management (Active/Inactive/OnLeave with auto-forward), a 7-tab Settings module, realistic seed data, and a top-nav task widget. See "Step 8 checklist" above for the full per-increment breakdown. 160/160 fast backend tests passing (78 Domain, 82 Integration — 44 new). Frontend `tsc`/`vite build` clean throughout; every UI increment driven live against the real Docker stack (login → screen → interact → screenshot), not just compiled — caught and fixed 3 real bugs this way (a data-corrupting migration default, a stale-image favicon 404-as-text/html, a stale-image seed-name no-op) rather than in code review. Dev DB volume reset flagged and confirmed with Zohaib before running (`docker compose down -v`, local dev data only). All 14 increments committed individually. |
+| 2026-07-14 | 9 (P9-00) | Locked spec `STEP9_PLAN.md` — responsive design pass across the v2 screens (`AppShell` hamburger/drawer nav, single-pane-with-back-button `InboxPageV2`/`TemplatesPageV2`, stacked-card `AuditLogPageV2` on mobile, wrapping `TaskDetailSheet` footer buttons, full-stack `DashboardPage` stat cards, `SettingsPage` tab-list wrap fix). See `CODEBASE_MAP.md` §6e for the per-file breakdown and "Step 9 checklist" above for the caveat: no browser/screenshot tool was available this session, so verification was `tsc -b`/`vite build`/container-rebuild-and-serves-200, not a real-viewport click-through like step 8's screens got — flagged, not silently claimed. Also found and documented (not fixed, out of `STEP9_PLAN.md` scope) pre-existing e2e-suite staleness: `loginViaUi` still waits for `**/inbox`, which stopped being the post-login redirect back in increment 13. |

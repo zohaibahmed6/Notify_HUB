@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { Eye, FileText, Plus, Sparkles } from "lucide-react";
+import { ArrowLeft, Eye, FileText, Plus, Sparkles } from "lucide-react";
 
 import { useCreateTemplateMutation, useTemplates, useUpdateTemplateMutation } from "@/hooks/useTemplates";
 import { errorMessage } from "@/lib/errorMessage";
@@ -64,6 +64,18 @@ export default function TemplatesPageV2() {
     setIsEditing(true);
   };
 
+  // Mobile: single-pane with back-navigation instead of squeezing list+detail side by
+  // side (P9-00), same pattern as InboxPageV2's ThreadList/ConversationPanelV2 split.
+  const handleBack = () => {
+    setSelected(null);
+    setIsEditing(false);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete("template");
+      return next;
+    });
+  };
+
   const selectedTemplate: TemplateDto | undefined =
     typeof selected === "number" ? templates?.find((t) => t.id === selected) : undefined;
 
@@ -104,7 +116,12 @@ export default function TemplatesPageV2() {
 
   return (
     <div className="flex h-full">
-      <aside className="flex h-full w-80 shrink-0 flex-col border-r">
+      <aside
+        className={cn(
+          "flex h-full w-full shrink-0 flex-col border-r md:w-80",
+          selected !== null && "hidden md:flex",
+        )}
+      >
         <div className="flex shrink-0 items-center justify-between border-b p-3">
           <h1 className="text-sm font-semibold">Templates</h1>
           <Button size="sm" className="h-7 gap-1 px-2 text-xs" onClick={startNew}>
@@ -176,7 +193,18 @@ export default function TemplatesPageV2() {
         </div>
       </aside>
 
-      <section className="min-w-0 flex-1 overflow-y-auto p-6">
+      <section
+        className={cn(
+          "min-w-0 flex-1 overflow-y-auto p-6",
+          selected === null && "hidden md:block",
+        )}
+      >
+        {selected !== null && (
+          <Button variant="ghost" size="sm" className="mb-3 -ml-2 gap-1.5 md:hidden" onClick={handleBack}>
+            <ArrowLeft className="size-3.5" />
+            Back to templates
+          </Button>
+        )}
         {selected === "new" ? (
           <div className="mx-auto max-w-lg">
             <h2 className="mb-4 text-lg font-semibold">New template</h2>
