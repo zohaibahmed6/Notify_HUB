@@ -1,6 +1,11 @@
 using System.Net;
 using System.Net.Http.Json;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using NotifyHub.Api.Templates.Dtos;
+using NotifyHub.Domain.Entities;
+using NotifyHub.Domain.Enums;
+using NotifyHub.Infrastructure.Persistence;
 using Xunit;
 
 namespace NotifyHub.Integration.Tests;
@@ -113,5 +118,74 @@ public class TemplatesControllerTests(CustomWebApplicationFactory factory) : ICl
         });
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    /// P9-05: dual-safety net #1 — editing a template's body nulls RenderedBody on any
+    /// already-Queued message linked to it, forcing a fresh render at dispatch time
+    /// (net #2, MessageDispatcher) rather than letting stale content go out.
+    [Fact]
+    public async Task Update_Body_ClearsRenderedBody_OnQueuedMessagesLinkedToTemplate()
+    {
+        var (client, _) = await _client.AsStaffAsync();
+
+        var created = await client.PostAsJsonAsync("/api/templates", new CreateTemplateRequest
+        {
+            Name = "Propagation-test template",
+            Body = "Original body {{patient_name}}",
+            TriggerType = "AppointmentReminder",
+            OffsetHours = 48,
+        });
+        var template = await created.Content.ReadFromJsonAsync<TemplateDto>();
+
+        long queuedMessageId, deliveredMessageId;
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
+            var patient = new Patient { Name = "P9-05 Test Patient", Phone = "+19990000301" };
+            db.Patients.Add(patient);
+            await db.SaveChangesAsync();
+
+            var queuedMessage = new OutboundMessage
+            {
+                PatientId = patient.Id,
+                TemplateId = template!.Id,
+                SenderType = SenderType.System,
+                Status = MessageStatus.Queued,
+                RenderedBody = "Stale pre-rendered text",
+                CreatedAt = DateTime.UtcNow,
+                AttemptCount = 0,
+            };
+            // Also seed a non-Queued message to prove the sweep is Queued-only.
+            var deliveredMessage = new OutboundMessage
+            {
+                PatientId = patient.Id,
+                TemplateId = template.Id,
+                SenderType = SenderType.System,
+                Status = MessageStatus.Delivered,
+                RenderedBody = "Already delivered, must not change",
+                CreatedAt = DateTime.UtcNow,
+                AttemptCount = 0,
+            };
+            db.OutboundMessages.AddRange(queuedMessage, deliveredMessage);
+            await db.SaveChangesAsync();
+            queuedMessageId = queuedMessage.Id;
+            deliveredMessageId = deliveredMessage.Id;
+        }
+
+        var patched = await client.PatchAsJsonAsync($"/api/templates/{template.Id}", new UpdateTemplateRequest
+        {
+            Body = "Updated body {{patient_name}}",
+        });
+        Assert.Equal(HttpStatusCode.OK, patched.StatusCode);
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
+            var queuedMessage = await db.OutboundMessages.SingleAsync(m => m.Id == queuedMessageId);
+            Assert.Null(queuedMessage.RenderedBody);
+
+            var deliveredMessage = await db.OutboundMessages.SingleAsync(m => m.Id == deliveredMessageId);
+            Assert.Equal("Already delivered, must not change", deliveredMessage.RenderedBody);
+        }
     }
 }

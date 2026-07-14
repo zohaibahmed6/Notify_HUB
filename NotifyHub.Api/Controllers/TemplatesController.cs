@@ -96,6 +96,36 @@ public class TemplatesController(NotifyHubDbContext db) : ControllerBase
             template.IsActive = request.IsActive.Value;
 
         await db.SaveChangesAsync(ct);
+
+        // P9-05: dual-safety net #1 — explicit sweep of already-queued messages when the
+        // body changes, so no stale-content SMS can go out. Net #2 is
+        // MessageDispatcher.DispatchOneAsync, which already unconditionally re-renders
+        // from the live template on every dispatch attempt for any TemplateId-linked
+        // message (verified: RenderedBody is left null at creation by every current
+        // production creation path — see ReminderScheduler — and dispatch always
+        // overwrites it fresh before sending, retries included). Nulling it here is
+        // currently redundant with that net for the happy path, but is kept per the
+        // explicit dual-safety request and is the only net that would matter if a future
+        // creation path ever pre-rendered RenderedBody instead of leaving it null.
+        if (request.Body is not null)
+        {
+            if (db.Database.ProviderName == "Microsoft.EntityFrameworkCore.InMemory")
+            {
+                var queuedMessages = await db.OutboundMessages
+                    .Where(m => m.Status == MessageStatus.Queued && m.TemplateId == id)
+                    .ToListAsync(ct);
+                foreach (var message in queuedMessages)
+                    message.RenderedBody = null;
+                await db.SaveChangesAsync(ct);
+            }
+            else
+            {
+                await db.OutboundMessages
+                    .Where(m => m.Status == MessageStatus.Queued && m.TemplateId == id)
+                    .ExecuteUpdateAsync(s => s.SetProperty(m => m.RenderedBody, (string?)null), ct);
+            }
+        }
+
         return Ok(ToDto(template));
     }
 
