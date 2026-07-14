@@ -18,6 +18,7 @@ public class NotifyHubDbContext(DbContextOptions<NotifyHubDbContext> options) : 
     public DbSet<TaskItem> Tasks => Set<TaskItem>();
     public DbSet<Bookmark> Bookmarks => Set<Bookmark>();
     public DbSet<SystemSetting> SystemSettings => Set<SystemSetting>();
+    public DbSet<TaskForwardingRule> TaskForwardingRules => Set<TaskForwardingRule>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

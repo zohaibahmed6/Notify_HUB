@@ -13,6 +13,7 @@ using NotifyHub.Domain.Tasks;
 using NotifyHub.Infrastructure.Auditing;
 using NotifyHub.Infrastructure.Persistence;
 using NotifyHub.Infrastructure.Settings;
+using NotifyHub.Infrastructure.Users;
 
 namespace NotifyHub.Api.Controllers;
 
@@ -337,7 +338,14 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
         // (FR-008 default priority=medium on auto-creation doesn't specify assignee;
         // this mirrors "whoever is handling this thread owns the follow-up").
         var callerId = long.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-        var assigneeId = thread.AssignedStaffId ?? callerId;
+        var naturalAssigneeId = thread.AssignedStaffId ?? callerId;
+
+        // P9-10 rule 1: if the natural assignee is Inactive/OnLeave, check their forwarding
+        // rule before falling back to Admin (existing behavior, unchanged when no rule
+        // applies). OriginalOwnerId always stays the natural assignee — only
+        // AssignedStaffId diverges when forwarding kicks in, same convention as the
+        // existing auto-forward-on-deactivation path (UsersController).
+        var assigneeId = await FallbackUserResolver.ResolveNewTaskAssigneeAsync(db, naturalAssigneeId, ct);
 
         // §1: auto-populate Description from the thread's most recent message (inbound or
         // outbound, whichever is newer) when the client didn't supply one — a server-side
@@ -352,7 +360,7 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
             DueAt = dueAt,
             Status = NotifyHubTaskStatus.Open,
             AssignedStaffId = assigneeId,
-            OriginalOwnerId = assigneeId,
+            OriginalOwnerId = naturalAssigneeId,
             IsRecurring = request.IsRecurring,
             RecurrenceIntervalDays = request.RecurrenceIntervalDays,
             RecurrenceEndDate = request.RecurrenceEndDate,
@@ -364,6 +372,15 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
 
         db.Tasks.Add(task);
         await db.SaveChangesAsync(ct);
+
+        // Rule 12: every rule-based (or fallback-to-Admin) forward on creation is audited,
+        // same convention as today's auto-forward-on-deactivation entries.
+        if (assigneeId != naturalAssigneeId)
+        {
+            AuditLogger.Add(db, actor: "system", action: "forward", entityType: "TaskItem", entityId: task.Id,
+                detail: "auto-forwarded on creation: natural assignee inactive");
+            await db.SaveChangesAsync(ct);
+        }
 
         var assignee = await db.Users.FindAsync([assigneeId], ct);
         return Created($"/api/tasks/{task.Id}", ToTaskDto(task, assignee?.Username));
