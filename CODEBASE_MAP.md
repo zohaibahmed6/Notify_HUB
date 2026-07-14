@@ -79,7 +79,7 @@ member and would fail to deserialize on read for pre-existing rows).
 
 Enums: `UserRole` (`Enums/UserRole.cs:3`), **`UserStatus`** (`Enums/UserStatus.cs:3`,
 Active/Inactive/OnLeave), **`TaskType`** (`Enums/TaskType.cs:3`, RepeatRx/Recall/
-AppointmentBooking/FollowUp/Finance/General/ClinicalReview/Administrative/Other), `MessageStatus` (`:3`, Queued/Sending/Sent/Delivered/Failed/Superseded/**Expired** — Superseded (6th) added step 5, terminal, set only by `ReminderScheduler` on a rescheduled appointment's stale queued reminder, BR-010; Expired (7th) added P9-07, terminal, set by `MessageDispatcher.ExpireOverdueMessagesAsync`; neither is ever picked up by `MessageDispatcher`'s `Status == Queued` query so nothing else needed to change),
+AppointmentBooking/FollowUp/Finance/General/ClinicalReview/Administrative/Other), `MessageStatus` (`:3`, Queued/Sending/Sent/Delivered/Failed/Superseded/Expired/**Cancelled** — Superseded (6th, step 5, BR-010) is now vestigial, see §4b, nothing sets it anymore since `ReminderScheduler` was retired in P9-08; Expired (7th) added P9-07, set by `MessageDispatcher.ExpireOverdueMessagesAsync`; Cancelled (8th) added P9-08, set by `MessagesController.Cancel`; none of the three terminal values are ever picked up by `MessageDispatcher`'s `Status == Queued` query),
 `TriggerType` (`:3`, AppointmentReminder/MedicationAlert/PrescriptionAlert), `SenderType` (`:3`,
 System/Staff), `AppointmentStatus` (`:4`), `NotifyHubTaskStatus` (`:6`, Open/InProgress/Completed/
 Escalated/**Cancelled** — 5th value added per BR-007b, see STATUS.md), `TaskPriority` (`:3`, Low/
@@ -158,7 +158,7 @@ now calls this shared resolver instead of its own inline query — same behavior
 |---|---|---|---|
 | GET `api/templates` | `List` :17 | default authenticated | optional `isActive` filter (increment 8) — omit to see everything, unlike Tasks' "defaults to Active" |
 | POST `api/templates` | `Create` :35 | default authenticated | new templates default `IsActive=true` |
-| PATCH `api/templates/{id}` | `Update` :59-89 | default authenticated | now also applies `IsActive` (increment 8); **P9-05**: when `Body` changes, sweeps every `Queued` `OutboundMessage` with a matching `TemplateId` and nulls `RenderedBody` — dual-safety net #1 ("no wrong SMS could send" per Zohaib's explicit call). Net #2, `MessageDispatcher.DispatchOneAsync`, already unconditionally re-renders from the live template on every dispatch attempt for any `TemplateId`-linked message — verified (not assumed) by reading the code: every current production creation path (`ReminderScheduler`) leaves `RenderedBody` null, so net #2 alone already fully covers propagation today; net #1 is kept anyway per the explicit dual-safety request and would be the only net that mattered if a future creation path ever pre-rendered `RenderedBody`. Same InMemory-vs-real-provider branch as `WebhooksController.Inbound`'s `UnreadCount` fix (`ExecuteUpdateAsync`'s `SetProperty` isn't translatable by the InMemory provider used by the fast test suite). |
+| PATCH `api/templates/{id}` | `Update` :59-89 | default authenticated | now also applies `IsActive` (increment 8); **P9-05**: when `Body` changes, sweeps every `Queued` `OutboundMessage` with a matching `TemplateId` and nulls `RenderedBody` — dual-safety net #1 ("no wrong SMS could send" per Zohaib's explicit call). Net #2, `MessageDispatcher.DispatchOneAsync`, already unconditionally re-renders from the live template on every dispatch attempt for any `TemplateId`-linked message — verified (not assumed) by reading the code: every current production creation path (`ThreadsController.Reply`/`CreateConversation`/`CreateReminder`, plus the now-retired `ReminderScheduler` at the time this was written) leaves `RenderedBody` null, so net #2 alone already fully covers propagation today; net #1 is kept anyway per the explicit dual-safety request and would be the only net that mattered if a future creation path ever pre-rendered `RenderedBody`. Same InMemory-vs-real-provider branch as `WebhooksController.Inbound`'s `UnreadCount` fix (`ExecuteUpdateAsync`'s `SetProperty` isn't translatable by the InMemory provider used by the fast test suite). |
 
 Applies only non-null fields from `UpdateTemplateRequest` (`NotifyHub.Api/Templates/Dtos/UpdateTemplateRequest.cs`) — added step 6 to close §6b's "create/edit" gap (only `GET`/`POST` existed before).
 
@@ -180,7 +180,7 @@ projection, which stays directly in the `Select()`.
 |---|---|---|
 | GET `api/settings` | default authenticated | Quiet Hours + rate-limit config, via `SettingsService` |
 | PATCH `api/settings` | `[Authorize(Roles="Admin")]` | partial update; validates `HH:mm` time strings and positive counts before writing |
-| GET `api/settings/system-info` | default authenticated | **not** `SystemSetting`-backed — live diagnostics: `db.Database.CanConnectAsync()`, dispatcher/escalation/reminder poll intervals (the last two read straight from `IConfiguration`, same keys `EscalationWorker`/`ReminderWorker` use) |
+| GET `api/settings/system-info` | default authenticated | **not** `SystemSetting`-backed — live diagnostics: `db.Database.CanConnectAsync()`, dispatcher/escalation poll intervals (the latter read straight from `IConfiguration`, key `Escalation:PollIntervalSeconds`). No reminder poll interval anymore (P9-08 retired the poll-based reminder engine — `SystemInfoDto.ReminderPollIntervalSeconds` removed) |
 
 ### `DashboardController` — `NotifyHub.Api/Controllers/DashboardController.cs` (`[Route("api/dashboard")]`, added increment 12)
 | Verb + route | Auth | Notes |
@@ -247,14 +247,95 @@ Race-safe find-or-create: `FindOrCreateThreadAsync` (:119-141) — see §5.
 | `MessageDispatcher` | `NotifyHub.Infrastructure/Messaging/MessageDispatcher.cs` | Called by `DispatcherWorker` | **Increment 10**: `DispatchDueMessagesAsync` now starts with a single Quiet Hours gate (`SettingsService.IsQuietHoursNowAsync` — if true, returns 0 immediately, no per-message state change; due messages simply stay `Queued` and get picked up on the next non-quiet poll) and the due-query also requires `ScheduledAt == null \|\| ScheduledAt <= now`. Otherwise unchanged: batch of 10 `Queued` messages due now, ordered by `CreatedAt`. `DispatchOneAsync` (:37-90): opt-out short-circuit (:42-50), renders template if set (:54-59), POSTs to mock gateway (:66-67), on failure increments attempt count and either terminalizes via `RetryBackoffPolicy.IsTerminal` (:77-81) or requeues with backoff (:83-86). `RenderAsync` (:92-113) parses `TriggerReference` for `{{appointment_time}}` (:101-109). Constructor now also takes `SettingsService` — any direct `new MessageDispatcher(...)` call site (tests) needs the 4th arg. **P9-07**: `DispatchDueMessagesAsync` now calls a new private `ExpireOverdueMessagesAsync` *before* the Quiet Hours gate (not after) — marks `Expired` any `Queued` message with a passed `ExpiresAt`, sets `ExpiryReason` (fact-based: "before any send attempt"/"after N send attempt(s)", not a guessed specific cause like "quiet hours" — no per-message signal exists to know that for certain), adds a `DeliveryStatusHistory` row, audits `action:"expired"`. Deliberately checked unconditionally regardless of Quiet Hours: a message can sit `Queued` through its whole 12h window while Quiet Hours suppresses the batch entirely, which is the realistic way expiry gets hit in practice (BR-011's own retry/backoff, max ~31 min across 6 attempts, almost never reaches 12h alone) — if expiry ran after the Quiet Hours early-return, it would never fire during that exact scenario. Verified live end-to-end against the real Docker/MySQL stack (worker stopped, a message created and its `ExpiresAt` backdated via direct SQL, worker restarted, confirmed `Expired` + history + audit all landed on the next 5s poll). |
 | `EscalationWorker` | `NotifyHub.Worker/EscalationWorker.cs:8-36` | Config-driven poll, `Escalation:PollIntervalSeconds` default 60s (:17); 5s error-retry delay (:13) | Resolves `EscalationJob` per scope, calls `EscalateOverdueTasksAsync` (:26) |
 | `EscalationJob` | `NotifyHub.Infrastructure/Escalation/EscalationJob.cs` | Called by `EscalationWorker` | `EscalateOverdueTasksAsync` (:19-61): batch of 100 overdue non-terminal tasks (:23-29), resolves lowest-id Admin as fallback (:36-40), sets `Escalated` + audits (:45-47), reassigns + audits "auto-reassigned" if not already assigned to that admin (:49-54) |
-| `ReminderWorker` | `NotifyHub.Worker/ReminderWorker.cs:8-36` | Config-driven poll, `Reminders:PollIntervalSeconds` default 900s/15min (:17, locked decision per §14); 5s error-retry delay (:13) | Resolves `ReminderScheduler` per scope, calls `RunAsync` (:26) |
-| `ReminderScheduler` | `NotifyHub.Infrastructure/Reminders/ReminderScheduler.cs` | Called by `ReminderWorker` | `RunAsync` (:18-34): loads `AppointmentReminder` templates, then two passes. `SupersedeStaleRemindersAsync` (:41-86, BR-010): finds `Queued` messages tied to a reminder template, parses each `TriggerReference` via `ReminderTriggerReference.TryParse`, and marks `Superseded` any whose embedded `ScheduledAt` no longer matches the appointment's current value (rescheduled or deleted) — audits "superseded". `CreateDueRemindersAsync` (:91-142, FR-009/BR-003): for each upcoming `Scheduled` appointment × reminder template where `ReminderDueCalculator.IsDue` is true, checks `outbound_messages.idempotency_key` first (skip if exists — re-run safe) then queues a new message, `ThreadId=null`/`RenderedBody=null` (rendered later by the existing `MessageDispatcher.RenderAsync`, unchanged). |
+**`ReminderWorker`/`ReminderScheduler` retired in P9-08**, deleted entirely (not just
+unregistered) — `NotifyHub.Worker/ReminderWorker.cs`, `NotifyHub.Infrastructure/Reminders/*`,
+plus the Domain helpers only they used (`ReminderDueCalculator`, `ReminderTriggerReference`)
+and their test files. The `MessageStatus.Superseded` value they used (BR-010, "appointment
+rescheduled while a reminder was still queued") is now vestigial — still a valid historical
+value on old rows, but nothing in the codebase sets it anymore since there's no more
+Appointment-polling reminder flow to detect a stale queued reminder against. Replaced by the
+generic Reminder SMS engine — see §4b.
 
-**FR-009 reminder scheduler implemented in step 5** (`ReminderWorker`/`ReminderScheduler`, above) —
-registered in `NotifyHub.Worker/Program.cs` alongside `DispatcherWorker`/`EscalationWorker`. No
-appointment-management endpoint exists (appointments are stub data, §7/out of scope for a dedicated
-screen), so BR-010's reschedule-supersede logic is poll-based, not event-driven — see §5 and
-STATUS.md's deviations for the tradeoff.
+---
+
+## 4b. Reminder SMS engine (P9-08)
+
+Event-based reminders, generic and deliberately independent of the `Appointment` entity
+(rule 34 — reusable for any future event-based reminder: payments, document expiry,
+renewals, follow-ups). No parallel send path (rule 22) — a Reminder SMS is just an
+`OutboundMessage` row with a few extra fields, flowing through the exact same
+`MessageDispatcher`/mock-gateway/retry/expiry pipeline as a Standard SMS.
+
+**Schema** (`OutboundMessage`, all nullable — populated only for Reminder SMS):
+`EventTime` (the caller-supplied instant, rule 3), `ReminderOffsetMinutes`/
+`ReminderExpiryOffsetMinutes` (snapshotted from `SettingsService.GetReminderAsync` at
+creation time — rule 7, a later Settings change never applies retroactively), `SentAt`
+(rule 32 "Sent Time" — set by `MockGatewayController.Send` alongside its existing `Sent`
+transition; applies to Standard SMS too, not Reminder-only, since rule 22 means both types
+share the write path). `MessageStatus` gained an 8th value, `Cancelled` (rules 28/29,
+terminal, never picked up again — same pattern as `Expired`/`Superseded`). Migration
+`20260714113500_AddReminderSmsFields` (approximate name/timestamp — nullable columns, no
+bad-default risk).
+
+**Settings** — two new `SystemSetting` keys via `SettingsService.GetReminderAsync`/
+`ReminderOffsetMinutesKey`/`ReminderExpiryOffsetMinutesKey`: default 1440 min (24h) / 15 min
+(rules 6/16), seeded by `SystemSettingSeedStep`. Unlike Quiet Hours/rate limiting, there's no
+"enabled" flag — Reminder SMS creation is an always-on capability, not a gate on existing
+behavior. Exposed via `GET`/`PATCH api/settings` (`SettingsDto.reminderOffsetMinutes`/
+`reminderExpiryOffsetMinutes`), Settings → SMS tab (`sms-tab.tsx`'s new "Reminder SMS
+defaults" card).
+
+**Pure calculations** (`NotifyHub.Domain/Messaging/ReminderScheduleCalculator.cs`):
+`CalculateScheduledSendTime(eventTime, offsetMinutes)` = `eventTime - offset` (rule 5);
+`CalculateExpiryTime(eventTime, expiryOffsetMinutes)` = `eventTime - expiryOffset` (rules
+15/17/18 — never derived from Created/Scheduled Time, unlike `MessageExpiryCalculator`'s
+Standard SMS math); `MinSelectableEventTime(now, offsetMinutes)` = `now + offset` (rule 9).
+`IdempotencyKeyGenerator.GenerateForReminder(patientId, templateId, eventTime,
+reminderOffsetMinutes)` — separate hash input from Standard SMS's `Generate` (rule 30), so
+the two families of idempotency keys never collide.
+
+### API — `ThreadsController` (`NotifyHub.Api/Controllers/ThreadsController.cs`)
+| Verb + route | Notes |
+|---|---|
+| POST `api/threads/{id}/reminders` | `CreateReminder` — body `{templateId, eventTime}`, no manual Scheduled Send Time field (rule 4). Loads thread/patient/template (404 if either missing), snapshots current `ReminderSettings`, computes `ScheduledSendTime`/`ExpiryTime`, 400 if the computed Scheduled Send Time is already in the past (rules 8/9/10 — the real server-side enforcement, not just a UI hint), 409 on a duplicate (patientId+templateId+eventTime+offset) via `IdempotencyKeyGenerator.GenerateForReminder` + the existing unique index on `IdempotencyKey` as the race backstop. Stays `TemplateId`-linked with `RenderedBody = null` (not committed ad-hoc text like the composer's Reply flow) — rendered fresh at dispatch time like any other template-linked message, so P9-05's dual-safety net and rule 30's duplicate hash both have a real `TemplateId` to work with. Audits `reminder-created`. |
+
+### API — `MessagesController` (`NotifyHub.Api/Controllers/MessagesController.cs`)
+Class-level auth is no longer `[Authorize(Roles="Admin")]` — only `List` (the P9-06 report)
+carries that attribute now; the two P9-08 actions below are default-authenticated (Staff can
+manage reminders they create from a thread, same as any other message action).
+| Verb + route | Notes |
+|---|---|
+| PATCH `api/messages/{id}` | `UpdateReminder` — body `{eventTime}`. 400 if `EventTime` is null (not a Reminder SMS) or `Status != Queued` ("already been sent", rule 27). Recomputes Scheduled Send Time/Expiry Time from the message's **own stored** `ReminderOffsetMinutes`/`ReminderExpiryOffsetMinutes` (rule 7 — not current Settings), re-validates rule 8, recomputes and re-checks the idempotency key (409 on collision with a different existing row). Audits `reminder-updated`. |
+| POST `api/messages/{id}/cancel` | `Cancel` — 400 if `EventTime` is null or `Status != Queued` (rules 28/29, Reminder-SMS-only, still-Queued-only). Sets `Status = Cancelled`, adds a `DeliveryStatusHistory` row, audits `reminder-cancelled`. |
+
+### Frontend
+- `components/v2/reminder-sms-dialog.tsx` (`ReminderSmsDialog`) — the "Reminder SMS" action,
+  same discoverability tier as "Insert template" in `conversation-panel.tsx`'s composer
+  toolbar (new button there, `AlarmClock` icon). Template `Select` + a **read-only** preview
+  (calls P9-04's `GET .../templates/{id}/preview`, not editable — rule 31, and keeps the
+  message `TemplateId`-linked rather than ad-hoc text) + `DateTimePicker` (P9-03) for Event
+  Time, `minDate` set to `now + reminderOffsetMinutes` (day-granularity only, per P9-03's
+  documented simplification) plus an exact submit-time re-check before calling the API. No
+  manual Scheduled Send Time field anywhere in the UI (rule 4) — a read-only computed-preview
+  line shows what it resolves to.
+- `hooks/useThreads.ts` gained `useCreateReminderMutation(threadId)` →
+  `POST /api/threads/{id}/reminders`.
+- `status-config.ts`'s `AUDIT_ACTION_CONFIG` gained `expired`/`reminder-created`/
+  `reminder-updated`/`reminder-cancelled` entries; both Audit Log pages' `ACTIONS` filter
+  list extended to match.
+- `system-tab.tsx` lost its "Reminder poll interval" row (no more poll interval to report —
+  `SystemInfoDto.reminderPollIntervalSeconds` removed from both the API DTO and its TS type).
+
+### Verified live end-to-end (real Docker/MySQL stack)
+Created a reminder via `curl`, confirmed `ScheduledAt`/`ExpiresAt`/offsets computed and
+stored correctly in MySQL; confirmed exact-duplicate rejection (409) when reusing the same
+event time (first attempt with a freshly-generated timestamp each call correctly did *not*
+collide — different millisecond timestamps are legitimately different reminders, not a bug);
+updated the Event Time and confirmed recalculation; cancelled it and confirmed a second
+cancel attempt correctly 400s; confirmed the full audit trail
+(`reminder-created`→`reminder-updated`→`reminder-cancelled`); confirmed the worker's SQL
+logs show the expiry-sweep and due-query both querying the new columns with no errors and
+no more `ReminderWorker` poll logs at all.
 
 ---
 
@@ -270,7 +351,7 @@ Time"/`{{appointment_time}}`, matching exactly what `TemplateRenderer` resolves 
 per-key rather than "any setting exists" so a future new key isn't skipped on an already-seeded
 install; both Quiet Hours and rate limiting default disabled) → `DemoOutboundMessageSeedStep` (10 demo messages: 5 appointment-reminder + 3 medication + 2 prescription, `DemoOutboundMessageSeedStep.cs:32-49` — corrected from a stale "5" here) → `PerformanceSeedStep` (step 6, FR-010, 45,000 outbound + 5,000 inbound at the default `targetMessageCount=50,000`, `OutboundRatio=0.9`).
 
-Deterministic seed-only baseline for `outbound_messages`: 45,000 (perf) + 10 (demo) = 45,010. Any count above that is expected, not a seeding bug: `ReminderScheduler.CreateDueRemindersAsync` (`NotifyHub.Infrastructure/Reminders/ReminderScheduler.cs:121-133`) keeps inserting new rows over wall-clock time for the 10 real `PatientAppointmentSeedStep` appointments as their 48h/2h reminder windows open (up to 2 per appointment) — distinguish via `TriggerReference` prefix: `perfseed:*` (45,000), `appointment:*:created`/`medication:*:seed`/`prescription:*:seed` (10), `appointment:*:reminder:*h:*` (live, growing).
+Deterministic seed-only baseline for `outbound_messages`: 45,000 (perf) + 10 (demo) = 45,010, **plus any Reminder SMS created through the P9-08 UI/API and any live-verification rows from Step 9 sessions** (both grow the count going forward — neither is a seeding bug). Historical note: before P9-08 retired it, `ReminderScheduler.CreateDueRemindersAsync` used to keep inserting new rows over wall-clock time for the 10 real `PatientAppointmentSeedStep` appointments as their 48h/2h reminder windows opened; that growth path no longer exists. Distinguish by `TriggerReference` prefix for the still-relevant static baseline: `perfseed:*` (45,000), `appointment:*:created`/`medication:*:seed`/`prescription:*:seed` (10) — `appointment:*:reminder:*h:*` (the old poll-based reminder rows) stopped growing once P9-08 shipped; new Reminder SMS rows have `TriggerReference = null` and are identifiable instead by a non-null `EventTime`.
 
 `PerformanceSeedStep` (`NotifyHub.Infrastructure/Seed/PerformanceSeedStep.cs:31-151`) — constructor
 parameter `targetMessageCount` (default 50,000), read from config key `Seed:PerformanceMessageCount`
@@ -302,9 +383,10 @@ factory, to test the step's own idempotency without colliding with the automatic
 | Task due-date defaults (FR-008) | `NotifyHub.Domain/Tasks/TaskDueDateDefaults.cs:6-16` | Urgent+4h / High+1d / Medium+3d / Low+7d from creation |
 | BR-014 escalation auto-revert | `NotifyHub.Api/Controllers/TasksController.cs` — two call sites: `Detail` :58-64 (on open by assignee), `Update` :119-124 (on any action by assignee that doesn't itself set a new status) | Flips `Escalated` → `InProgress` |
 | Race-safe thread creation | `NotifyHub.Api/Controllers/WebhooksController.cs:119-141` (`FindOrCreateThreadAsync`) | Optimistic insert, `catch (DbUpdateException)` on the unique index (`ConversationThreadConfiguration.cs:21`), detach + re-read the winner (:138-139). **Now covered by a real-MySQL test** — `NotifyHub.Tests/NotifyHub.Integration.Tests/InboundWebhookThreadRaceMySqlTests.cs` (see §7); EF Core InMemory (used by every other integration test) can't reproduce genuine connection-level locking, so this was previously untested at the actual race. |
-| Reminder due-window calculation (FR-009) | `NotifyHub.Domain/Messaging/ReminderDueCalculator.cs:9-10` (`IsDue`) | `now < scheduledAt && now >= scheduledAt.AddHours(-offsetHours)` — true once the offset window opens, false once the appointment has occurred |
-| Reminder trigger-reference build/parse (BR-009/BR-010) | `NotifyHub.Domain/Messaging/ReminderTriggerReference.cs:16-17` (`Build`), `:21-38` (`TryParse`) | Format `appointment:{appointmentId}:reminder:{offsetHours}h:{scheduledAt.Ticks}` — embeds `ScheduledAt` itself (not a version counter, see STATUS.md deviations) so a reschedule always yields a new reference; `TryParse` rejects non-reminder formats (e.g. seed data's `appointment:{id}:created`) |
-| Reminder scheduling + reschedule-supersede (FR-009/BR-003/BR-010) | `NotifyHub.Infrastructure/Reminders/ReminderScheduler.cs` (see §4) | Poll-based supersede-then-create, reusing `outbound_messages`/`IdempotencyKeyGenerator`/`MessageDispatcher` unchanged |
+| ~~Reminder due-window calculation (FR-009)~~ | deleted P9-08 | `NotifyHub.Domain/Messaging/ReminderDueCalculator.cs` (`IsDue`) no longer exists — was appointment-window polling logic for the retired `ReminderScheduler` |
+| ~~Reminder trigger-reference build/parse (BR-009/BR-010)~~ | deleted P9-08 | `NotifyHub.Domain/Messaging/ReminderTriggerReference.cs` no longer exists — was `appointment:{id}:reminder:{offsetHours}h:{ticks}` encoding for the retired `ReminderScheduler`'s reschedule-supersede logic |
+| ~~Reminder scheduling + reschedule-supersede (FR-009/BR-003/BR-010)~~ | retired P9-08 | Poll-based `ReminderScheduler` deleted entirely — see §4b for its generic event-based replacement |
+| Reminder SMS scheduling/expiry calculation (P9-08) | `NotifyHub.Domain/Messaging/ReminderScheduleCalculator.cs` | `CalculateScheduledSendTime`/`CalculateExpiryTime`/`MinSelectableEventTime` — all anchored to a caller-supplied `EventTime`, generic/no Appointment coupling (rule 34); see §4b |
 | Per-patient rate limiting (§6, increment 10) | `NotifyHub.Domain/Messaging/RateLimitChecker.cs` (`IsAllowed`) | Pure comparison (`recentMessageCount < maxMessagesPerWindow`); the recent-count query itself lives in `ThreadsController.RateLimitExceededAsync` (counts `OutboundMessages` for the patient created within `SettingsService`'s configured window) |
 | Quiet Hours window (§6, increment 10) | `NotifyHub.Domain/Messaging/QuietHoursCalculator.cs` (`IsQuietNow`) | `TimeOnly` comparison against a start/end window; handles the same-day case (`start < end`) and the wraps-past-midnight case (`start >= end`, e.g. 21:00-08:00) identically; zero-width window (`start == end`) is defined as never-quiet |
 | Thread message-history pagination (FR-010) | `NotifyHub.Api/Controllers/ThreadsController.cs:89-132` (`GetMessagesPageAsync`) | Merge-paginates `inbound_messages`/`outbound_messages` (independently ordered by `ReceivedAt`/`CreatedAt`) without ever loading a thread's full history: pulls only `skip+pageSize` rows DESC from each table (provably sufficient — see the method's doc comment, :76-88), merges in memory, slices to the requested page, re-sorts ascending for chat reading order. Page 1 = most recent messages. |
@@ -541,7 +623,7 @@ original redesign plan.
 - **Settings module rebuilt** (§8, increment 11) — `pages/SettingsPage.tsx` (still unversioned, shared
   by both UI modes per §6) now renders 7 tabs (shadcn `Tabs`) instead of just the legacy/redesign
   toggle it held before: General (thin, read-only — `components/settings/general-tab.tsx`), SMS
-  (Quiet Hours + rate-limit forms — `sms-tab.tsx`, backed by `useSettings.ts`), Task (read-only
+  (Quiet Hours + rate-limit forms, **plus a P9-08 "Reminder SMS defaults" card** — `sms-tab.tsx`, backed by `useSettings.ts`), Task (read-only
   `TaskDueDateDefaults` display — `task-tab.tsx`, no backend), Template (Bookmark CRUD table —
   `template-tab.tsx`, backed by `useBookmarks.ts`), Notification (thin, client-only browser
   notification-permission toggle — `notification-tab.tsx`, no backend), User Management (Admin-only
@@ -738,13 +820,13 @@ regression. Out of scope to fix here (not part of `STEP9_PLAN.md`); flagged in S
 ## 7. Test structure
 
 ### Domain (`NotifyHub.Tests/NotifyHub.Domain.Tests/`) — no DB
-Files: `PasswordPolicyTests.cs`, `TemplateRendererTests.cs`, `IdempotencyKeyGeneratorTests.cs`, `RetryBackoffPolicyTests.cs`, `OptOutKeywordMatcherTests.cs`, `TaskDueDateDefaultsTests.cs`, `RecurrenceCalculatorTests.cs`, `ReminderDueCalculatorTests.cs`, `ReminderTriggerReferenceTests.cs`, `RateLimitCheckerTests.cs`, `QuietHoursCalculatorTests.cs` (last two added increment 10), `MessageExpiryCalculatorTests.cs` (added P9-07).
+Files: `PasswordPolicyTests.cs`, `TemplateRendererTests.cs`, `IdempotencyKeyGeneratorTests.cs`, `RetryBackoffPolicyTests.cs`, `OptOutKeywordMatcherTests.cs`, `TaskDueDateDefaultsTests.cs`, `RecurrenceCalculatorTests.cs`, `RateLimitCheckerTests.cs`, `QuietHoursCalculatorTests.cs` (last two added increment 10), `MessageExpiryCalculatorTests.cs` (added P9-07), `ReminderScheduleCalculatorTests.cs` (added P9-08). `ReminderDueCalculatorTests.cs`/`ReminderTriggerReferenceTests.cs` deleted in P9-08 along with the classes they tested.
 Run: `dotnet test NotifyHub.Tests/NotifyHub.Domain.Tests`
 
 ### Integration (`NotifyHub.Tests/NotifyHub.Integration.Tests/`)
 | Test file | Factory |
 |---|---|
-| `AuthEndpointTests.cs`, `EscalationJobTests.cs`, `InboundWebhookTests.cs`, `MessageDispatcherOptOutTests.cs`, `TasksControllerTests.cs`, `ThreadsControllerTests.cs`, `ReminderSchedulerTests.cs`, `AuditControllerTests.cs`, `TemplatesControllerTests.cs`, `UsersControllerTests.cs` (added increment 2 — create/assignable-filtering/auto-forward-on-status-change), `ActiveUserRequiredFilterTests.cs` (added increment 3 — mutating-request 403 for Inactive users, GET still works, login still works even after the JWT was issued while Active), `BookmarksControllerTests.cs` (added increment 8 — CRUD + role checks), `SettingsControllerTests.cs` (added increment 10 — get/update/role-check/system-info), scheduled-send/rate-limit tests added to `ThreadsControllerTests.cs` and a quiet-hours-skips-the-batch test added to `MessageDispatcherOptOutTests.cs` (both increment 10), `DashboardControllerTests.cs` (added increment 12 — own-vs-org task counts, unread-thread count), `PreviewTemplate_*` tests added to `ThreadsControllerTests.cs` (P9-04 — dummy-appointment-time fallback + real-upcoming-appointment resolution), `Update_Body_ClearsRenderedBody_OnQueuedMessagesLinkedToTemplate` added to `TemplatesControllerTests.cs` (P9-05 — also proves a non-`Queued` message's `RenderedBody` is left untouched), `MessagesControllerTests.cs` (P9-06 — 403 for Staff, `"System"` sender fallback, patient/sender/status/text filters), `MessageExpiryDispatchTests.cs` (P9-07 — expires an overdue `Queued` message before any send attempt, and proves expiry still runs during Quiet Hours even though the batch itself is suppressed) | `CustomWebApplicationFactory` (EF Core InMemory) |
+| `AuthEndpointTests.cs`, `EscalationJobTests.cs`, `InboundWebhookTests.cs`, `MessageDispatcherOptOutTests.cs`, `TasksControllerTests.cs`, `ThreadsControllerTests.cs`, `AuditControllerTests.cs`, `TemplatesControllerTests.cs`, `UsersControllerTests.cs` (added increment 2 — create/assignable-filtering/auto-forward-on-status-change), `ActiveUserRequiredFilterTests.cs` (added increment 3 — mutating-request 403 for Inactive users, GET still works, login still works even after the JWT was issued while Active), `BookmarksControllerTests.cs` (added increment 8 — CRUD + role checks), `SettingsControllerTests.cs` (added increment 10 — get/update/role-check/system-info), scheduled-send/rate-limit tests added to `ThreadsControllerTests.cs` and a quiet-hours-skips-the-batch test added to `MessageDispatcherOptOutTests.cs` (both increment 10), `DashboardControllerTests.cs` (added increment 12 — own-vs-org task counts, unread-thread count), `PreviewTemplate_*` tests added to `ThreadsControllerTests.cs` (P9-04 — dummy-appointment-time fallback + real-upcoming-appointment resolution), `Update_Body_ClearsRenderedBody_OnQueuedMessagesLinkedToTemplate` added to `TemplatesControllerTests.cs` (P9-05 — also proves a non-`Queued` message's `RenderedBody` is left untouched), `MessagesControllerTests.cs` (P9-06 — 403 for Staff, `"System"` sender fallback, patient/sender/status/text filters), `MessageExpiryDispatchTests.cs` (P9-07 — expires an overdue `Queued` message before any send attempt, and proves expiry still runs during Quiet Hours even though the batch itself is suppressed), `RemindersTests.cs` (P9-08 — create/duplicate-409/past-time-400/update-recalculates/cancel/cancel-twice-400/cancel-non-reminder-400; `ReminderSchedulerTests.cs` deleted along with the class it tested) | `CustomWebApplicationFactory` (EF Core InMemory) |
 | `OutboundPipelineTests.cs` | `ReliableGatewayWebApplicationFactory` (happy path) / `FailingGatewayWebApplicationFactory` (retry) — both subclass `CustomWebApplicationFactory` |
 | `InboundWebhookThreadRaceMySqlTests.cs` | `MySqlWebApplicationFactory` — real MySQL, `[Trait("Category","MySql")]`, exercises `FindOrCreateThreadAsync`'s race guard under genuine concurrent connections |
 | `PerformanceSeedStepTests.cs` | **No factory** — deliberately builds its own isolated `NotifyHubDbContext` (`UseInMemoryDatabase` with a fresh GUID name) instead of using `CustomWebApplicationFactory`, since that factory's automatic startup seeding (with `PerformanceSeedStep` registered as a real `IDbSeedStep`) would trip this step's own idempotency marker before the test calls `RunAsync` explicitly |

@@ -5,6 +5,8 @@ export interface SettingsDto {
   rateLimitEnabled: boolean;
   rateLimitMaxMessages: number;
   rateLimitWindowHours: number;
+  reminderOffsetMinutes: number;
+  reminderExpiryOffsetMinutes: number;
 }
 
 export interface UpdateSettingsRequest {
@@ -14,11 +16,12 @@ export interface UpdateSettingsRequest {
   rateLimitEnabled?: boolean;
   rateLimitMaxMessages?: number;
   rateLimitWindowHours?: number;
+  reminderOffsetMinutes?: number;
+  reminderExpiryOffsetMinutes?: number;
 }
 
 export interface SystemInfoDto {
   databaseConnected: boolean;
   dispatcherPollIntervalSeconds: number;
   escalationPollIntervalSeconds: number;
-  reminderPollIntervalSeconds: number;
 }

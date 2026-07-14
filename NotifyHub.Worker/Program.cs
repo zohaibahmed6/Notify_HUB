@@ -2,7 +2,6 @@ using Microsoft.EntityFrameworkCore;
 using NotifyHub.Infrastructure.Escalation;
 using NotifyHub.Infrastructure.Messaging;
 using NotifyHub.Infrastructure.Persistence;
-using NotifyHub.Infrastructure.Reminders;
 using NotifyHub.Infrastructure.Settings;
 using NotifyHub.Worker;
 
@@ -33,9 +32,6 @@ builder.Services.AddHostedService<DispatcherWorker>();
 
 builder.Services.AddScoped<EscalationJob>();
 builder.Services.AddHostedService<EscalationWorker>();
-
-builder.Services.AddScoped<ReminderScheduler>();
-builder.Services.AddHostedService<ReminderWorker>();
 
 var host = builder.Build();
 host.Run();

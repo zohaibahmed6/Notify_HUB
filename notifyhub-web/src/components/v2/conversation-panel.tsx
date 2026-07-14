@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { toast } from "sonner";
-import { ArrowLeft, CalendarClock, ChevronUp, FileText, MessageSquareOff, UserPlus } from "lucide-react";
+import { AlarmClock, ArrowLeft, CalendarClock, ChevronUp, FileText, MessageSquareOff, UserPlus } from "lucide-react";
 
 import { useAssignMutation, useReplyMutation, useThread } from "@/hooks/useThreads";
 import { useTemplates } from "@/hooks/useTemplates";
@@ -16,6 +16,7 @@ import { StatusBadge } from "@/components/v2/status-badge";
 import { DELIVERY_STATUS_CONFIG, UNKNOWN_STATUS_CONFIG } from "@/components/v2/status-config";
 import { CreateTaskForm } from "@/components/inbox/CreateTaskForm";
 import { DateTimePicker } from "@/components/v2/date-time-picker";
+import { ReminderSmsDialog } from "@/components/v2/reminder-sms-dialog";
 import type { ThreadDetailDto, ThreadMessageDto } from "@/types/inbox";
 
 const MESSAGES_PAGE_SIZE = 25;
@@ -33,6 +34,7 @@ export function ConversationPanelV2({ threadId, onBack }: { threadId: number; on
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [showSchedule, setShowSchedule] = useState(false);
   const [scheduledAt, setScheduledAt] = useState("");
+  const [showReminderDialog, setShowReminderDialog] = useState(false);
 
   const [olderMessages, setOlderMessages] = useState<ThreadMessageDto[]>([]);
   const [loadedPageCount, setLoadedPageCount] = useState(1);
@@ -286,6 +288,16 @@ export function ConversationPanelV2({ threadId, onBack }: { threadId: number; on
               <CalendarClock className="size-3.5" />
               Schedule
             </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 gap-1.5 text-xs"
+              onClick={() => setShowReminderDialog(true)}
+            >
+              <AlarmClock className="size-3.5" />
+              Reminder SMS
+            </Button>
             {showSchedule && (
               <DateTimePicker
                 value={scheduledAt}
@@ -315,6 +327,8 @@ export function ConversationPanelV2({ threadId, onBack }: { threadId: number; on
           </Button>
         </div>
       </form>
+
+      <ReminderSmsDialog threadId={threadId} open={showReminderDialog} onOpenChange={setShowReminderDialog} />
     </div>
   );
 }

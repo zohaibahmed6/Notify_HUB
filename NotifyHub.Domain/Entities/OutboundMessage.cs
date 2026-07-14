@@ -61,5 +61,21 @@ public class OutboundMessage
     /// Set only when Status transitions to Expired; null otherwise.
     public string? ExpiryReason { get; set; }
 
+    /// P9-08: set only for Reminder SMS (rules 3/32) — the caller-supplied instant the
+    /// reminder is anchored to. Null for Standard SMS. Deliberately not an Appointment FK
+    /// (rule 34: generic, reusable for any future event-based reminder).
+    public DateTime? EventTime { get; set; }
+
+    /// Snapshotted from SettingsService at creation time (rule 7 — a later Settings change
+    /// never applies retroactively) and reused verbatim when EventTime is edited later
+    /// (rule 26), not re-read from current Settings.
+    public int? ReminderOffsetMinutes { get; set; }
+    public int? ReminderExpiryOffsetMinutes { get; set; }
+
+    /// Rule 32 "Sent Time" — set once, when Status first transitions to Sent
+    /// (MockGatewayController.Send). Applies to both Standard and Reminder SMS alike
+    /// (rule 22: same pipeline), not Reminder-specific storage.
+    public DateTime? SentAt { get; set; }
+
     public ICollection<DeliveryStatusHistory> StatusHistory { get; set; } = new List<DeliveryStatusHistory>();
 }

@@ -39,10 +39,6 @@ export function SystemTab() {
           <span className="text-muted-foreground">Escalation poll interval</span>
           <span>{info.escalationPollIntervalSeconds}s</span>
         </div>
-        <div className="flex justify-between">
-          <span className="text-muted-foreground">Reminder poll interval</span>
-          <span>{info.reminderPollIntervalSeconds}s</span>
-        </div>
       </CardContent>
     </Card>
   );

@@ -34,6 +34,7 @@ public class MockGatewayController(
 
         var now = DateTime.UtcNow;
         message.Status = MessageStatus.Sent;
+        message.SentAt = now; // P9-08 rule 32 "Sent Time" — applies to both SMS types (rule 22)
         db.DeliveryStatusHistories.Add(new DeliveryStatusHistory
         {
             MessageId = message.Id,

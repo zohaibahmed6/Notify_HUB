@@ -309,6 +309,8 @@ Seed scale: 50,000 messages (explicit). Paginated + indexed inbox (explicit). St
 
 | Build session (2026-07-14) | Step 9 planning session locked a further informal requirements list in `STEP9_PLAN.md` (repo root) — P9-00 responsive design + P9-01 through P9-12, superseding/retiring the reminder-scheduler interval decision above (§14 row "Reminder scheduler interval: 15 minutes") and the Templates screen's `OffsetHours` field, both moot once P9-08/P9-01e ship. `STEP9_PLAN.md` is the source of truth for that session's decisions, not restated here | Zohaib |
 
+| Build session (2026-07-14, P9-08) | The moot-marking above is now final: `ReminderScheduler`/`ReminderWorker` (the appointment-polling implementation of the 15-minute-interval decision) deleted entirely, replaced by a generic event-based Reminder SMS engine per `STEP9_PLAN.md`'s P9-08 — see `CODEBASE_MAP.md` §4b | Zohaib |
+
 *Append new decisions here — do not rewrite history.*
 
 ---

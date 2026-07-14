@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using NotifyHub.Infrastructure.Persistence;
 
@@ -11,9 +12,11 @@ using NotifyHub.Infrastructure.Persistence;
 namespace NotifyHub.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(NotifyHubDbContext))]
-    partial class NotifyHubDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260714112151_AddReminderSmsFields")]
+    partial class AddReminderSmsFields
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

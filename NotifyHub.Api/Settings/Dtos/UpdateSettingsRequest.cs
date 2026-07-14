@@ -9,4 +9,6 @@ public class UpdateSettingsRequest
     public bool? RateLimitEnabled { get; set; }
     public int? RateLimitMaxMessages { get; set; }
     public int? RateLimitWindowHours { get; set; }
+    public int? ReminderOffsetMinutes { get; set; }
+    public int? ReminderExpiryOffsetMinutes { get; set; }
 }

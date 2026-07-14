@@ -1,4 +1,5 @@
 import {
+  AlarmClock,
   AlertTriangle,
   ArrowDown,
   ArrowUp,
@@ -73,6 +74,11 @@ export const AUDIT_ACTION_CONFIG: Record<string, StatusBadgeConfig> = {
   escalation: { icon: ArrowUpCircle, tone: "danger", label: "Escalation" },
   blocked: { icon: ShieldAlert, tone: "danger", label: "Blocked" },
   superseded: { icon: CornerUpRight, tone: "muted", label: "Superseded" },
+  // P9-07/P9-08
+  expired: { icon: Hourglass, tone: "muted", label: "Expired" },
+  "reminder-created": { icon: AlarmClock, tone: "info", label: "Reminder created" },
+  "reminder-updated": { icon: AlarmClock, tone: "info", label: "Reminder updated" },
+  "reminder-cancelled": { icon: Ban, tone: "muted", label: "Reminder cancelled" },
 };
 
 export const TRIGGER_TYPE_CONFIG: Record<TemplateTriggerType, StatusBadgeConfig> = {

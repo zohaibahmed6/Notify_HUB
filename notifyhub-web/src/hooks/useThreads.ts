@@ -72,3 +72,12 @@ export function useCreateTaskMutation(threadId: number) {
     },
   });
 }
+
+/// P9-08: no manual "scheduled send time" field (rule 4) — server computes it from
+/// eventTime + the current Reminder Offset setting.
+export function useCreateReminderMutation(threadId: number) {
+  return useMutation({
+    mutationFn: (body: { templateId: number; eventTime: string }) =>
+      apiClient.post(`/api/threads/${threadId}/reminders`, body),
+  });
+}

@@ -369,6 +369,90 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
         return Created($"/api/tasks/{task.Id}", ToTaskDto(task, assignee?.Username));
     }
 
+    /// P9-08: Reminder SMS creation. Generic event-based reminder, no Appointment coupling
+    /// (rule 34) — EventTime is a raw caller-supplied instant. Scheduled Send Time and
+    /// Expiry Time are always computed server-side (rules 4/5/15/25/31), snapshotting the
+    /// *current* Reminder Offset/Expiry Offset settings onto the message (rule 7 — a later
+    /// Settings change never applies retroactively). Stays TemplateId-linked (not rendered
+    /// to an ad-hoc RenderedBody at creation like a Standard SMS composer reply) so rule
+    /// 30's duplicate check has a real templateId to hash, and so P9-05's template-edit
+    /// safety nets and the normal dispatch-time render both apply unmodified — the modal's
+    /// preview (GET .../templates/{templateId}/preview) is read-only, not committed text.
+    [HttpPost("{id}/reminders")]
+    public async Task<ActionResult> CreateReminder(long id, CreateReminderRequest request, CancellationToken ct)
+    {
+        var thread = await db.Threads.Include(t => t.Patient).SingleOrDefaultAsync(t => t.Id == id, ct);
+        if (thread is null)
+            return NotFound();
+
+        var template = await db.MessageTemplates.FindAsync([request.TemplateId], ct);
+        if (template is null)
+            return NotFound();
+
+        var reminderSettings = await settingsService.GetReminderAsync(ct);
+        var now = DateTime.UtcNow;
+
+        // Rule 8/9/10: this is also the server-side backstop for the UI's min-selectable-
+        // Event-Time restriction — an Event Time earlier than now + offset always computes
+        // a past Scheduled Send Time and is rejected here regardless of what the client sent.
+        var scheduledSendTime = ReminderScheduleCalculator.CalculateScheduledSendTime(request.EventTime, reminderSettings.OffsetMinutes);
+        if (scheduledSendTime <= now)
+        {
+            return Problem(statusCode: StatusCodes.Status400BadRequest,
+                title: "The calculated Scheduled Send Time is already in the past — pick a later Event Time.");
+        }
+
+        var expiryTime = ReminderScheduleCalculator.CalculateExpiryTime(request.EventTime, reminderSettings.ExpiryOffsetMinutes);
+        var idempotencyKey = IdempotencyKeyGenerator.GenerateForReminder(
+            thread.PatientId, request.TemplateId, request.EventTime, reminderSettings.OffsetMinutes);
+
+        // Rule 30: pre-check for a clear 409, same defense-in-depth pattern as
+        // CreateConversation's phone-duplicate check — the unique index on IdempotencyKey
+        // (below) is still the real race guard.
+        if (await db.OutboundMessages.AnyAsync(m => m.IdempotencyKey == idempotencyKey, ct))
+        {
+            return Problem(statusCode: StatusCodes.Status409Conflict,
+                title: "A reminder for this patient, template, and event time already exists.");
+        }
+
+        var message = new OutboundMessage
+        {
+            PatientId = thread.PatientId,
+            ThreadId = thread.Id,
+            TemplateId = request.TemplateId,
+            SenderType = SenderType.Staff,
+            SentByUsername = User.FindFirstValue(ClaimTypes.Name),
+            TriggerReference = null,
+            RenderedBody = null,
+            CreatedAt = now,
+            Status = MessageStatus.Queued,
+            IdempotencyKey = idempotencyKey,
+            AttemptCount = 0,
+            ScheduledAt = scheduledSendTime,
+            ExpiresAt = expiryTime,
+            EventTime = request.EventTime,
+            ReminderOffsetMinutes = reminderSettings.OffsetMinutes,
+            ReminderExpiryOffsetMinutes = reminderSettings.ExpiryOffsetMinutes,
+        };
+        db.OutboundMessages.Add(message);
+
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException)
+        {
+            return Problem(statusCode: StatusCodes.Status409Conflict,
+                title: "A reminder for this patient, template, and event time already exists.");
+        }
+
+        AuditLogger.Add(db, actor: User.FindFirstValue(ClaimTypes.Name)!, action: "reminder-created", entityType: "OutboundMessage",
+            entityId: message.Id, detail: $"event time {request.EventTime:o}");
+        await db.SaveChangesAsync(ct);
+
+        return NoContent();
+    }
+
     /// P9-04: resolves a template's merge fields to real values for the composer's insert-
     /// template preview — {{patient_name}} from the thread's actual patient,
     /// {{appointment_time}} from the patient's next real Scheduled appointment if one

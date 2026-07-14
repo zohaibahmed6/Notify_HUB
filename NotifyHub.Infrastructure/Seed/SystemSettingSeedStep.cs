@@ -23,6 +23,8 @@ public class SystemSettingSeedStep : IDbSeedStep
             [SettingsService.RateLimitEnabledKey] = "false",
             [SettingsService.RateLimitMaxMessagesKey] = "20",
             [SettingsService.RateLimitWindowHoursKey] = "24",
+            [SettingsService.ReminderOffsetMinutesKey] = "1440",
+            [SettingsService.ReminderExpiryOffsetMinutesKey] = "15",
         };
 
         var missing = defaults.Where(kv => !existingKeys.Contains(kv.Key));

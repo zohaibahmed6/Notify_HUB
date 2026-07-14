@@ -6,6 +6,7 @@ namespace NotifyHub.Infrastructure.Settings;
 
 public record QuietHoursSettings(bool Enabled, TimeOnly Start, TimeOnly End);
 public record RateLimitSettings(bool Enabled, int MaxMessages, int WindowHours);
+public record ReminderSettings(int OffsetMinutes, int ExpiryOffsetMinutes);
 
 /// §6/§8: typed accessors over the generic SystemSetting key-value table — parsing/
 /// validation/defaults live here once instead of scattered across controllers/consumers.
@@ -20,6 +21,13 @@ public class SettingsService(NotifyHubDbContext db)
     public const string RateLimitEnabledKey = "RateLimit:Enabled";
     public const string RateLimitMaxMessagesKey = "RateLimit:MaxMessages";
     public const string RateLimitWindowHoursKey = "RateLimit:WindowHours";
+
+    /// P9-08: rule 6/16 — snapshotted onto each Reminder SMS at creation time (rule 7: a
+    /// changed offset applies only to newly created reminders, never retroactively), not
+    /// a gate like Quiet Hours/RateLimit — reminders are always computed using whatever
+    /// values are current when created.
+    public const string ReminderOffsetMinutesKey = "Reminder:OffsetMinutes";
+    public const string ReminderExpiryOffsetMinutesKey = "Reminder:ExpiryOffsetMinutes";
 
     public async Task<QuietHoursSettings> GetQuietHoursAsync(CancellationToken ct)
     {
@@ -39,6 +47,15 @@ public class SettingsService(NotifyHubDbContext db)
             Enabled: values.TryGetValue(RateLimitEnabledKey, out var e) && bool.TryParse(e, out var enabled) && enabled,
             MaxMessages: values.TryGetValue(RateLimitMaxMessagesKey, out var m) && int.TryParse(m, out var max) ? max : 20,
             WindowHours: values.TryGetValue(RateLimitWindowHoursKey, out var w) && int.TryParse(w, out var window) ? window : 24);
+    }
+
+    public async Task<ReminderSettings> GetReminderAsync(CancellationToken ct)
+    {
+        var values = await GetAllAsync(ct);
+
+        return new ReminderSettings(
+            OffsetMinutes: values.TryGetValue(ReminderOffsetMinutesKey, out var o) && int.TryParse(o, out var offset) ? offset : 1440,
+            ExpiryOffsetMinutes: values.TryGetValue(ReminderExpiryOffsetMinutesKey, out var e) && int.TryParse(e, out var expiryOffset) ? expiryOffset : 15);
     }
 
     public async Task<bool> IsQuietHoursNowAsync(CancellationToken ct)

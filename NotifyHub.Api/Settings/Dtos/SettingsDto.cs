@@ -8,4 +8,8 @@ public class SettingsDto
     public bool RateLimitEnabled { get; set; }
     public int RateLimitMaxMessages { get; set; }
     public int RateLimitWindowHours { get; set; }
+
+    /// P9-08 rule 6/16 — current defaults applied to newly created Reminder SMS.
+    public int ReminderOffsetMinutes { get; set; }
+    public int ReminderExpiryOffsetMinutes { get; set; }
 }

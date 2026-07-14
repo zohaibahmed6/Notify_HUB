@@ -23,7 +23,20 @@ import { Sparkline } from "@/components/v2/sparkline";
 import { DateTimePicker } from "@/components/v2/date-time-picker";
 import type { AuditLogDto } from "@/types/audit";
 
-const ACTIONS = ["All", "send", "receipt", "opt-out", "assignment", "escalation", "blocked", "superseded"];
+const ACTIONS = [
+  "All",
+  "send",
+  "receipt",
+  "opt-out",
+  "assignment",
+  "escalation",
+  "blocked",
+  "superseded",
+  "expired",
+  "reminder-created",
+  "reminder-updated",
+  "reminder-cancelled",
+];
 const PAGE_SIZE = 25;
 
 type SortKey = "actor" | "action" | "entity" | "occurredAt";

@@ -18,6 +18,7 @@ public class SettingsController(SettingsService settingsService, NotifyHubDbCont
     {
         var quietHours = await settingsService.GetQuietHoursAsync(ct);
         var rateLimit = await settingsService.GetRateLimitAsync(ct);
+        var reminder = await settingsService.GetReminderAsync(ct);
 
         return Ok(new SettingsDto
         {
@@ -27,6 +28,8 @@ public class SettingsController(SettingsService settingsService, NotifyHubDbCont
             RateLimitEnabled = rateLimit.Enabled,
             RateLimitMaxMessages = rateLimit.MaxMessages,
             RateLimitWindowHours = rateLimit.WindowHours,
+            ReminderOffsetMinutes = reminder.OffsetMinutes,
+            ReminderExpiryOffsetMinutes = reminder.ExpiryOffsetMinutes,
         });
     }
 
@@ -46,6 +49,12 @@ public class SettingsController(SettingsService settingsService, NotifyHubDbCont
         if (request.RateLimitWindowHours is <= 0)
             return Problem(statusCode: StatusCodes.Status400BadRequest, title: "RateLimitWindowHours must be positive.");
 
+        if (request.ReminderOffsetMinutes is <= 0)
+            return Problem(statusCode: StatusCodes.Status400BadRequest, title: "ReminderOffsetMinutes must be positive.");
+
+        if (request.ReminderExpiryOffsetMinutes is <= 0)
+            return Problem(statusCode: StatusCodes.Status400BadRequest, title: "ReminderExpiryOffsetMinutes must be positive.");
+
         var updates = new Dictionary<string, string>();
 
         if (request.QuietHoursEnabled is not null)
@@ -60,6 +69,10 @@ public class SettingsController(SettingsService settingsService, NotifyHubDbCont
             updates[SettingsService.RateLimitMaxMessagesKey] = request.RateLimitMaxMessages.Value.ToString();
         if (request.RateLimitWindowHours is not null)
             updates[SettingsService.RateLimitWindowHoursKey] = request.RateLimitWindowHours.Value.ToString();
+        if (request.ReminderOffsetMinutes is not null)
+            updates[SettingsService.ReminderOffsetMinutesKey] = request.ReminderOffsetMinutes.Value.ToString();
+        if (request.ReminderExpiryOffsetMinutes is not null)
+            updates[SettingsService.ReminderExpiryOffsetMinutesKey] = request.ReminderExpiryOffsetMinutes.Value.ToString();
 
         if (updates.Count > 0)
             await settingsService.SetAsync(updates, ct);
@@ -76,7 +89,6 @@ public class SettingsController(SettingsService settingsService, NotifyHubDbCont
             DatabaseConnected = await db.Database.CanConnectAsync(ct),
             DispatcherPollIntervalSeconds = 5, // NotifyHub.Worker/DispatcherWorker.cs, hardcoded (not config-driven)
             EscalationPollIntervalSeconds = configuration.GetValue("Escalation:PollIntervalSeconds", 60),
-            ReminderPollIntervalSeconds = configuration.GetValue("Reminders:PollIntervalSeconds", 900),
         });
     }
 }

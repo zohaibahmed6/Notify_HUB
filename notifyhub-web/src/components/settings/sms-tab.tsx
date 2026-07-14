@@ -21,6 +21,8 @@ export function SmsTab() {
   const [rateLimitEnabled, setRateLimitEnabled] = useState(false);
   const [rateLimitMaxMessages, setRateLimitMaxMessages] = useState("20");
   const [rateLimitWindowHours, setRateLimitWindowHours] = useState("24");
+  const [reminderOffsetMinutes, setReminderOffsetMinutes] = useState("1440");
+  const [reminderExpiryOffsetMinutes, setReminderExpiryOffsetMinutes] = useState("15");
 
   useEffect(() => {
     if (!settings) return;
@@ -30,6 +32,8 @@ export function SmsTab() {
     setRateLimitEnabled(settings.rateLimitEnabled);
     setRateLimitMaxMessages(String(settings.rateLimitMaxMessages));
     setRateLimitWindowHours(String(settings.rateLimitWindowHours));
+    setReminderOffsetMinutes(String(settings.reminderOffsetMinutes));
+    setReminderExpiryOffsetMinutes(String(settings.reminderExpiryOffsetMinutes));
   }, [settings]);
 
   const handleSaveQuietHours = async () => {
@@ -49,6 +53,18 @@ export function SmsTab() {
         rateLimitWindowHours: Number(rateLimitWindowHours),
       });
       toast.success("Rate limit saved");
+    } catch (error) {
+      toast.error(errorMessage(error, "Save failed"));
+    }
+  };
+
+  const handleSaveReminderDefaults = async () => {
+    try {
+      await updateSettings.mutateAsync({
+        reminderOffsetMinutes: Number(reminderOffsetMinutes),
+        reminderExpiryOffsetMinutes: Number(reminderExpiryOffsetMinutes),
+      });
+      toast.success("Reminder SMS defaults saved");
     } catch (error) {
       toast.error(errorMessage(error, "Save failed"));
     }
@@ -128,6 +144,45 @@ export function SmsTab() {
           </div>
           <div className="flex justify-end">
             <Button size="sm" onClick={handleSaveRateLimit} disabled={updateSettings.isPending}>
+              Save
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Reminder SMS defaults</CardTitle>
+          <CardDescription>
+            Applied to newly created Reminder SMS only — changing these never affects reminders
+            already scheduled.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="reminder-offset">Reminder offset (minutes before Event Time)</Label>
+              <Input
+                id="reminder-offset"
+                type="number"
+                min={1}
+                value={reminderOffsetMinutes}
+                onChange={(e) => setReminderOffsetMinutes(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="reminder-expiry-offset">Expiry offset (minutes before Event Time)</Label>
+              <Input
+                id="reminder-expiry-offset"
+                type="number"
+                min={1}
+                value={reminderExpiryOffsetMinutes}
+                onChange={(e) => setReminderExpiryOffsetMinutes(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="flex justify-end">
+            <Button size="sm" onClick={handleSaveReminderDefaults} disabled={updateSettings.isPending}>
               Save
             </Button>
           </div>

@@ -8,7 +8,20 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { DateTimePicker } from "@/components/v2/date-time-picker";
 
-const ACTIONS = ["All", "send", "receipt", "opt-out", "assignment", "escalation", "blocked", "superseded"];
+const ACTIONS = [
+  "All",
+  "send",
+  "receipt",
+  "opt-out",
+  "assignment",
+  "escalation",
+  "blocked",
+  "superseded",
+  "expired",
+  "reminder-created",
+  "reminder-updated",
+  "reminder-cancelled",
+];
 const PAGE_SIZE = 25;
 
 // §6b: Admin sees the full log (any actor); Staff sees only their own actions via
