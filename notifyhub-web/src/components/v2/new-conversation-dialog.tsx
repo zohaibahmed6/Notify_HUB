@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DateTimePicker } from "@/components/v2/date-time-picker";
 
 /// §6: send SMS to a brand-new patient — creates the Patient + ConversationThread +
 /// first outbound message in one call (POST /api/threads).
@@ -78,11 +79,11 @@ export function NewConversationDialog({
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="new-conv-scheduled">Schedule for later (optional)</Label>
-            <Input
+            <DateTimePicker
               id="new-conv-scheduled"
-              type="datetime-local"
               value={scheduledAt}
-              onChange={(e) => setScheduledAt(e.target.value)}
+              onChange={setScheduledAt}
+              placeholder="Send immediately"
             />
           </div>
           <DialogFooter>

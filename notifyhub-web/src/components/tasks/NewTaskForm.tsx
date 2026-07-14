@@ -5,9 +5,9 @@ import { useThreads } from "@/hooks/useThreads";
 import { useCreateTaskMutation } from "@/hooks/useThreads";
 import { errorMessage } from "@/lib/errorMessage";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { DateTimePicker } from "@/components/v2/date-time-picker";
 import { TASK_TYPES, type TaskPriority, type TaskType } from "@/types/tasks";
 
 const PRIORITIES: TaskPriority[] = ["Low", "Medium", "High", "Urgent"];
@@ -22,10 +22,9 @@ export function NewTaskForm({ onDone }: { onDone: () => void }) {
 
   const [threadId, setThreadId] = useState<number | "">("");
   const [priority, setPriority] = useState<TaskPriority>("Medium");
-  // Date required, time optional (defaults 00:00) — P9-01d. Split rather than a single
-  // datetime-local input so the date can be validated as required independent of time.
-  const [dueDate, setDueDate] = useState("");
-  const [dueTime, setDueTime] = useState("");
+  // Date required, time optional (defaults 00:00) — P9-01d, now via the shared
+  // DateTimePicker (P9-03) instead of two native inputs.
+  const [dueAt, setDueAt] = useState("");
   const [taskType, setTaskType] = useState<TaskType>("General");
   const [description, setDescription] = useState("");
 
@@ -37,7 +36,7 @@ export function NewTaskForm({ onDone }: { onDone: () => void }) {
       toast.error("Pick a thread first");
       return;
     }
-    if (!dueDate) {
+    if (!dueAt) {
       toast.error("Pick a due date");
       return;
     }
@@ -45,7 +44,7 @@ export function NewTaskForm({ onDone }: { onDone: () => void }) {
     try {
       await createTask.mutateAsync({
         priority,
-        dueAt: new Date(`${dueDate}T${dueTime || "00:00"}`).toISOString(),
+        dueAt: new Date(dueAt).toISOString(),
         taskType,
         // Left blank -> server auto-populates from the thread's most recent message.
         description: description || undefined,
@@ -91,24 +90,9 @@ export function NewTaskForm({ onDone }: { onDone: () => void }) {
             ))}
           </select>
         </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="new-task-due-date">Due date</Label>
-          <Input
-            id="new-task-due-date"
-            type="date"
-            required
-            value={dueDate}
-            onChange={(event) => setDueDate(event.target.value)}
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="new-task-due-time">Due time (optional)</Label>
-          <Input
-            id="new-task-due-time"
-            type="time"
-            value={dueTime}
-            onChange={(event) => setDueTime(event.target.value)}
-          />
+        <div className="space-y-1.5 sm:col-span-2">
+          <Label htmlFor="new-task-due">Due date (time optional, defaults 00:00)</Label>
+          <DateTimePicker id="new-task-due" value={dueAt} onChange={setDueAt} timeRequired={false} />
         </div>
       </div>
       <div className="space-y-1.5">

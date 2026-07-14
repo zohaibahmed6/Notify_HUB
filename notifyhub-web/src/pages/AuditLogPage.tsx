@@ -6,6 +6,7 @@ import { toDateInputValue, defaultFromDaysAgo, toInstantRange } from "@/lib/date
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { DateTimePicker } from "@/components/v2/date-time-picker";
 
 const ACTIONS = ["All", "send", "receipt", "opt-out", "assignment", "escalation", "blocked", "superseded"];
 const PAGE_SIZE = 25;
@@ -78,26 +79,28 @@ export default function AuditLogPage() {
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="audit-from">From</Label>
-          <Input
+          <DateTimePicker
             id="audit-from"
-            type="date"
+            mode="date"
             value={from}
-            onChange={(event) => {
-              setFrom(event.target.value);
+            onChange={(v) => {
+              setFrom(v);
               setPage(1);
             }}
+            className="w-40"
           />
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="audit-to">To</Label>
-          <Input
+          <DateTimePicker
             id="audit-to"
-            type="date"
+            mode="date"
             value={to}
-            onChange={(event) => {
-              setTo(event.target.value);
+            onChange={(v) => {
+              setTo(v);
               setPage(1);
             }}
+            className="w-40"
           />
         </div>
       </div>

@@ -8,7 +8,6 @@ import { apiClient } from "@/lib/apiClient";
 import { errorMessage } from "@/lib/errorMessage";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -16,6 +15,7 @@ import { InitialsAvatar } from "@/components/v2/initials-avatar";
 import { StatusBadge } from "@/components/v2/status-badge";
 import { DELIVERY_STATUS_CONFIG, UNKNOWN_STATUS_CONFIG } from "@/components/v2/status-config";
 import { CreateTaskForm } from "@/components/inbox/CreateTaskForm";
+import { DateTimePicker } from "@/components/v2/date-time-picker";
 import type { ThreadDetailDto, ThreadMessageDto } from "@/types/inbox";
 
 const MESSAGES_PAGE_SIZE = 25;
@@ -273,11 +273,11 @@ export function ConversationPanelV2({ threadId, onBack }: { threadId: number; on
               Schedule
             </Button>
             {showSchedule && (
-              <Input
-                type="datetime-local"
+              <DateTimePicker
                 value={scheduledAt}
-                onChange={(event) => setScheduledAt(event.target.value)}
-                className="h-7 w-auto text-xs"
+                onChange={setScheduledAt}
+                placeholder="Pick a time"
+                className="h-7 w-auto gap-1.5 px-2 text-xs"
               />
             )}
           </div>

@@ -24,6 +24,7 @@ import {
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { NewTaskForm } from "@/components/tasks/NewTaskForm";
 import { TaskCard } from "@/components/v2/task-card";
+import { DateTimePicker } from "@/components/v2/date-time-picker";
 import { TaskDetailSheet } from "@/components/v2/task-detail-sheet";
 import { EmptyState } from "@/components/v2/empty-state";
 import { CardGridSkeleton } from "@/components/v2/skeletons";
@@ -284,23 +285,11 @@ export default function TaskBoardPageV2() {
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="task-filter-due-from">Due from</Label>
-          <Input
-            id="task-filter-due-from"
-            type="date"
-            value={dueFrom}
-            onChange={(event) => setDueFrom(event.target.value)}
-            className="h-9"
-          />
+          <DateTimePicker id="task-filter-due-from" mode="date" value={dueFrom} onChange={setDueFrom} className="h-9 w-40" />
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="task-filter-due-to">Due to</Label>
-          <Input
-            id="task-filter-due-to"
-            type="date"
-            value={dueTo}
-            onChange={(event) => setDueTo(event.target.value)}
-            className="h-9"
-          />
+          <DateTimePicker id="task-filter-due-to" mode="date" value={dueTo} onChange={setDueTo} className="h-9 w-40" />
         </div>
       </div>
 

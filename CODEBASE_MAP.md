@@ -641,6 +641,53 @@ regression. Out of scope to fix here (not part of `STEP9_PLAN.md`); flagged in S
 
 ---
 
+## 6g. Shared `DateTimePicker` (P9-03)
+
+- **New shadcn primitive**: `components/ui/calendar.tsx` (`npx shadcn add calendar`, react-day-picker
+  v10 — a major-version jump from the v8-era templates shadcn usually ships, but the generated
+  component matches the installed version and compiles clean). Note for future `shadcn add` runs
+  in this repo: the CLI resolved the `@/` alias to a **literal `@` directory at the repo root**
+  instead of `src/` (wrote `@/components/ui/calendar.tsx` and a duplicate default-template
+  `@/components/ui/button.tsx`) rather than respecting `components.json`'s aliases — files were
+  moved into place by hand and the stray `@/` directory deleted; the duplicate `button.tsx` was
+  discarded (diffed against the real one first — different default shadcn template, never touched
+  the project's actual customized button).
+- **`components/v2/date-time-picker.tsx`** — `DateTimePicker`, a drop-in replacement for native
+  `<input type="date">`/`<input type="datetime-local">`: same controlled `value`/`onChange` string
+  shapes (`"yyyy-MM-dd"` / `"yyyy-MM-ddTHH:mm"`, local time), so callers that already do
+  `new Date(value).toISOString()` didn't need that part rewritten. Props: `mode` (`"date"` |
+  `"datetime"`, default `"datetime"`), `timeRequired` (default `true` — when `false`, picking a
+  date immediately fills the time part with `00:00` until the user changes it, rather than leaving
+  the value date-only), `minDate` (disables earlier calendar days — added now, unused until P9-08
+  needs a min-selectable-`Event Time` per its rule 9/10; not wired to time-of-day granularity yet,
+  flagged as a simplification to revisit if P9-08 needs exact-minute enforcement rather than
+  date-level).
+- **UI**: Popover-triggered. "Material-style date card" = the `Calendar` primitive with a
+  primary-colored header banner (date/time step tabs) above it when `mode="datetime"`.
+  "Clock-face time picker" = a custom `ClockFace` sub-component — a circular dial, pointer
+  down/move/up over the whole disc computes an angle-from-center (`atan2`) and maps it to the
+  nearest hour (12 positions) or minute (any of 60, continuous — not snapped to 5), with a
+  Material-style hand+thumb rendered via `transform: rotate(...)` and percentage-based
+  `left`/`top`. Hour selection auto-advances to minute selection; minute release closes the
+  popover. AM/PM toggle buttons; clicking the digital `HH`/`MM` readout jumps directly to that
+  phase.
+- **Replaces native inputs at** (all 7 files from the plan): `NewTaskForm.tsx`/`CreateTaskForm.tsx`
+  (`dueAt`, `timeRequired={false}` — collapses P9-01d's separate `dueDate`+`dueTime` state back
+  into one field now that the shared picker handles the optional-time case itself),
+  `new-conversation-dialog.tsx` (`scheduledAt`, optional), `conversation-panel.tsx`'s Schedule
+  toggle (`scheduledAt`, optional, compact `h-7` className override), `TaskBoardPageV2.tsx`'s
+  Due from/to filters (`mode="date"`), `AuditLogPageV2.tsx` and legacy `AuditLogPage.tsx`'s From/To
+  filters (`mode="date"` — legacy touched too since P9-03 named both files explicitly, even though
+  legacy is otherwise unreachable dead code per §6a/P9-00's own scope note).
+- **Not yet verified live in a browser** (same caveat as P9-00 — no browser/screenshot tool
+  available this session): `tsc -b`/`vite build` clean and `docker compose up -d --build web`
+  confirmed serving, but the clock face's pointer-event angle math and the Popover step-switching
+  were verified by code reading, not by actually dragging a clock hand in a real viewport. Flagged
+  as the highest-risk unverified piece in this increment — recommend an actual click-through pass
+  before treating P9-03 as fully done.
+
+---
+
 ## 7. Test structure
 
 ### Domain (`NotifyHub.Tests/NotifyHub.Domain.Tests/`) — no DB

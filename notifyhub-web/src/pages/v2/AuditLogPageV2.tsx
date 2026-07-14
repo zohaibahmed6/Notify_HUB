@@ -20,6 +20,7 @@ import { AUDIT_ACTION_CONFIG, UNKNOWN_STATUS_CONFIG } from "@/components/v2/stat
 import { EmptyState } from "@/components/v2/empty-state";
 import { TableRowSkeleton } from "@/components/v2/skeletons";
 import { Sparkline } from "@/components/v2/sparkline";
+import { DateTimePicker } from "@/components/v2/date-time-picker";
 import type { AuditLogDto } from "@/types/audit";
 
 const ACTIONS = ["All", "send", "receipt", "opt-out", "assignment", "escalation", "blocked", "superseded"];
@@ -154,26 +155,28 @@ export default function AuditLogPageV2() {
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="audit-from">From</Label>
-          <Input
+          <DateTimePicker
             id="audit-from"
-            type="date"
+            mode="date"
             value={from}
-            onChange={(e) => {
-              setFrom(e.target.value);
+            onChange={(v) => {
+              setFrom(v);
               resetPage();
             }}
+            className="w-40"
           />
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="audit-to">To</Label>
-          <Input
+          <DateTimePicker
             id="audit-to"
-            type="date"
+            mode="date"
             value={to}
-            onChange={(e) => {
-              setTo(e.target.value);
+            onChange={(v) => {
+              setTo(v);
               resetPage();
             }}
+            className="w-40"
           />
         </div>
       </div>
