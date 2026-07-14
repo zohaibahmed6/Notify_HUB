@@ -596,6 +596,50 @@ regression. Out of scope to fix here (not part of `STEP9_PLAN.md`); flagged in S
 
 ---
 
+## 6f. Step 9 quick fixes (P9-01)
+
+- **Command palette removed entirely** (P9-01a) — `components/v2/command-palette.tsx` and its
+  create-only `components/v2/quick-create-template-form.tsx` dependency deleted; `AppShell.tsx`
+  lost `paletteOpen` state, the `Cmd/Ctrl+K` keydown listener, and both header trigger buttons
+  (desktop text button + mobile icon button). The generated shadcn `command`/`cmdk` primitive
+  (`components/ui/command.tsx`) is left in place (unused, not explicitly listed for removal —
+  same category as other generated-but-idle primitives).
+- **Task Forward dialog excludes the current assignee** (P9-01b) —
+  `task-detail-sheet.tsx`'s Forward `Select` now filters `assignableUsers` by
+  `u.id !== task?.assignedStaffId` client-side.
+- **`TaskDetailSheet` auto-closes after any action taken from it** (P9-01c) — `handleToggleActive`/
+  `handleForward` call `onOpenChange(false)` on success only (a failed action leaves the sheet
+  open with its error toast visible); the new `handleAssignToMe`/`handleCompleteTask` wrappers
+  call the parent-supplied `onAssignToMe`/`onComplete` then close unconditionally (those props
+  are void-typed fire-and-forget from the sheet's perspective — the parent already toasts
+  success/failure internally, so the sheet can't gate on the outcome without a prop-signature
+  change, which wasn't in P9-01c's listed files).
+- **Task creation date/time split** (P9-01d) — `NewTaskForm.tsx`/`CreateTaskForm.tsx`'s single
+  `datetime-local` input became two: `type="date"` (`required`) + `type="time"` (optional,
+  defaults `00:00` when blank via `` `${dueDate}T${dueTime || "00:00"}` ``). Submitting without a
+  date now toasts an error client-side instead of falling through to the server's
+  priority-based `TaskDueDateDefaults` default — the due date is no longer optional from this
+  form. (P9-03 will later swap these native inputs for the shared `DateTimePicker`.)
+- **`OffsetHours` removed from the Templates UI** (P9-01e) — `TemplateFormValues` no longer has
+  an `offsetHours` field; `template-form.tsx` dropped the input and its validation.
+  `TemplatesPageV2.handleCreate` sends a fixed `LEGACY_OFFSET_HOURS_PLACEHOLDER = 24` since the
+  backend's `CreateTemplateRequest.OffsetHours` is still a required `[Range(1, int.MaxValue)]`
+  int (schema/API untouched, per the plan, to avoid a breaking migration);
+  `handleUpdate`/`PATCH` simply omits the field now (already nullable server-side, so omitting
+  it leaves the stored value untouched). Both list-row and detail-header "offset Xh" displays
+  removed. Backend `MessageTemplate.OffsetHours` column is unchanged and still returned by the
+  API — just write-only-by-nobody until P9-08's Reminder SMS engine replaces its role for
+  `AppointmentReminder` templates. Legacy `TemplatesPage.tsx` untouched (unreachable dead code
+  per §6a).
+- **Flagged, not silently resolved**: `STEP9_PLAN.md`'s own "Superseded/reversed decisions"
+  section attributes the `ReminderOffset`/`ReminderExpiryOffset` Settings → SMS fields to
+  "P9-10", but P9-10 in the same file is Task forwarding rules — P9-08 (Reminder SMS engine)
+  rules 6/16 are what actually define those two settings. Treated as a typo for P9-08 (the only
+  section that defines `ReminderOffset`/`ReminderExpiryOffset`), not silently corrected in the
+  plan file itself.
+
+---
+
 ## 7. Test structure
 
 ### Domain (`NotifyHub.Tests/NotifyHub.Domain.Tests/`) — no DB

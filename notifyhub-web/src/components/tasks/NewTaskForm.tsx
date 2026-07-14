@@ -22,7 +22,10 @@ export function NewTaskForm({ onDone }: { onDone: () => void }) {
 
   const [threadId, setThreadId] = useState<number | "">("");
   const [priority, setPriority] = useState<TaskPriority>("Medium");
-  const [dueAt, setDueAt] = useState("");
+  // Date required, time optional (defaults 00:00) — P9-01d. Split rather than a single
+  // datetime-local input so the date can be validated as required independent of time.
+  const [dueDate, setDueDate] = useState("");
+  const [dueTime, setDueTime] = useState("");
   const [taskType, setTaskType] = useState<TaskType>("General");
   const [description, setDescription] = useState("");
 
@@ -34,11 +37,15 @@ export function NewTaskForm({ onDone }: { onDone: () => void }) {
       toast.error("Pick a thread first");
       return;
     }
+    if (!dueDate) {
+      toast.error("Pick a due date");
+      return;
+    }
 
     try {
       await createTask.mutateAsync({
         priority,
-        dueAt: dueAt ? new Date(dueAt).toISOString() : undefined,
+        dueAt: new Date(`${dueDate}T${dueTime || "00:00"}`).toISOString(),
         taskType,
         // Left blank -> server auto-populates from the thread's most recent message.
         description: description || undefined,
@@ -68,7 +75,7 @@ export function NewTaskForm({ onDone }: { onDone: () => void }) {
           ))}
         </select>
       </div>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div className="space-y-1.5">
           <Label htmlFor="new-task-priority">Priority</Label>
           <select
@@ -85,12 +92,22 @@ export function NewTaskForm({ onDone }: { onDone: () => void }) {
           </select>
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="new-task-due">Due (optional)</Label>
+          <Label htmlFor="new-task-due-date">Due date</Label>
           <Input
-            id="new-task-due"
-            type="datetime-local"
-            value={dueAt}
-            onChange={(event) => setDueAt(event.target.value)}
+            id="new-task-due-date"
+            type="date"
+            required
+            value={dueDate}
+            onChange={(event) => setDueDate(event.target.value)}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="new-task-due-time">Due time (optional)</Label>
+          <Input
+            id="new-task-due-time"
+            type="time"
+            value={dueTime}
+            onChange={(event) => setDueTime(event.target.value)}
           />
         </div>
       </div>

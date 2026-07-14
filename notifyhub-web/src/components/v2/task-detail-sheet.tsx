@@ -57,11 +57,16 @@ export function TaskDetailSheet({
 
   const isActionable = task && task.status !== "Completed" && task.status !== "Cancelled";
 
+  // P9-01c: the sheet auto-closes after any action taken on the task from within it
+  // (forward, complete, active/inactive toggle, assign-to-me, or any other
+  // reassignment) — on success only, so a failed action leaves the sheet open with its
+  // error toast visible in context rather than silently closing on a no-op.
   const handleToggleActive = async () => {
     if (!task) return;
     try {
       await updateTask.mutateAsync({ id: task.id, isActive: !task.isActive });
       toast.success(task.isActive ? "Task marked inactive" : "Task marked active");
+      onOpenChange(false);
     } catch (error) {
       toast.error(errorMessage(error, "Update failed"));
     }
@@ -75,9 +80,22 @@ export function TaskDetailSheet({
       setForwardOpen(false);
       setForwardTargetId("");
       setForwardNote("");
+      onOpenChange(false);
     } catch (error) {
       toast.error(errorMessage(error, "Forward failed"));
     }
+  };
+
+  const handleAssignToMe = async () => {
+    if (!task) return;
+    await onAssignToMe(task.id);
+    onOpenChange(false);
+  };
+
+  const handleCompleteTask = async () => {
+    if (!task) return;
+    await onComplete(task.id);
+    onOpenChange(false);
   };
 
   return (
@@ -157,10 +175,10 @@ export function TaskDetailSheet({
               </div>
               {isActionable && (
                 <div className="flex w-full flex-col gap-2 sm:flex-row">
-                  <Button variant="outline" className="flex-1" onClick={() => onAssignToMe(task.id)} disabled={isMutating}>
+                  <Button variant="outline" className="flex-1" onClick={handleAssignToMe} disabled={isMutating}>
                     Assign to me
                   </Button>
-                  <Button className="flex-1" onClick={() => onComplete(task.id)} disabled={isMutating}>
+                  <Button className="flex-1" onClick={handleCompleteTask} disabled={isMutating}>
                     Complete
                   </Button>
                 </div>
@@ -184,11 +202,15 @@ export function TaskDetailSheet({
                   <SelectValue placeholder="Select a user..." />
                 </SelectTrigger>
                 <SelectContent>
-                  {(assignableUsers ?? []).map((u) => (
-                    <SelectItem key={u.id} value={String(u.id)}>
-                      {u.fullName ?? u.username}
-                    </SelectItem>
-                  ))}
+                  {/* Excludes the current assignee — forwarding to the same person isn't a
+                      real reassignment. Only the current assignee, not the original owner. */}
+                  {(assignableUsers ?? [])
+                    .filter((u) => u.id !== task?.assignedStaffId)
+                    .map((u) => (
+                      <SelectItem key={u.id} value={String(u.id)}>
+                        {u.fullName ?? u.username}
+                      </SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
             </div>

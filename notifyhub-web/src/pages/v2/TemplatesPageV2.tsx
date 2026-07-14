@@ -24,6 +24,10 @@ import type { TemplateDto } from "@/types/templates";
 
 type Selection = number | "new" | null;
 
+// P9-01e: OffsetHours is no longer user-editable — this satisfies the backend's still-
+// required CreateTemplateRequest.OffsetHours field without a breaking migration.
+const LEGACY_OFFSET_HOURS_PLACEHOLDER = 24;
+
 export default function TemplatesPageV2() {
   const [activeFilter, setActiveFilter] = useState<"all" | "Active" | "Inactive">("all");
   const { data: templates, isLoading } = useTemplates(
@@ -85,7 +89,10 @@ export default function TemplatesPageV2() {
         name: values.name,
         body: values.body,
         triggerType: values.triggerType,
-        offsetHours: Number(values.offsetHours),
+        // OffsetHours is no longer a UI-editable field (P9-01e — dead once P9-08's
+        // Reminder SMS engine ships) but the backend column/request field is still
+        // required (avoids a breaking migration), so a fixed placeholder is sent.
+        offsetHours: LEGACY_OFFSET_HOURS_PLACEHOLDER,
       });
       if (!values.isActive) {
         await updateTemplate.mutateAsync({ id: created.id, isActive: false });
@@ -104,7 +111,6 @@ export default function TemplatesPageV2() {
         name: values.name,
         body: values.body,
         triggerType: values.triggerType,
-        offsetHours: Number(values.offsetHours),
         isActive: values.isActive,
       });
       toast.success("Template updated");
@@ -179,7 +185,6 @@ export default function TemplatesPageV2() {
                       </span>
                       <span className="flex items-center gap-1.5">
                         <StatusBadge {...trigger} size="xs" />
-                        <span className="text-2xs text-muted-foreground">offset {template.offsetHours}h</span>
                         {!template.isActive && (
                           <span className="rounded-full border border-dashed px-1.5 text-2xs text-muted-foreground">Inactive</span>
                         )}
@@ -226,7 +231,6 @@ export default function TemplatesPageV2() {
                 name: selectedTemplate.name,
                 body: selectedTemplate.body,
                 triggerType: selectedTemplate.triggerType,
-                offsetHours: String(selectedTemplate.offsetHours),
                 isActive: selectedTemplate.isActive,
               }}
               submitLabel="Save"
@@ -242,9 +246,6 @@ export default function TemplatesPageV2() {
                 <h2 className="text-lg font-semibold">{selectedTemplate.name}</h2>
                 <div className="mt-1 flex items-center gap-2">
                   <StatusBadge {...TRIGGER_TYPE_CONFIG[selectedTemplate.triggerType]} />
-                  <span className="text-xs text-muted-foreground">
-                    sends {selectedTemplate.offsetHours}h before the trigger
-                  </span>
                   {!selectedTemplate.isActive && (
                     <span className="rounded-full border border-dashed px-2 py-0.5 text-2xs text-muted-foreground">Inactive</span>
                   )}

@@ -28,7 +28,6 @@ export interface TemplateFormValues {
   name: string;
   body: string;
   triggerType: TemplateTriggerType;
-  offsetHours: string;
   isActive: boolean;
 }
 
@@ -36,7 +35,6 @@ export const EMPTY_TEMPLATE_FORM: TemplateFormValues = {
   name: "",
   body: "",
   triggerType: "AppointmentReminder",
-  offsetHours: "48",
   isActive: true,
 };
 
@@ -63,10 +61,6 @@ export function TemplateForm({
     event.preventDefault();
     if (!values.name.trim() || !values.body.trim()) {
       toast.error("Name and body are required");
-      return;
-    }
-    if (Number(values.offsetHours) <= 0) {
-      toast.error("Offset hours must be greater than 0");
       return;
     }
     onSubmit(values);
@@ -129,32 +123,20 @@ export function TemplateForm({
           <code className="font-mono">{"{{appointment_time}}"}</code> — the only fields resolved at send time.
         </p>
       </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div className="space-y-1.5">
-          <Label htmlFor="tpl-trigger">Trigger type</Label>
-          <Select value={values.triggerType} onValueChange={(v) => setValues({ ...values, triggerType: v as TemplateTriggerType })}>
-            <SelectTrigger id="tpl-trigger">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {TRIGGER_TYPES.map((t) => (
-                <SelectItem key={t} value={t}>
-                  {t}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="tpl-offset">Offset hours</Label>
-          <Input
-            id="tpl-offset"
-            type="number"
-            min={1}
-            value={values.offsetHours}
-            onChange={(e) => setValues({ ...values, offsetHours: e.target.value })}
-          />
-        </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="tpl-trigger">Trigger type</Label>
+        <Select value={values.triggerType} onValueChange={(v) => setValues({ ...values, triggerType: v as TemplateTriggerType })}>
+          <SelectTrigger id="tpl-trigger">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {TRIGGER_TYPES.map((t) => (
+              <SelectItem key={t} value={t}>
+                {t}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
       <label htmlFor="tpl-active" className="flex items-center gap-2 text-sm">
         <input

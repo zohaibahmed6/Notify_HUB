@@ -1,12 +1,11 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
-import { Menu, Search } from "lucide-react";
+import { Menu } from "lucide-react";
 
 import { useAuth } from "@/context/AuthContext";
 import { useUIVersion } from "@/context/UIVersionContext";
 import { useInboxHub } from "@/hooks/useInboxHub";
 import { Button } from "@/components/ui/button";
-import { CommandPalette } from "@/components/v2/command-palette";
 import { TaskNavWidget } from "@/components/v2/task-nav-widget";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
@@ -33,28 +32,12 @@ export default function AppShell() {
   // task board, and re-mounting the hub per-page would drop/reconnect needlessly.
   useInboxHub();
 
-  // Command palette (Cmd/Ctrl+K) is redesign-only — trigger, shortcut listener, and
-  // the palette itself all gated on `version` here rather than in a separate
-  // AppShellV2, per the redesign plan.
-  const [paletteOpen, setPaletteOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const isRedesign = version === "redesign";
 
   const visibleNavLinks = NAV_LINKS.filter(
     (link) => !(link.adminOnlyInRedesign && isRedesign && user?.role !== "Admin"),
   );
-
-  useEffect(() => {
-    if (!isRedesign) return;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        setPaletteOpen((open) => !open);
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isRedesign]);
 
   return (
     <div className="flex h-screen flex-col bg-background">
@@ -89,31 +72,6 @@ export default function AppShell() {
           </nav>
         </div>
         <div className="flex items-center gap-2 sm:gap-3">
-          {isRedesign && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setPaletteOpen(true)}
-              className="hidden gap-2 text-muted-foreground sm:inline-flex"
-            >
-              <Search className="size-4" />
-              Search...
-              <kbd className="ml-1 rounded border bg-muted px-1.5 py-0.5 text-2xs font-medium text-muted-foreground">
-                {"⌘"}K
-              </kbd>
-            </Button>
-          )}
-          {isRedesign && (
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={() => setPaletteOpen(true)}
-              className="text-muted-foreground sm:hidden"
-            >
-              <Search className="size-4" />
-              <span className="sr-only">Search</span>
-            </Button>
-          )}
           <TaskNavWidget />
           <span className="hidden text-sm text-muted-foreground md:inline">
             {user?.username} ({user?.role})
@@ -126,7 +84,6 @@ export default function AppShell() {
       <main className="min-h-0 flex-1 overflow-y-auto">
         <Outlet />
       </main>
-      {isRedesign && <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />}
       <Sheet open={navOpen} onOpenChange={setNavOpen}>
         <SheetContent side="left" className="flex w-3/4 max-w-xs flex-col gap-4">
           <SheetHeader>
