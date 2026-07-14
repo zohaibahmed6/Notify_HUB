@@ -5,6 +5,7 @@ import { useThreads } from "@/hooks/useThreads";
 import { useCreateTaskMutation } from "@/hooks/useThreads";
 import { errorMessage } from "@/lib/errorMessage";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { DateTimePicker } from "@/components/v2/date-time-picker";
@@ -28,6 +29,14 @@ export function NewTaskForm({ onDone }: { onDone: () => void }) {
   const [taskType, setTaskType] = useState<TaskType>("General");
   const [description, setDescription] = useState("");
 
+  // P9-11: creation-time only (matches the backend — next occurrence auto-spawns on
+  // completion via SpawnNextOccurrenceIfDue, no edit-after-creation path exists or is
+  // being added here).
+  const [isRecurring, setIsRecurring] = useState(false);
+  const [recurrenceIntervalDays, setRecurrenceIntervalDays] = useState("");
+  const [recurrenceEndDate, setRecurrenceEndDate] = useState("");
+  const [recurrenceMaxOccurrences, setRecurrenceMaxOccurrences] = useState("");
+
   const createTask = useCreateTaskMutation(threadId === "" ? -1 : threadId);
 
   const handleSubmit = async (event: FormEvent) => {
@@ -40,6 +49,10 @@ export function NewTaskForm({ onDone }: { onDone: () => void }) {
       toast.error("Pick a due date");
       return;
     }
+    if (isRecurring && !recurrenceIntervalDays) {
+      toast.error("Pick a recurrence interval");
+      return;
+    }
 
     try {
       await createTask.mutateAsync({
@@ -48,6 +61,10 @@ export function NewTaskForm({ onDone }: { onDone: () => void }) {
         taskType,
         // Left blank -> server auto-populates from the thread's most recent message.
         description: description || undefined,
+        isRecurring,
+        recurrenceIntervalDays: isRecurring ? Number(recurrenceIntervalDays) : undefined,
+        recurrenceEndDate: isRecurring && recurrenceEndDate ? new Date(recurrenceEndDate).toISOString() : undefined,
+        recurrenceMaxOccurrences: isRecurring && recurrenceMaxOccurrences ? Number(recurrenceMaxOccurrences) : undefined,
       });
       toast.success("Task created");
       onDone();
@@ -118,6 +135,52 @@ export function NewTaskForm({ onDone }: { onDone: () => void }) {
           value={description}
           onChange={(event) => setDescription(event.target.value)}
         />
+      </div>
+      <div className="space-y-2 rounded-md border p-3">
+        <label htmlFor="new-task-recurring" className="flex items-center gap-2 text-sm">
+          <input
+            id="new-task-recurring"
+            type="checkbox"
+            checked={isRecurring}
+            onChange={(event) => setIsRecurring(event.target.checked)}
+            className="size-4 rounded border-input"
+          />
+          Recurring
+        </label>
+        {isRecurring && (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="new-task-recurrence-interval">Interval (days)</Label>
+              <Input
+                id="new-task-recurrence-interval"
+                type="number"
+                min={1}
+                required
+                value={recurrenceIntervalDays}
+                onChange={(event) => setRecurrenceIntervalDays(event.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="new-task-recurrence-end">End date (optional)</Label>
+              <DateTimePicker
+                id="new-task-recurrence-end"
+                mode="date"
+                value={recurrenceEndDate}
+                onChange={setRecurrenceEndDate}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="new-task-recurrence-max">Max occurrences (optional)</Label>
+              <Input
+                id="new-task-recurrence-max"
+                type="number"
+                min={1}
+                value={recurrenceMaxOccurrences}
+                onChange={(event) => setRecurrenceMaxOccurrences(event.target.value)}
+              />
+            </div>
+          </div>
+        )}
       </div>
       <div className="flex justify-end gap-2">
         <Button type="button" variant="ghost" size="sm" onClick={onDone}>

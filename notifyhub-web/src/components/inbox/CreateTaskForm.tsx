@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { useCreateTaskMutation } from "@/hooks/useThreads";
 import { errorMessage } from "@/lib/errorMessage";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { DateTimePicker } from "@/components/v2/date-time-picker";
@@ -18,12 +19,24 @@ export function CreateTaskForm({ threadId, onDone }: { threadId: number; onDone:
   const [dueAt, setDueAt] = useState("");
   const [taskType, setTaskType] = useState<TaskType>("General");
   const [description, setDescription] = useState("");
+
+  // P9-11: creation-time only, matches the backend (next occurrence auto-spawns on
+  // completion, no edit-after-creation path).
+  const [isRecurring, setIsRecurring] = useState(false);
+  const [recurrenceIntervalDays, setRecurrenceIntervalDays] = useState("");
+  const [recurrenceEndDate, setRecurrenceEndDate] = useState("");
+  const [recurrenceMaxOccurrences, setRecurrenceMaxOccurrences] = useState("");
+
   const createTask = useCreateTaskMutation(threadId);
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     if (!dueAt) {
       toast.error("Pick a due date");
+      return;
+    }
+    if (isRecurring && !recurrenceIntervalDays) {
+      toast.error("Pick a recurrence interval");
       return;
     }
 
@@ -33,6 +46,10 @@ export function CreateTaskForm({ threadId, onDone }: { threadId: number; onDone:
         dueAt: new Date(dueAt).toISOString(),
         taskType,
         description: description || undefined,
+        isRecurring,
+        recurrenceIntervalDays: isRecurring ? Number(recurrenceIntervalDays) : undefined,
+        recurrenceEndDate: isRecurring && recurrenceEndDate ? new Date(recurrenceEndDate).toISOString() : undefined,
+        recurrenceMaxOccurrences: isRecurring && recurrenceMaxOccurrences ? Number(recurrenceMaxOccurrences) : undefined,
       });
       toast.success("Task created");
       onDone();
@@ -82,6 +99,47 @@ export function CreateTaskForm({ threadId, onDone }: { threadId: number; onDone:
       <div className="space-y-1.5">
         <Label htmlFor="task-description">Description (optional — defaults to this thread's last message)</Label>
         <Textarea id="task-description" rows={2} value={description} onChange={(event) => setDescription(event.target.value)} />
+      </div>
+      <div className="space-y-2 rounded-md border p-3">
+        <label htmlFor="task-recurring" className="flex items-center gap-2 text-sm">
+          <input
+            id="task-recurring"
+            type="checkbox"
+            checked={isRecurring}
+            onChange={(event) => setIsRecurring(event.target.checked)}
+            className="size-4 rounded border-input"
+          />
+          Recurring
+        </label>
+        {isRecurring && (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="task-recurrence-interval">Interval (days)</Label>
+              <Input
+                id="task-recurrence-interval"
+                type="number"
+                min={1}
+                required
+                value={recurrenceIntervalDays}
+                onChange={(event) => setRecurrenceIntervalDays(event.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="task-recurrence-end">End date (optional)</Label>
+              <DateTimePicker id="task-recurrence-end" mode="date" value={recurrenceEndDate} onChange={setRecurrenceEndDate} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="task-recurrence-max">Max occurrences (optional)</Label>
+              <Input
+                id="task-recurrence-max"
+                type="number"
+                min={1}
+                value={recurrenceMaxOccurrences}
+                onChange={(event) => setRecurrenceMaxOccurrences(event.target.value)}
+              />
+            </div>
+          </div>
+        )}
       </div>
       <div className="flex justify-end gap-2">
         <Button type="button" variant="ghost" size="sm" onClick={onDone}>
