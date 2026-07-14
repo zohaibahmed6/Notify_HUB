@@ -52,6 +52,62 @@ public class EscalationJobTests(CustomWebApplicationFactory factory) : IClassFix
         Assert.Equal(0, escalationAuditCount);
     }
 
+    /// P9-12: auto-reverts OnLeave -> Active once LeaveTo passes — piggybacks on this same
+    /// job/poll loop rather than a new worker process.
+    [Fact]
+    public async Task RevertExpiredLeaveAsync_RevertsUser_WhenLeaveToHasPassed()
+    {
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
+
+        var user = new User
+        {
+            Username = "leave-expired-3001",
+            PasswordHash = "unused",
+            Role = UserRole.Staff,
+            Status = UserStatus.OnLeave,
+            LeaveFrom = DateTime.UtcNow.AddDays(-10),
+            LeaveTo = DateTime.UtcNow.AddDays(-1),
+        };
+        db.Users.Add(user);
+        await db.SaveChangesAsync();
+
+        var job = new EscalationJob(db, NullLogger<EscalationJob>.Instance);
+        var count = await job.RevertExpiredLeaveAsync(CancellationToken.None);
+
+        Assert.True(count >= 1);
+        var updated = await db.Users.SingleAsync(u => u.Id == user.Id);
+        Assert.Equal(UserStatus.Active, updated.Status);
+
+        var audit = await db.AuditLogs.SingleAsync(a => a.EntityType == "User" && a.EntityId == user.Id && a.Action == "status-change");
+        Assert.Equal("system", audit.Actor);
+    }
+
+    [Fact]
+    public async Task RevertExpiredLeaveAsync_DoesNotRevertUser_WhenLeaveToIsStillInTheFuture()
+    {
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
+
+        var user = new User
+        {
+            Username = "leave-active-3002",
+            PasswordHash = "unused",
+            Role = UserRole.Staff,
+            Status = UserStatus.OnLeave,
+            LeaveFrom = DateTime.UtcNow.AddDays(-1),
+            LeaveTo = DateTime.UtcNow.AddDays(10),
+        };
+        db.Users.Add(user);
+        await db.SaveChangesAsync();
+
+        var job = new EscalationJob(db, NullLogger<EscalationJob>.Instance);
+        await job.RevertExpiredLeaveAsync(CancellationToken.None);
+
+        var updated = await db.Users.SingleAsync(u => u.Id == user.Id);
+        Assert.Equal(UserStatus.OnLeave, updated.Status);
+    }
+
     private static async Task<(User Staff, User Admin)> SeedStaffAndAdminAsync(NotifyHubDbContext db, string phoneSuffix)
     {
         var staff = new User { Username = $"escalation-staff-{phoneSuffix}", PasswordHash = "unused", Role = UserRole.Staff };

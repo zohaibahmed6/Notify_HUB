@@ -129,8 +129,25 @@ public class UsersController(NotifyHubDbContext db, IPasswordHasher<User> passwo
                 title: $"Invalid status '{request.Status}'. Valid values: {string.Join(", ", Enum.GetNames<UserStatus>())}.");
         }
 
+        // P9-12: both required together when marking OnLeave.
+        if (newStatus == UserStatus.OnLeave && (request.LeaveFrom is null || request.LeaveTo is null))
+        {
+            return Problem(statusCode: StatusCodes.Status400BadRequest, title: "LeaveFrom and LeaveTo are both required when Status is OnLeave.");
+        }
+
+        if (request.LeaveFrom is not null && request.LeaveTo is not null && request.LeaveFrom > request.LeaveTo)
+        {
+            return Problem(statusCode: StatusCodes.Status400BadRequest, title: "LeaveFrom must not be after LeaveTo.");
+        }
+
         var previousStatus = user.Status;
         user.Status = newStatus;
+
+        if (newStatus == UserStatus.OnLeave)
+        {
+            user.LeaveFrom = request.LeaveFrom;
+            user.LeaveTo = request.LeaveTo;
+        }
 
         var forwardedTaskIds = new List<long>();
         long? forwardedToAdminId = null;
@@ -174,5 +191,7 @@ public class UsersController(NotifyHubDbContext db, IPasswordHasher<User> passwo
         FullName = u.FullName,
         Role = u.Role.ToString(),
         Status = u.Status.ToString(),
+        LeaveFrom = u.LeaveFrom,
+        LeaveTo = u.LeaveTo,
     };
 }

@@ -13,5 +13,13 @@ public class User
     public string? FullName { get; set; }
     public UserStatus Status { get; set; } = UserStatus.Active;
 
+    /// P9-12: both required together when Status is set to OnLeave (validated in
+    /// UsersController.UpdateStatus). Not cleared on transitioning away from OnLeave —
+    /// left as a historical record, same "permanently retained" philosophy as audit
+    /// history elsewhere — and overwritten with fresh values the next time this user
+    /// goes OnLeave again.
+    public DateTime? LeaveFrom { get; set; }
+    public DateTime? LeaveTo { get; set; }
+
     public ICollection<RefreshToken> RefreshTokens { get; set; } = new List<RefreshToken>();
 }

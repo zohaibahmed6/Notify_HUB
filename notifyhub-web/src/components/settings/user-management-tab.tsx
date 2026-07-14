@@ -10,8 +10,10 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DateTimePicker } from "@/components/v2/date-time-picker";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { UserRole, UserStatus } from "@/types/users";
+import type { UserDto, UserRole, UserStatus } from "@/types/users";
 
 const ROLES: UserRole[] = ["Staff", "Admin"];
 const STATUSES: UserStatus[] = ["Active", "Inactive", "OnLeave"];
@@ -27,6 +29,13 @@ export function UserManagementTab() {
   const [fullName, setFullName] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<UserRole>("Staff");
+
+  // P9-12: LeaveFrom/LeaveTo required together when marking a user OnLeave — collected
+  // via a small dialog rather than inline in the status Select, since a bare status
+  // change to OnLeave isn't itself enough information for the server to accept.
+  const [onLeaveTarget, setOnLeaveTarget] = useState<UserDto | null>(null);
+  const [leaveFrom, setLeaveFrom] = useState("");
+  const [leaveTo, setLeaveTo] = useState("");
 
   const handleCreate = async (event: FormEvent) => {
     event.preventDefault();
@@ -47,10 +56,36 @@ export function UserManagementTab() {
     }
   };
 
-  const handleStatusChange = async (id: number, status: UserStatus) => {
+  const handleStatusChange = async (user: UserDto, status: UserStatus) => {
+    if (status === "OnLeave") {
+      setOnLeaveTarget(user);
+      setLeaveFrom(user.leaveFrom ? user.leaveFrom.slice(0, 10) : "");
+      setLeaveTo(user.leaveTo ? user.leaveTo.slice(0, 10) : "");
+      return;
+    }
     try {
-      await updateStatus.mutateAsync({ id, status });
+      await updateStatus.mutateAsync({ id: user.id, status });
       toast.success(`User marked ${status}`);
+    } catch (error) {
+      toast.error(errorMessage(error, "Status update failed"));
+    }
+  };
+
+  const handleConfirmOnLeave = async () => {
+    if (!onLeaveTarget) return;
+    if (!leaveFrom || !leaveTo) {
+      toast.error("Both From and To dates are required");
+      return;
+    }
+    try {
+      await updateStatus.mutateAsync({
+        id: onLeaveTarget.id,
+        status: "OnLeave",
+        leaveFrom: new Date(leaveFrom).toISOString(),
+        leaveTo: new Date(leaveTo).toISOString(),
+      });
+      toast.success("User marked On Leave");
+      setOnLeaveTarget(null);
     } catch (error) {
       toast.error(errorMessage(error, "Status update failed"));
     }
@@ -89,18 +124,25 @@ export function UserManagementTab() {
                     <TableCell className="text-muted-foreground">{u.fullName ?? "—"}</TableCell>
                     <TableCell>{u.role}</TableCell>
                     <TableCell>
-                      <Select value={u.status} onValueChange={(v) => handleStatusChange(u.id, v as UserStatus)}>
-                        <SelectTrigger className="h-8 w-32 text-xs">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {STATUSES.map((s) => (
-                            <SelectItem key={s} value={s}>
-                              {s}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <div className="space-y-1">
+                        <Select value={u.status} onValueChange={(v) => handleStatusChange(u, v as UserStatus)}>
+                          <SelectTrigger className="h-8 w-32 text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {STATUSES.map((s) => (
+                              <SelectItem key={s} value={s}>
+                                {s}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {u.status === "OnLeave" && u.leaveFrom && u.leaveTo && (
+                          <div className="text-2xs text-muted-foreground">
+                            {new Date(u.leaveFrom).toLocaleDateString()} – {new Date(u.leaveTo).toLocaleDateString()}
+                          </div>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -152,6 +194,33 @@ export function UserManagementTab() {
           </form>
         </CardContent>
       </Card>
+
+      <Dialog open={onLeaveTarget !== null} onOpenChange={(open) => !open && setOnLeaveTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Mark {onLeaveTarget?.username} On Leave</DialogTitle>
+            <DialogDescription>Both dates are required — auto-reverts to Active once To passes.</DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="leave-from">From</Label>
+              <DateTimePicker id="leave-from" mode="date" value={leaveFrom} onChange={setLeaveFrom} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="leave-to">To</Label>
+              <DateTimePicker id="leave-to" mode="date" value={leaveTo} onChange={setLeaveTo} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setOnLeaveTarget(null)}>
+              Cancel
+            </Button>
+            <Button onClick={handleConfirmOnLeave} disabled={updateStatus.isPending}>
+              Confirm
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

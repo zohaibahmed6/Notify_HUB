@@ -7,6 +7,8 @@ export interface UserDto {
   fullName: string | null;
   role: UserRole;
   status: UserStatus;
+  leaveFrom: string | null;
+  leaveTo: string | null;
 }
 
 export interface CreateUserRequest {
@@ -18,4 +20,6 @@ export interface CreateUserRequest {
 
 export interface UpdateUserStatusRequest {
   status: UserStatus;
+  leaveFrom?: string;
+  leaveTo?: string;
 }

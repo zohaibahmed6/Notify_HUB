@@ -54,4 +54,31 @@ public class EscalationJob(NotifyHubDbContext db, ILogger<EscalationJob> logger)
 
         return overdue.Count;
     }
+
+    /// P9-12: auto-reverts OnLeave -> Active once LeaveTo passes. Piggybacks on this
+    /// existing periodic job/poll rather than a new worker process, per the plan's own
+    /// instruction — unrelated to task escalation, just co-located for the free poll loop.
+    public async Task<int> RevertExpiredLeaveAsync(CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+
+        var expired = await db.Users
+            .Where(u => u.Status == UserStatus.OnLeave && u.LeaveTo != null && u.LeaveTo < now)
+            .ToListAsync(ct);
+
+        if (expired.Count == 0)
+            return 0;
+
+        foreach (var user in expired)
+        {
+            user.Status = UserStatus.Active;
+            AuditLogger.Add(db, actor: "system", action: "status-change", entityType: "User", entityId: user.Id,
+                detail: $"auto-reverted OnLeave -> Active (LeaveTo {user.LeaveTo:o} passed)");
+        }
+
+        await db.SaveChangesAsync(ct);
+        logger.LogInformation("Escalation job: reverted {Count} On-Leave user(s) to Active", expired.Count);
+
+        return expired.Count;
+    }
 }

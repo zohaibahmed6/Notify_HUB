@@ -24,6 +24,7 @@ public class EscalationWorker(
             try
             {
                 await job.EscalateOverdueTasksAsync(stoppingToken);
+                await job.RevertExpiredLeaveAsync(stoppingToken); // P9-12: piggybacks on this poll loop
                 await Task.Delay(pollInterval, stoppingToken);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)

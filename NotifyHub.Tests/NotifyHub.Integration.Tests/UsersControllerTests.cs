@@ -131,6 +131,42 @@ public class UsersControllerTests(CustomWebApplicationFactory factory) : IClassF
         Assert.Equal("system", forwardAudit.Actor);
     }
 
+    /// P9-12: LeaveFrom/LeaveTo required together when marking OnLeave.
+    [Fact]
+    public async Task UpdateStatus_ToOnLeave_RequiresBothLeaveDates()
+    {
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
+        var user = new User { Username = "leave-validation-9004", PasswordHash = "unused", Role = UserRole.Staff, Status = UserStatus.Active };
+        db.Users.Add(user);
+        await db.SaveChangesAsync();
+
+        var (client, _) = await _client.AsAdminAsync();
+
+        var missingBoth = await client.PatchAsJsonAsync($"/api/users/{user.Id}/status", new { status = "OnLeave" });
+        Assert.Equal(HttpStatusCode.BadRequest, missingBoth.StatusCode);
+
+        var missingTo = await client.PatchAsJsonAsync($"/api/users/{user.Id}/status", new { status = "OnLeave", leaveFrom = DateTime.UtcNow });
+        Assert.Equal(HttpStatusCode.BadRequest, missingTo.StatusCode);
+
+        var fromAfterTo = await client.PatchAsJsonAsync($"/api/users/{user.Id}/status",
+            new { status = "OnLeave", leaveFrom = DateTime.UtcNow.AddDays(5), leaveTo = DateTime.UtcNow });
+        Assert.Equal(HttpStatusCode.BadRequest, fromAfterTo.StatusCode);
+
+        var valid = await client.PatchAsJsonAsync($"/api/users/{user.Id}/status",
+            new { status = "OnLeave", leaveFrom = DateTime.UtcNow, leaveTo = DateTime.UtcNow.AddDays(5) });
+        Assert.Equal(HttpStatusCode.OK, valid.StatusCode);
+
+        // Fresh scope — the `db` above still has `user` tracked from its own Add/SaveChanges
+        // call and would return that stale in-memory copy instead of re-querying.
+        using var verifyScope = factory.Services.CreateScope();
+        var verifyDb = verifyScope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
+        var updated = await verifyDb.Users.SingleAsync(u => u.Id == user.Id);
+        Assert.Equal(UserStatus.OnLeave, updated.Status);
+        Assert.NotNull(updated.LeaveFrom);
+        Assert.NotNull(updated.LeaveTo);
+    }
+
     private class UserDtoShape
     {
         public long Id { get; set; }
@@ -138,5 +174,7 @@ public class UsersControllerTests(CustomWebApplicationFactory factory) : IClassF
         public string? FullName { get; set; }
         public string Role { get; set; } = default!;
         public string Status { get; set; } = default!;
+        public DateTime? LeaveFrom { get; set; }
+        public DateTime? LeaveTo { get; set; }
     }
 }

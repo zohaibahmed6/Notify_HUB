@@ -7,4 +7,6 @@ public class UserDto
     public string? FullName { get; set; }
     public string Role { get; set; } = default!;
     public string Status { get; set; } = default!;
+    public DateTime? LeaveFrom { get; set; }
+    public DateTime? LeaveTo { get; set; }
 }
