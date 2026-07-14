@@ -10,6 +10,7 @@ import TemplatesPage from "@/pages/TemplatesPage";
 import AuditLogPage from "@/pages/AuditLogPage";
 import SettingsPage from "@/pages/SettingsPage";
 import DashboardPage from "@/pages/DashboardPage";
+import SmsHistoryPage from "@/pages/SmsHistoryPage";
 import LoginPageV2 from "@/pages/v2/LoginPageV2";
 import InboxPageV2 from "@/pages/v2/InboxPageV2";
 import TaskBoardPageV2 from "@/pages/v2/TaskBoardPageV2";
@@ -32,6 +33,9 @@ export default function App() {
           <Route path="/tasks" element={<VersionedRoute Legacy={TaskBoardPage} Redesign={TaskBoardPageV2} />} />
           <Route path="/templates" element={<VersionedRoute Legacy={TemplatesPage} Redesign={TemplatesPageV2} />} />
           <Route path="/audit" element={<VersionedRoute Legacy={AuditLogPage} Redesign={AuditLogPageV2} />} />
+          {/* Not versioned — entirely new screen, same "no legacy variant" precedent as
+              Dashboard/Settings (P9-06). */}
+          <Route path="/sms-history" element={<SmsHistoryPage />} />
           {/* Not versioned — one settings screen serves both UI modes. */}
           <Route path="/settings" element={<SettingsPage />} />
         </Route>

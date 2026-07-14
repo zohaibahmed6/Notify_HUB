@@ -19,6 +19,8 @@ public class OutboundMessageConfiguration : IEntityTypeConfiguration<OutboundMes
 
         builder.Property(m => m.TriggerReference).HasMaxLength(200);
 
+        builder.Property(m => m.SentByUsername).HasMaxLength(100);
+
         builder.Property(m => m.RenderedBody).HasMaxLength(1000);
 
         builder.Property(m => m.CreatedAt).IsRequired();

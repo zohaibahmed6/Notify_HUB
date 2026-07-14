@@ -21,6 +21,10 @@ const NAV_LINKS = [
   // it to Staff scoped to their own actions via /api/audit/mine) — a deliberate product
   // decision, guarded again in AuditLogPageV2 itself for direct-URL access.
   { to: "/audit", label: "Audit log", adminOnlyInRedesign: true },
+  // Unconditionally Admin-only (not just in redesign mode, unlike Audit log above) —
+  // the server itself is Admin-only (no Staff-scoped "mine" variant exists for SMS
+  // History), so hiding the link from Staff in every UI mode matches the API (P9-06).
+  { to: "/sms-history", label: "SMS History", adminOnly: true },
   { to: "/settings", label: "Settings" },
 ];
 
@@ -36,7 +40,9 @@ export default function AppShell() {
   const isRedesign = version === "redesign";
 
   const visibleNavLinks = NAV_LINKS.filter(
-    (link) => !(link.adminOnlyInRedesign && isRedesign && user?.role !== "Admin"),
+    (link) =>
+      !(link.adminOnlyInRedesign && isRedesign && user?.role !== "Admin") &&
+      !("adminOnly" in link && link.adminOnly && user?.role !== "Admin"),
   );
 
   return (

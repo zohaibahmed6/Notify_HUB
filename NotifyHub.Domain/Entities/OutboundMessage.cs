@@ -21,6 +21,12 @@ public class OutboundMessage
 
     public SenderType SenderType { get; set; }
 
+    /// P9-06: denormalized snapshot of the staff username who sent this (SenderType.Staff
+    /// only) — set at creation time (Reply/CreateConversation), same "plain string, not a
+    /// live FK lookup" convention as AuditLog.Actor. Null for SenderType.System sends; the
+    /// SMS History report shows "System" in that case.
+    public string? SentByUsername { get; set; }
+
     /// Business event string (e.g. "appointment:{id}:created"); null for ad-hoc staff replies. See BR-009.
     public string? TriggerReference { get; set; }
 

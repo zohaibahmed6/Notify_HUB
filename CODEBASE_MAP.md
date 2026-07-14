@@ -53,6 +53,19 @@ manual per-entity registration) — every `IEntityTypeConfiguration<T>` in
 | `InboundMessage` → `inbound_messages` | `InboundMessage.cs:4` | `InboundMessageConfiguration.cs:7` | Id, ThreadId, Body (≤1000), ReceivedAt | FK `Thread`, cascade delete (:18-21); composite index `(ThreadId, ReceivedAt)` (:24) |
 | `TaskItem` → `tasks` | `TaskItem.cs:7` | `TaskItemConfiguration.cs:7` | Id, ThreadId, Priority, DueAt, Status, AssignedStaffId?, OriginalOwnerId, IsRecurring, RecurrenceIntervalDays?, RecurrenceEndDate?, RecurrenceMaxOccurrences?, OccurrenceCount, **Description? (≤1000), TaskType, IsActive** (added — see below) | FK `Thread` cascade (:29-32); FK `AssignedStaff`/`OriginalOwner` `Restrict` (:34-42); composite index `(Status, DueAt)` (:45, drives escalation job); index `AssignedStaffId` (:46) |
 
+**Schema addition (P9-06)**: `OutboundMessage.SentByUsername` (string?, ≤100 chars) —
+denormalized snapshot of the staff username who sent a message (`SenderType.Staff` only,
+set at creation time in `ThreadsController.Reply`/`CreateConversation`), same "plain string,
+not a live FK lookup" convention as `AuditLog.Actor`. Null for `SenderType.System` sends;
+the SMS History report's `SenderUsername` DTO field falls back to `"System"` via
+`m.SentByUsername ?? "System"` (also used for the `username` filter, so filtering by
+`username=System` correctly matches system-dispatched rows). Migration
+`20260714105800_AddSentByUsername` — nullable column, no bad-default risk (unlike increment
+1's `AddTaskAndUserFields` migration). Pre-existing rows (everything sent before this
+migration) have `SentByUsername = null` and correctly display as `"System"` even if they
+were actually staff-sent — a real, permanent gap for historical data, not a bug; there was
+no prior column to backfill from.
+
 **Schema additions (this feature set, increment 1)**: `TaskItem.Description` (string?, ≤1000 chars,
 auto-populated from the thread's last message at creation — see §3's `ThreadsController.CreateTask`
 once increment 5 lands), `TaskItem.TaskType` (new enum, see below, required, default `General`),
@@ -173,6 +186,11 @@ projection, which stays directly in the `Select()`.
 | Verb + route | Auth | Notes |
 |---|---|---|
 | GET `api/dashboard/summary` | default authenticated | post-login landing page summary — pure read-side aggregation, no new business logic. `MyTasks` (`TaskCountsDto`: Open/InProgress/Escalated/Overdue) always scoped to the caller; `OrgTasks` (same shape, org-wide) is `null` for non-Admins; `UnreadThreadCount` = count of threads with `UnreadCount > 0`; `RecentActivity` = last 10 `AuditLogDto` rows, scoped to the caller's own actions for Staff (mirrors `AuditController`'s Admin/Staff split) |
+
+### `MessagesController` — `NotifyHub.Api/Controllers/MessagesController.cs` (`[Route("api/messages")]`, added P9-06)
+| Verb + route | Auth | Notes |
+|---|---|---|
+| GET `api/messages` | `[Authorize(Roles="Admin")]` | SMS History report — filters `patientName`/`phone` (substring, via `Patient` nav-property join, no `Include` needed), `username` (substring against `SentByUsername ?? "System"`), `text` (substring against `RenderedBody`), `status` (`MessageStatus` enum), `from`/`to` (range on `CreatedAt`); paginated (`PagedResult<T>.Clamp`, same pattern as every other list endpoint). Returns `SmsHistoryPagedResult` — `TotalCount` doubles as the report's "Total SMS" summary figure (already filter-scoped); `TotalPduCount` is hardcoded `0` and every row's `PduCount`/`ExpiryTime` are hardcoded `null` until P9-09/P9-07 add the underlying columns — this is the P9-06 "build the skeleton, wire dependent columns last" increment. `ScheduledTime` (`OutboundMessage.ScheduledAt`) is wired for real already (existed since increment 10). |
 
 `SettingsService` (`NotifyHub.Infrastructure/Settings/SettingsService.cs`) — typed accessors
 (`GetQuietHoursAsync`, `GetRateLimitAsync`, `IsQuietHoursNowAsync`) over the generic
@@ -689,6 +707,33 @@ regression. Out of scope to fix here (not part of `STEP9_PLAN.md`); flagged in S
 
 ---
 
+## 6h. SMS History report (P9-06)
+
+- **`pages/SmsHistoryPage.tsx`** — unversioned, no legacy variant (entirely new screen,
+  same precedent as `DashboardPage`/`SettingsPage`). Admin-only, guarded client-side
+  (`EmptyState` "Admins only" for non-Admins, same pattern as `AuditLogPageV2`) in addition
+  to the server's `[Authorize(Roles="Admin")]`. Filters (patient/sender/phone/text/status/
+  date range) + pagination + a two-tile summary row (Total SMS / Total PDU, both sourced
+  directly from the response — no client-side aggregation). Responsive per P9-00's pattern:
+  `Table` on `md+`, stacked cards below. `Expiry`/`PDU` columns render `"—"` until P9-07/P9-09
+  populate the underlying data.
+- **`hooks/useMessages.ts`** — `useSmsHistory(filters)` → `GET /api/messages`, same
+  `buildQuery`/`useQuery` shape as `useAudit.ts`.
+- **`types/messages.ts`** — `SmsHistoryDto`/`SmsHistoryPagedResult`; `MessageStatus` type
+  already includes `"Expired"` even though the backend enum doesn't have that value until
+  P9-07 (harmless to predeclare, avoids touching this file again for that increment).
+- **Route** `/sms-history` in `App.tsx`, unversioned like `/settings`/`/`.
+- **Nav link**: `AppShell.tsx`'s `NAV_LINKS` gained a new `adminOnly` flag (distinct from
+  Audit log's existing `adminOnlyInRedesign` — SMS History is Admin-only in **every** UI
+  mode since the server has no Staff-scoped variant at all, unlike Audit log's `/api/audit/mine`).
+- Verified live against the real Docker/MySQL stack: staff gets 403, Admin gets 200 with
+  real data; sent a real reply as staff and confirmed it shows up with `senderUsername:
+  "staff"` (not "System") and that the `username=staff` filter matches it; pre-existing
+  rows from before this migration correctly show `"System"` (no prior column to backfill
+  sender identity from — a permanent gap for historical data, not a bug).
+
+---
+
 ## 7. Test structure
 
 ### Domain (`NotifyHub.Tests/NotifyHub.Domain.Tests/`) — no DB
@@ -698,7 +743,7 @@ Run: `dotnet test NotifyHub.Tests/NotifyHub.Domain.Tests`
 ### Integration (`NotifyHub.Tests/NotifyHub.Integration.Tests/`)
 | Test file | Factory |
 |---|---|
-| `AuthEndpointTests.cs`, `EscalationJobTests.cs`, `InboundWebhookTests.cs`, `MessageDispatcherOptOutTests.cs`, `TasksControllerTests.cs`, `ThreadsControllerTests.cs`, `ReminderSchedulerTests.cs`, `AuditControllerTests.cs`, `TemplatesControllerTests.cs`, `UsersControllerTests.cs` (added increment 2 — create/assignable-filtering/auto-forward-on-status-change), `ActiveUserRequiredFilterTests.cs` (added increment 3 — mutating-request 403 for Inactive users, GET still works, login still works even after the JWT was issued while Active), `BookmarksControllerTests.cs` (added increment 8 — CRUD + role checks), `SettingsControllerTests.cs` (added increment 10 — get/update/role-check/system-info), scheduled-send/rate-limit tests added to `ThreadsControllerTests.cs` and a quiet-hours-skips-the-batch test added to `MessageDispatcherOptOutTests.cs` (both increment 10), `DashboardControllerTests.cs` (added increment 12 — own-vs-org task counts, unread-thread count), `PreviewTemplate_*` tests added to `ThreadsControllerTests.cs` (P9-04 — dummy-appointment-time fallback + real-upcoming-appointment resolution), `Update_Body_ClearsRenderedBody_OnQueuedMessagesLinkedToTemplate` added to `TemplatesControllerTests.cs` (P9-05 — also proves a non-`Queued` message's `RenderedBody` is left untouched) | `CustomWebApplicationFactory` (EF Core InMemory) |
+| `AuthEndpointTests.cs`, `EscalationJobTests.cs`, `InboundWebhookTests.cs`, `MessageDispatcherOptOutTests.cs`, `TasksControllerTests.cs`, `ThreadsControllerTests.cs`, `ReminderSchedulerTests.cs`, `AuditControllerTests.cs`, `TemplatesControllerTests.cs`, `UsersControllerTests.cs` (added increment 2 — create/assignable-filtering/auto-forward-on-status-change), `ActiveUserRequiredFilterTests.cs` (added increment 3 — mutating-request 403 for Inactive users, GET still works, login still works even after the JWT was issued while Active), `BookmarksControllerTests.cs` (added increment 8 — CRUD + role checks), `SettingsControllerTests.cs` (added increment 10 — get/update/role-check/system-info), scheduled-send/rate-limit tests added to `ThreadsControllerTests.cs` and a quiet-hours-skips-the-batch test added to `MessageDispatcherOptOutTests.cs` (both increment 10), `DashboardControllerTests.cs` (added increment 12 — own-vs-org task counts, unread-thread count), `PreviewTemplate_*` tests added to `ThreadsControllerTests.cs` (P9-04 — dummy-appointment-time fallback + real-upcoming-appointment resolution), `Update_Body_ClearsRenderedBody_OnQueuedMessagesLinkedToTemplate` added to `TemplatesControllerTests.cs` (P9-05 — also proves a non-`Queued` message's `RenderedBody` is left untouched), `MessagesControllerTests.cs` (P9-06 — 403 for Staff, `"System"` sender fallback, patient/sender/status/text filters) | `CustomWebApplicationFactory` (EF Core InMemory) |
 | `OutboundPipelineTests.cs` | `ReliableGatewayWebApplicationFactory` (happy path) / `FailingGatewayWebApplicationFactory` (retry) — both subclass `CustomWebApplicationFactory` |
 | `InboundWebhookThreadRaceMySqlTests.cs` | `MySqlWebApplicationFactory` — real MySQL, `[Trait("Category","MySql")]`, exercises `FindOrCreateThreadAsync`'s race guard under genuine concurrent connections |
 | `PerformanceSeedStepTests.cs` | **No factory** — deliberately builds its own isolated `NotifyHubDbContext` (`UseInMemoryDatabase` with a fresh GUID name) instead of using `CustomWebApplicationFactory`, since that factory's automatic startup seeding (with `PerformanceSeedStep` registered as a real `IDbSeedStep`) would trip this step's own idempotency marker before the test calls `RunAsync` explicitly |
