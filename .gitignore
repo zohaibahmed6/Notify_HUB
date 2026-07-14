@@ -22,6 +22,12 @@ notifyhub-web/.vite/
 # Test/coverage output
 TestResults/
 coverage/
+# `coverage/` above inadvertently matched docs/coverage/ too, silently untracking the
+# committed FR-013 doc (DOMAIN_COVERAGE.md) — re-include it explicitly. The generated
+# report/raw dirs (coverage-report/, coverage-raw/) stay ignored below.
+!docs/coverage/
+coverage-report/
+coverage-raw/
 **/coverage.cobertura.xml
 notifyhub-web/test-results/
 notifyhub-web/playwright-report/

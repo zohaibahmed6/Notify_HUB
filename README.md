@@ -15,7 +15,7 @@ three architecture decisions that needed rejected-alternatives writeups.
 ```
 NotifyHub.sln
 ├── NotifyHub.Api/            REST endpoints, SignalR hub, Swagger, auth
-├── NotifyHub.Worker/         BackgroundServices: dispatcher, reminder scheduler, escalation job
+├── NotifyHub.Worker/         BackgroundServices: dispatcher, escalation job (the old appointment-polling reminder scheduler was retired in Step 9 — reminders are now event-based, see CODEBASE_MAP.md §4b)
 ├── NotifyHub.Domain/         Entities, business-rule logic (no EF/HTTP deps)
 ├── NotifyHub.Infrastructure/ EF Core, MySQL, mock SMS gateway, seed data
 ├── NotifyHub.Tests/          xUnit: Domain.Tests, Integration.Tests
@@ -43,18 +43,20 @@ stack doesn't duplicate anything.
 ## Screens
 
 Dashboard (post-login landing page: task summary, unread threads, recent activity), Shared inbox
-(thread list + conversation panel with template-insert/schedule-send composer, real-time via
-SignalR), Task board (type/description/priority/status/active, filters, forwarding, escalation),
-Templates & reminder rules (create/edit, bookmarks, Active/Inactive), Audit log (Admin sees all
-actors, Staff sees only their own actions), Settings (General/SMS/Task/Template/Notification/User
-Management/System tabs — Quiet Hours, per-patient rate limiting, and user Active/Inactive/OnLeave
-management all live here). See `PROJECT_CONTEXT.md` §6b for the original spec per screen, and
-`STATUS.md`'s Step 8 checklist for everything added on top of it.
+(thread list + conversation panel with template-insert/schedule-send/Reminder-SMS composer,
+real-time via SignalR), Task board (type/description/priority/status/active, filters, forwarding,
+recurrence, escalation), Templates (create/edit, bookmarks, Active/Inactive), SMS History
+(Admin-only report: sender/status/scheduled/expiry/PDU-count per message, filterable), Audit log
+(Admin sees all actors, Staff sees only their own actions), Settings
+(General/SMS/Task/Template/Notification/User Management/System tabs — Quiet Hours, per-patient
+rate limiting, Reminder SMS defaults, task forwarding rules, and user Active/Inactive/OnLeave
+management with leave dates all live here). See `PROJECT_CONTEXT.md` §6b for the original spec
+per screen, and `STATUS.md`'s Step 8/Step 9 checklists for everything added on top of it.
 
 ## Tests
 
 ```
-dotnet test NotifyHub.sln --filter "Category!=MySql"   # fast suite: 160 tests, InMemory EF Core
+dotnet test NotifyHub.sln --filter "Category!=MySql"   # fast suite: 190 tests (86 Domain + 104 Integration), InMemory EF Core
 dotnet test NotifyHub.sln --filter "Category=MySql"     # real-MySQL race test (needs docker compose up -d mysql)
 dotnet test NotifyHub.sln                                # everything CI runs
 ```
@@ -63,7 +65,10 @@ dotnet test NotifyHub.sln                                # everything CI runs
 70% requirement. Methodology, per-class breakdown, and how to regenerate the number:
 [`docs/coverage/DOMAIN_COVERAGE.md`](docs/coverage/DOMAIN_COVERAGE.md).
 
-End-to-end (Playwright, 11 tests): requires the full stack running —
+End-to-end (Playwright, 11 tests): requires the full stack running. **Known-stale since step 8's
+increment 13** — the suite's login helper still waits for a `/inbox` redirect that no longer
+happens (post-login now lands on `/`, the Dashboard), so every spec currently fails at login;
+see `STATUS.md`'s Step 9 checklist. Fixing it wasn't in `STEP9_PLAN.md`'s scope.
 
 ```
 docker-compose up -d

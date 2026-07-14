@@ -2,6 +2,12 @@
 
 **Status:** Accepted (Session 1, approved by Zohaib — see `PROJECT_CONTEXT.md` §14/§2)
 
+> **Update (Step 9, P9-08):** the `ReminderWorker` named below was retired and deleted when the
+> appointment-polling reminder system was replaced by an event-based Reminder SMS engine (see
+> `CODEBASE_MAP.md` §4b) — the Worker now hosts **two** `BackgroundService`s
+> (`DispatcherWorker`, `EscalationWorker`). The hosting *decision* this ADR records is unchanged
+> and still applies to both; the text below is kept as written for the historical record.
+
 ## Context
 
 FR-001–004/008/009 all need something running continuously in the background, independent of any
