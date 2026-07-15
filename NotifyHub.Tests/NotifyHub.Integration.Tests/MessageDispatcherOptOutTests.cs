@@ -57,6 +57,55 @@ public class MessageDispatcherOptOutTests(CustomWebApplicationFactory factory) :
     }
 
     [Fact]
+    public async Task DispatchDueMessagesAsync_PreservesCommittedRenderedBody_ForTemplateLinkedReminder()
+    {
+        // Rule 31 reversal (Reminder SMS dialog is now freely editable, edited text
+        // committed as RenderedBody at creation — ThreadsController.CreateReminder): the
+        // dispatcher must not clobber that committed text by re-rendering from the live
+        // template, the way it still does for TemplateId-linked messages with a null
+        // RenderedBody (the original, still-default behavior for other TemplateId-linked
+        // messages, e.g. DemoOutboundMessageSeedStep's rows).
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
+
+        var patient = new Patient { Name = "Committed Reminder Patient", Phone = "+19990003003" };
+        db.Patients.Add(patient);
+
+        var template = new MessageTemplate
+        {
+            Name = "Committed reminder test template",
+            Body = "This is the CURRENT live template body — should NOT appear in RenderedBody.",
+            TriggerType = TriggerType.AppointmentReminder,
+            OffsetHours = 24,
+        };
+        db.MessageTemplates.Add(template);
+        await db.SaveChangesAsync();
+
+        const string committedBody = "Hi, your appointment is on Jul 20, 2026, 3:00 PM.";
+        var message = new OutboundMessage
+        {
+            PatientId = patient.Id,
+            TemplateId = template.Id,
+            SenderType = SenderType.Staff,
+            RenderedBody = committedBody,
+            EventTime = DateTime.UtcNow.AddDays(2),
+            CreatedAt = DateTime.UtcNow.AddDays(-1),
+            Status = MessageStatus.Queued,
+            AttemptCount = 0,
+        };
+        db.OutboundMessages.Add(message);
+        await db.SaveChangesAsync();
+
+        var gatewayClient = factory.Services.GetRequiredService<IHttpClientFactory>().CreateClient("self");
+        var dispatcher = new MessageDispatcher(db, gatewayClient, NullLogger<MessageDispatcher>.Instance, new SettingsService(db));
+
+        await dispatcher.DispatchDueMessagesAsync(CancellationToken.None);
+
+        var updated = await db.OutboundMessages.SingleAsync(m => m.Id == message.Id);
+        Assert.Equal(committedBody, updated.RenderedBody);
+    }
+
+    [Fact]
     public async Task DispatchDueMessagesAsync_SkipsBatch_DuringQuietHours()
     {
         using var scope = factory.Services.CreateScope();

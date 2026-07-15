@@ -53,6 +53,28 @@ public class PerformanceSeedStepTests
     }
 
     [Fact]
+    public async Task RunAsync_GeneratesRealisticNames_NoPlaceholderPrefix()
+    {
+        await using var db = CreateContext();
+        await EnsureTemplateExistsAsync(db);
+
+        // Default production target (50,000) — clamps to the max 1,000 synthetic patients,
+        // the actual population whose names this test is protecting.
+        var step = new PerformanceSeedStep();
+        await step.RunAsync(db, CancellationToken.None);
+
+        var patients = await db.Patients.ToListAsync();
+
+        Assert.Equal(1_000, patients.Count);
+        Assert.All(patients, p => Assert.DoesNotContain("PerfSeed", p.Name));
+        Assert.All(patients, p => Assert.Matches(@"^[A-Za-z]+ [A-Za-z]+$", p.Name));
+        // All 1,000 generated names should be unique given the 4-locale x 20x20 combination
+        // space (see PerformanceSeedStep.GenerateName) — guards against silent regressions
+        // that collapse the pools back down to repetitive/placeholder-style names.
+        Assert.Equal(1_000, patients.Select(p => p.Name).Distinct().Count());
+    }
+
+    [Fact]
     public async Task RunAsync_DoesNothing_WhenNoTemplatesExist()
     {
         await using var db = CreateContext();

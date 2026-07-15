@@ -11,19 +11,20 @@ namespace NotifyHub.Infrastructure.Seed;
 public class PatientAppointmentSeedStep : IDbSeedStep
 {
     // Realistic sample names (not real patient data — BR-006) instead of "Patient 01"..
-    // placeholders, so seeded demo data reads like a real clinic roster.
+    // placeholders, so seeded demo data reads like a real clinic roster. Balanced across
+    // Pakistani English / Indian / Chinese / Japanese locales (3/3/2/2).
     private static readonly string[] PatientNames =
     [
-        "John Donald",
-        "Leonard Allen",
-        "Wasim Khan",
-        "Mateen Anjum",
-        "Emily Carter",
-        "Robert Chen",
-        "Fatima Ali",
-        "Michael Brown",
-        "Olivia Turner",
-        "Ahmed Hassan",
+        "Ahmed Raza",
+        "Ayesha Malik",
+        "Bilal Sheikh",
+        "Priya Sharma",
+        "Rohan Mehta",
+        "Ananya Iyer",
+        "Wei Zhang",
+        "Mei Chen",
+        "Haruto Sato",
+        "Yui Tanaka",
     ];
 
     public async Task RunAsync(NotifyHubDbContext db, CancellationToken ct)

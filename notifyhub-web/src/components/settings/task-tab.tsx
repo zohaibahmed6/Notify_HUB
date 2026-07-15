@@ -18,6 +18,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { DateTimePicker } from "@/components/v2/date-time-picker";
 import { Skeleton } from "@/components/ui/skeleton";
 
+/** `value` is a "yyyy-MM-dd" string from `DateTimePicker mode="date"` (local calendar
+ * day, no timezone). `new Date(value).toISOString()` would parse it as UTC midnight,
+ * shifting it to the wrong day once `toLocaleDateString()` converts it back to local time
+ * on display — so build the instant from local date parts instead. */
+function toLocalMidnightIso(value: string): string {
+  const [y, m, d] = value.split("-").map(Number);
+  return new Date(y, m - 1, d).toISOString();
+}
+
 const DEFAULT_DUE_DATES = [
   { priority: "Urgent", offset: "+4 hours" },
   { priority: "High", offset: "+1 day" },
@@ -52,8 +61,8 @@ function TaskForwardingRulesCard() {
     try {
       await createRule.mutateAsync({
         targetUserId: Number(targetUserId),
-        from: from ? new Date(from).toISOString() : undefined,
-        to: to ? new Date(to).toISOString() : undefined,
+        from: from ? toLocalMidnightIso(from) : undefined,
+        to: to ? toLocalMidnightIso(to) : undefined,
         reason: reason || undefined,
       });
       toast.success("Forwarding rule created");

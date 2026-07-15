@@ -37,6 +37,20 @@ Configs auto-discovered via `modelBuilder.ApplyConfigurationsFromAssembly(...)` 
 manual per-entity registration) — every `IEntityTypeConfiguration<T>` in
 `NotifyHub.Infrastructure/Persistence/Configurations/*.cs` applies automatically.
 
+**Bug fix — UTC timestamp round-trip (model-wide)**: `NotifyHubDbContext.ConfigureConventions`
+applies a `ValueConverter` to every `DateTime`/`DateTime?` property in the model, forcing
+`DateTimeKind.Utc` on read. Pomelo/MySQL drops `DateTimeKind` on round-trip (values always come
+back `Unspecified`), which made `System.Text.Json` omit the `Z` suffix on every timestamp field,
+which in turn made the frontend's otherwise-correct `new Date(x).toLocaleString()` (e.g.
+`ConversationPanel.tsx:175`, `TaskBoardPageV2.tsx:330`) misparse the UTC instant as local time —
+showing message timestamps and task due dates a day off (direction/size depends on the browser's
+UTC offset). Per §11a the DB value was always correct UTC; only the `DateTimeKind` tag on read
+was lost. Fixed once at the DbContext level (not per-entity) since it affects every `DateTime`
+column — `OutboundMessage.CreatedAt`, `InboundMessage.ReceivedAt`, `TaskItem.DueAt`/
+`RecurrenceEndDate`, `AuditLog.OccurredAt`, etc. No data migration needed (conversion applies at
+materialization) and no schema change (still a plain `datetime` column, confirmed via
+`dotnet ef migrations add` producing an empty `Up`/`Down`).
+
 | Entity → table | Entity file | Config file | Key fields | Relationships / indexes |
 |---|---|---|---|---|
 | `User` → `users` | `NotifyHub.Domain/Entities/User.cs:5` | `UserConfiguration.cs:7` | Id, Username, PasswordHash, Role, **FullName?, Status** (added, see below), **LeaveFrom?, LeaveTo?** (added P9-12, both required together when `Status` is set to `OnLeave`) | Unique index `Username` (:18) |
@@ -281,7 +295,7 @@ Race-safe find-or-create: `FindOrCreateThreadAsync` (:119-141) — see §5.
 | Job | File:line | Trigger | What it does |
 |---|---|---|---|
 | `DispatcherWorker` | `NotifyHub.Worker/DispatcherWorker.cs:8-35` | Fixed 5s poll loop (:10, hardcoded, not config-driven); 5s error-retry delay (:11) | Resolves `MessageDispatcher` per scope, calls `DispatchDueMessagesAsync` (:22) |
-| `MessageDispatcher` | `NotifyHub.Infrastructure/Messaging/MessageDispatcher.cs` | Called by `DispatcherWorker` | **Increment 10**: `DispatchDueMessagesAsync` now starts with a single Quiet Hours gate (`SettingsService.IsQuietHoursNowAsync` — if true, returns 0 immediately, no per-message state change; due messages simply stay `Queued` and get picked up on the next non-quiet poll) and the due-query also requires `ScheduledAt == null \|\| ScheduledAt <= now`. Otherwise unchanged: batch of 10 `Queued` messages due now, ordered by `CreatedAt`. `DispatchOneAsync` (:37-90): opt-out short-circuit (:42-50), renders template if set (:54-59), POSTs to mock gateway (:66-67), on failure increments attempt count and either terminalizes via `RetryBackoffPolicy.IsTerminal` (:77-81) or requeues with backoff (:83-86). `RenderAsync` (:92-113) parses `TriggerReference` for `{{appointment_time}}` (:101-109). Constructor now also takes `SettingsService` — any direct `new MessageDispatcher(...)` call site (tests) needs the 4th arg. **P9-07**: `DispatchDueMessagesAsync` now calls a new private `ExpireOverdueMessagesAsync` *before* the Quiet Hours gate (not after) — marks `Expired` any `Queued` message with a passed `ExpiresAt`, sets `ExpiryReason` (fact-based: "before any send attempt"/"after N send attempt(s)", not a guessed specific cause like "quiet hours" — no per-message signal exists to know that for certain), adds a `DeliveryStatusHistory` row, audits `action:"expired"`. Deliberately checked unconditionally regardless of Quiet Hours: a message can sit `Queued` through its whole 12h window while Quiet Hours suppresses the batch entirely, which is the realistic way expiry gets hit in practice (BR-011's own retry/backoff, max ~31 min across 6 attempts, almost never reaches 12h alone) — if expiry ran after the Quiet Hours early-return, it would never fire during that exact scenario. Verified live end-to-end against the real Docker/MySQL stack (worker stopped, a message created and its `ExpiresAt` backdated via direct SQL, worker restarted, confirmed `Expired` + history + audit all landed on the next 5s poll). |
+| `MessageDispatcher` | `NotifyHub.Infrastructure/Messaging/MessageDispatcher.cs` | Called by `DispatcherWorker` | **Increment 10**: `DispatchDueMessagesAsync` now starts with a single Quiet Hours gate (`SettingsService.IsQuietHoursNowAsync` — if true, returns 0 immediately, no per-message state change; due messages simply stay `Queued` and get picked up on the next non-quiet poll) and the due-query also requires `ScheduledAt == null \|\| ScheduledAt <= now`. Otherwise unchanged: batch of 10 `Queued` messages due now, ordered by `CreatedAt`. `DispatchOneAsync` (:37-90): opt-out short-circuit (:42-50), renders template if set **and `RenderedBody` is still null** (post-Step-9: gated so a committed Reminder SMS body — rule 31 reversal, see §4b — is never overwritten; previously rendered unconditionally whenever `TemplateId` was set), POSTs to mock gateway (:66-67), on failure increments attempt count and either terminalizes via `RetryBackoffPolicy.IsTerminal` (:77-81) or requeues with backoff (:83-86). `RenderAsync` (:92-113) parses `TriggerReference` for `{{appointment_time}}` (:101-109). Constructor now also takes `SettingsService` — any direct `new MessageDispatcher(...)` call site (tests) needs the 4th arg. **P9-07**: `DispatchDueMessagesAsync` now calls a new private `ExpireOverdueMessagesAsync` *before* the Quiet Hours gate (not after) — marks `Expired` any `Queued` message with a passed `ExpiresAt`, sets `ExpiryReason` (fact-based: "before any send attempt"/"after N send attempt(s)", not a guessed specific cause like "quiet hours" — no per-message signal exists to know that for certain), adds a `DeliveryStatusHistory` row, audits `action:"expired"`. Deliberately checked unconditionally regardless of Quiet Hours: a message can sit `Queued` through its whole 12h window while Quiet Hours suppresses the batch entirely, which is the realistic way expiry gets hit in practice (BR-011's own retry/backoff, max ~31 min across 6 attempts, almost never reaches 12h alone) — if expiry ran after the Quiet Hours early-return, it would never fire during that exact scenario. Verified live end-to-end against the real Docker/MySQL stack (worker stopped, a message created and its `ExpiresAt` backdated via direct SQL, worker restarted, confirmed `Expired` + history + audit all landed on the next 5s poll). |
 | `EscalationWorker` | `NotifyHub.Worker/EscalationWorker.cs:8-36` | Config-driven poll, `Escalation:PollIntervalSeconds` default 60s (:17); 5s error-retry delay (:13) | Resolves `EscalationJob` per scope, calls `EscalateOverdueTasksAsync` (:26) |
 | `EscalationJob` | `NotifyHub.Infrastructure/Escalation/EscalationJob.cs` | Called by `EscalationWorker` | `EscalateOverdueTasksAsync` (:19-61): batch of 100 overdue non-terminal tasks (:23-29), resolves lowest-id Admin as fallback (:36-40), sets `Escalated` + audits (:45-47), reassigns + audits "auto-reassigned" if not already assigned to that admin (:49-54). **P9-12**: `EscalationWorker` also calls a new `RevertExpiredLeaveAsync` every poll cycle (piggybacking on this existing periodic job/poll rather than a new worker process, per the plan) — finds every `Status == OnLeave` user whose `LeaveTo` has passed, flips them back to `Active`, audits (`action:"status-change"`, actor `"system"`, entityType `"User"`). Unrelated to task escalation, just co-located for the free poll loop. |
 **`ReminderWorker`/`ReminderScheduler` retired in P9-08**, deleted entirely (not just
@@ -334,7 +348,7 @@ the two families of idempotency keys never collide.
 ### API — `ThreadsController` (`NotifyHub.Api/Controllers/ThreadsController.cs`)
 | Verb + route | Notes |
 |---|---|
-| POST `api/threads/{id}/reminders` | `CreateReminder` — body `{templateId, eventTime}`, no manual Scheduled Send Time field (rule 4). Loads thread/patient/template (404 if either missing), snapshots current `ReminderSettings`, computes `ScheduledSendTime`/`ExpiryTime`, 400 if the computed Scheduled Send Time is already in the past (rules 8/9/10 — the real server-side enforcement, not just a UI hint), 409 on a duplicate (patientId+templateId+eventTime+offset) via `IdempotencyKeyGenerator.GenerateForReminder` + the existing unique index on `IdempotencyKey` as the race backstop. Stays `TemplateId`-linked with `RenderedBody = null` (not committed ad-hoc text like the composer's Reply flow) — rendered fresh at dispatch time like any other template-linked message, so P9-05's dual-safety net and rule 30's duplicate hash both have a real `TemplateId` to work with. Audits `reminder-created`. |
+| POST `api/threads/{id}/reminders` | `CreateReminder` — body `{templateId, eventTime, body?}`, no manual Scheduled Send Time field (rule 4). Loads thread/patient/template (404 if either missing), snapshots current `ReminderSettings`, computes `ScheduledSendTime`/`ExpiryTime`, 400 if the computed Scheduled Send Time is already in the past (rules 8/9/10 — the real server-side enforcement, not just a UI hint), 409 on a duplicate (patientId+templateId+eventTime+offset) via `IdempotencyKeyGenerator.GenerateForReminder` + the existing unique index on `IdempotencyKey` as the race backstop. **Rule 31 reversal (post-Step-9 fix)**: `TemplateId` stays linked (kept for the idempotency hash/reporting above), but `body` — the Reminder SMS dialog's now-freely-editable text — is committed as `RenderedBody` at creation when provided (`string.IsNullOrWhiteSpace(request.Body) ? null : request.Body`); omitting `body` preserves the original "`RenderedBody = null`, rendered fresh at dispatch from the live template" behavior for backward compatibility. `MessageDispatcher.DispatchOneAsync`'s auto-render is now gated on `RenderedBody is null`, so a committed body is never overwritten at dispatch — but P9-05's template-edit sweep (`TemplatesController.Update`) still applies unmodified: editing the linked template nulls `RenderedBody` for any matching `Queued` message including a committed reminder, forcing a fresh render next dispatch (deliberate, not scoped to exclude reminders). Audits `reminder-created`. |
 
 ### API — `MessagesController` (`NotifyHub.Api/Controllers/MessagesController.cs`)
 Class-level auth is no longer `[Authorize(Roles="Admin")]` — only `List` (the P9-06 report)
@@ -348,15 +362,32 @@ manage reminders they create from a thread, same as any other message action).
 ### Frontend
 - `components/v2/reminder-sms-dialog.tsx` (`ReminderSmsDialog`) — the "Reminder SMS" action,
   same discoverability tier as "Insert template" in `conversation-panel.tsx`'s composer
-  toolbar (new button there, `AlarmClock` icon). Template `Select` + a **read-only** preview
-  (calls P9-04's `GET .../templates/{id}/preview`, not editable — rule 31, and keeps the
-  message `TemplateId`-linked rather than ad-hoc text) + `DateTimePicker` (P9-03) for Event
-  Time, `minDate` set to `now + reminderOffsetMinutes` (day-granularity only, per P9-03's
-  documented simplification) plus an exact submit-time re-check before calling the API. No
-  manual Scheduled Send Time field anywhere in the UI (rule 4) — a read-only computed-preview
-  line shows what it resolves to.
-- `hooks/useThreads.ts` gained `useCreateReminderMutation(threadId)` →
-  `POST /api/threads/{id}/reminders`.
+  toolbar (new button there, `AlarmClock` icon). Template `Select` + `DateTimePicker` (P9-03)
+  for Event Time, `minDate` set to `now + reminderOffsetMinutes` (day-granularity only, per
+  P9-03's documented simplification) plus an exact submit-time re-check before calling the
+  API. No manual Scheduled Send Time field anywhere in the UI (rule 4) — a read-only
+  computed line shows what it resolves to.
+  **Post-Step-9 fix — rule 31 reversed**: the body is now a freely-editable `Textarea`
+  (`ref`-tracked, `bodyRef`), not a locked read-only preview. `handleTemplateChange` fetches
+  P9-04's `GET .../templates/{id}/preview` and replaces the box's contents with the resolved
+  text (same behavior as the composer's `handleInsertTemplate`/`setDraft`) — editable
+  afterward, never reset by further typing. `insertAtCursor` (mirrors `TemplateForm`'s
+  `insertBookmark`) inserts text at the `Textarea`'s current caret position, replacing any
+  active selection, then restores focus with the caret placed immediately after the inserted
+  text. Event Time insertion is wired through `DateTimePicker`'s new `onCommit` prop (see
+  below) rather than `onChange` directly — `handleEventTimeCommit` calls `insertAtCursor` with
+  the picked value formatted via `toLocaleString()` once the user finishes picking (not on
+  every intermediate tick). Submits `{templateId, eventTime, body}`; the previous submit-time
+  validation (must pick a template/Event Time) gained a third check (`body` can't be blank).
+- `components/v2/date-time-picker.tsx`'s `DateTimePicker` gained an optional
+  `onCommit?: (value: string) => void` prop — fires once when the popover closes (Done /
+  outside click / Escape) while a value is set, unlike `onChange`, which fires continuously
+  during interaction (once per clock-drag tick, via `ClockFace`'s `applyFromPointer`). Purely
+  additive: every other call site (`NewTaskForm`/`CreateTaskForm`/`new-conversation-dialog`/
+  `conversation-panel`/`task-tab`/`user-management-tab`/filter bars) doesn't pass it and is
+  unaffected.
+- `hooks/useThreads.ts`'s `useCreateReminderMutation(threadId)` mutation payload gained an
+  optional `body?: string` field → `POST /api/threads/{id}/reminders`.
 - `status-config.ts`'s `AUDIT_ACTION_CONFIG` gained `expired`/`reminder-created`/
   `reminder-updated`/`reminder-cancelled` entries; both Audit Log pages' `ACTIONS` filter
   list extended to match.
@@ -381,7 +412,9 @@ no more `ReminderWorker` poll logs at all.
 All registered as `IDbSeedStep` in `NotifyHub.Api/Program.cs` (:55-61) and run unconditionally at
 Api startup (`Program.cs` :105-106), including in every integration test that boots the Api
 pipeline — no environment gating. Order: `UserSeedStep` → `SecondStaffSeedStep` →
-`PatientAppointmentSeedStep` (10 demo patients+appointments) → `TemplateSeedStep` (4 templates) →
+`PatientAppointmentSeedStep` (10 demo patients+appointments, real-sounding names balanced across
+Pakistani English/Indian/Chinese/Japanese locales — 3/3/2/2, not real patient data per BR-006) →
+`TemplateSeedStep` (4 templates) →
 `BookmarkSeedStep` (increment 8 — 2 bookmarks: "Patient Name"/`{{patient_name}}`, "Appointment
 Time"/`{{appointment_time}}`, matching exactly what `TemplateRenderer` resolves at send time) →
 `SystemSettingSeedStep` (increment 10 — default rows for every known setting key, idempotent
@@ -392,13 +425,18 @@ Deterministic seed-only baseline for `outbound_messages`: 45,000 (perf) + 10 (de
 
 `PerformanceSeedStep` (`NotifyHub.Infrastructure/Seed/PerformanceSeedStep.cs:31-151`) — constructor
 parameter `targetMessageCount` (default 50,000), read from config key `Seed:PerformanceMessageCount`
-in `Program.cs`'s DI registration. `RunAsync` (:40-82): idempotency check via a patient-name marker
-prefix (:42, independent of `DemoOutboundMessageSeedStep`'s own "any message exists" check), thread
-count scales with message target (~50 messages/thread, clamped 10-1,000, :52), 90/10
-outbound/inbound split (`OutboundRatio`, :38), all outbound messages get a terminal status
-(Delivered/Failed, :106 — never `Queued`, so `DispatcherWorker` never picks any of them up), batched
-inserts via `SeedOutboundMessagesAsync`/`SeedInboundMessagesAsync`/`FlushAsync` (:84-151, chunks of
-2,000, `AutoDetectChangesEnabled=false` during the loop).
+in `Program.cs`'s DI registration. `RunAsync` (:81-83): idempotency check via a patient-**phone**
+marker prefix (`+1777`, independent of `DemoOutboundMessageSeedStep`'s own "any message exists"
+check) — switched from a patient-name prefix once the synthetic-patient names became realistic
+(see below) and stopped being a stable marker. Patient names for the up-to-1,000 synthetic patients
+are generated by `GenerateName` (:72-79) from four locale-specific first/last-name pools (Pakistani
+English/Indian/Chinese/Japanese, ~20 names each, :48-70) instead of `"PerfSeed Patient 00001"`..
+placeholders — round-robins the locale by index so the mix stays balanced, never mixes first/last
+names across locales. Thread count scales with message target (~50 messages/thread, clamped
+10-1,000, :93), 90/10 outbound/inbound split (`OutboundRatio`, :41), all outbound messages get a
+terminal status (Delivered/Failed, :106 — never `Queued`, so `DispatcherWorker` never picks any of
+them up), batched inserts via `SeedOutboundMessagesAsync`/`SeedInboundMessagesAsync`/`FlushAsync`
+(chunks of 2,000, `AutoDetectChangesEnabled=false` during the loop).
 
 **Test-factory overrides**: `Seed:PerformanceMessageCount` is capped to 50
 (`CustomWebApplicationFactory.cs`) / 100 (`MySqlWebApplicationFactory.cs`) — otherwise every
@@ -602,7 +640,12 @@ legacy file listed in §6 above is unmodified.
     Due from/Due to (server-side range, defaults to today-6/today via the new shared
     `src/lib/dateRangeFilter.ts` util — `defaultFromDaysAgo(6)`/`toDateInputValue`/
     `toInstantRange`, extracted from what was previously duplicated verbatim in
-    `AuditLogPage.tsx`/`AuditLogPageV2.tsx`, both now consume the same util), Active/Inactive
+    `AuditLogPage.tsx`/`AuditLogPageV2.tsx`, both now consume the same util — **bug fix**:
+    all three functions were anchored to UTC (`toISOString()`/`setUTCDate`/explicit `Z`
+    boundaries) instead of the viewer's local day, so the default "last N days" range and
+    the actual query window sent to the server could be off by a day from what the date
+    picker showed; now built from local `Date` getters/constructor args throughout, same
+    convention as `date-time-picker.tsx`'s own `parseValue`/`formatDatePart`), Active/Inactive
     (server-side, defaults `"Active"`), Status (client-side, alongside the pre-existing
     Priority/Assignee/Recurring-only filters — kept client-side since the Board view needs
     every status at once to populate its columns). Assignee filter now sourced from
@@ -640,7 +683,11 @@ legacy file listed in §6 above is unmodified.
   client-side column sort (re-sorts the current page only — server pagination unchanged),
   `Action` column via `StatusBadge`/`AUDIT_ACTION_CONFIG` (icon+color per the 7 action types),
   a day-by-day `Sparkline` above the table (counts from the current page/filter only, not a
-  true full-history aggregate — no new endpoint).
+  true full-history aggregate — no new endpoint). **Bug fix**: the day-bucketing key was
+  `log.occurredAt.slice(0, 10)` (the raw UTC calendar date), which misfiled entries near the
+  viewer's local midnight into the wrong bucket; now built via `toDateInputValue(new
+  Date(log.occurredAt))` (the same shared local-date helper as the filter bar, see below) so
+  buckets reflect the viewer's local day.
   - **Product decision, not a technical one**: the redesign restricts this screen to Admin
     only — legacy's Staff-scoped `/api/audit/mine` ("your own actions") view is intentionally
     dropped in the new UI. Enforced twice: `AppShell.tsx`'s `NAV_LINKS` gets a new
@@ -665,7 +712,14 @@ original redesign plan.
   (Quiet Hours + rate-limit forms, **plus a P9-08 "Reminder SMS defaults" card** — `sms-tab.tsx`, backed by `useSettings.ts`), Task (read-only
   `TaskDueDateDefaults` display, **plus a P9-10 "Task forwarding" card (create/list/delete
   self-service `TaskForwardingRule`s, target picker via `useAssignableUsers` filtered to
-  exclude the caller)** — `task-tab.tsx`, backed by `useTaskForwardingRules.ts`), Template (Bookmark CRUD table —
+  exclude the caller)** — `task-tab.tsx`, backed by `useTaskForwardingRules.ts`. **Bug fix**:
+  the From/To date picker values (`mode="date"`, local "yyyy-MM-dd") were submitted via
+  `new Date(value).toISOString()`, which JS parses as UTC midnight; displaying the
+  round-tripped value back with `toLocaleDateString()` then converted through the *local*
+  offset, shifting the shown date by a day for non-UTC viewers. Fixed by anchoring to local
+  midnight on submit instead (`toLocalMidnightIso`, parses y/m/d and uses the multi-arg
+  `Date` constructor — same convention as `date-time-picker.tsx`'s `parseValue`), so
+  write/read now agree on the same calendar day; display unchanged), Template (Bookmark CRUD table —
   `template-tab.tsx`, backed by `useBookmarks.ts`), Notification (thin, client-only browser
   notification-permission toggle — `notification-tab.tsx`, no backend), User Management (Admin-only
   tab+content, user table + status `Select` per row + create-user form — `user-management-tab.tsx`,
@@ -859,6 +913,59 @@ regression. Out of scope to fix here (not part of `STEP9_PLAN.md`); flagged in S
   "staff"` (not "System") and that the `username=staff` filter matches it; pre-existing
   rows from before this migration correctly show `"System"` (no prior column to backfill
   sender identity from — a permanent gap for historical data, not a bug).
+
+---
+
+## 6i. Filter bar restyle — dense inline-label grid (this session)
+
+Layout/styling-only change (no filter state, query logic, or API params touched) across
+the three redesign screens with filter bars: `TaskBoardPageV2.tsx`, `SmsHistoryPage.tsx`
+(P9-06), `AuditLogPageV2.tsx`. Legacy `AuditLogPage.tsx`/`TaskBoardPage.tsx` and SMS
+History's Expiry/PDU columns were explicitly out of scope for this pass (Expiry-range/PDU-
+range filters don't exist yet in `useMessages.ts`/`MessagesController` — display-only
+columns today, so they weren't added as filter fields here; would need real filter params
+added to `useSmsHistory`/`GET api/messages` first, flagged as a gap, not fixed).
+
+- **`components/v2/filter-bar.tsx`** (new) — `FilterBar` (grid wrapper,
+  `grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-3`) + `FilterField` (one
+  label+control row: `w-[100px] shrink-0` label with trailing colon, control area
+  `min-w-0 flex-1`). Factored out once, used by all three screens instead of each
+  duplicating its own `space-y-1.5` label-above-input stack (the pre-existing pattern,
+  replaced everywhere it appeared for filters).
+- **`components/v2/date-time-picker.tsx`** — `DateTimePicker` gained a `variant?:
+  "default" | "compact"` prop (default unchanged, so every non-filter call site — forms/
+  dialogs in `NewTaskForm.tsx`/`CreateTaskForm.tsx`/`new-conversation-dialog.tsx`/
+  `conversation-panel.tsx`/`reminder-sms-dialog.tsx`/`task-tab.tsx`/
+  `user-management-tab.tsx` — is untouched). `variant="compact"` (used only by the three
+  filter bars' Due-from/to/From/To fields) renders a plain `<button>` styled like `Input`
+  (`h-8`, `border-input`, no button shadow/hover-fill) with the display text left and a
+  trailing 14px `CalendarIcon` — replacing the default's `Button variant="outline"` with a
+  leading icon.
+- **`TaskBoardPageV2.tsx`** — the old two-row filter layout (top row: Priority/Status/
+  Assignee/Active `Select`s + Recurring-only toggle, mixed in with the Board/List `Tabs`
+  and "New task" button; second row: Description/Patient/Due-from/Due-to) is now one
+  `FilterBar` with all eight fields (Description, Patient, Due from, Due to, Status,
+  Assignee, Priority, Active) laid out consistently; `Tabs`/"New task" stay on their own
+  row above the grid (page-level controls, not filters). Recurring-only toggle + a new
+  `Reset` button (clears every filter, including Priority/Active/Recurring, back to
+  defaults — `dueFrom`/`dueTo` reset to `defaultFromDaysAgo(6)`/today) sit right-aligned
+  below the grid. Note: Priority/Active/Recurring weren't in the original restyle request's
+  field list but are pre-existing filters on this screen — kept in the grid rather than
+  dropped, since this was scoped as layout-only.
+- **`SmsHistoryPage.tsx`** — Patient/Sender/Phone/Text/Status/From/To (the filters that
+  actually exist today) moved into a `FilterBar`; new `Reset` button right-aligned below it.
+- **`AuditLogPageV2.tsx`** — Actor/Action/From/To moved into a `FilterBar`; new `Reset`
+  button right-aligned below it. ("Actor (Admin only)" from the request is automatically
+  satisfied — the whole page already gates non-Admins to an `EmptyState` before rendering
+  any filters.)
+- **Verification**: `npx tsc -b` clean (no type errors) across all three edited pages plus
+  the two new/changed shared components. Could not verify visually against a live Docker
+  stack or run `vite build` this session — this sandbox has no Docker, and the mounted
+  `node_modules` is missing its Linux native binding for the project's Vite/Rolldown build
+  (`Cannot find module '@rolldown/binding-linux-x64-gnu'`), a pre-existing environment
+  mismatch unrelated to this change (the install was done on Windows). Recommend a real
+  `docker compose up --build` click-through on all three screens (and at `lg`/`sm`/mobile
+  widths) before treating this as fully verified.
 
 ---
 

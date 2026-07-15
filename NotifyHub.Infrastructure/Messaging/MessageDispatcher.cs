@@ -101,8 +101,15 @@ public class MessageDispatcher(NotifyHubDbContext db, HttpClient gatewayClient, 
         }
 
         // Ad-hoc staff replies (TemplateId null) already have RenderedBody set directly
-        // at creation — there's no template to render at send time (BR-008).
-        if (message.TemplateId is not null)
+        // at creation — there's no template to render at send time (BR-008). Reminder SMS
+        // (P9-08) used to always be TemplateId-linked with RenderedBody left null so it
+        // rendered fresh here from the live template (rule 31); the Reminder dialog is now
+        // freely editable and commits the caller's edited text as RenderedBody at creation,
+        // so `RenderedBody is null` is what distinguishes "still needs a fresh render" from
+        // "already has committed text, leave it alone" — a committed reminder body is only
+        // overwritten again if something else (P9-05's template-edit sweep) explicitly nulls
+        // RenderedBody back out first.
+        if (message.TemplateId is not null && message.RenderedBody is null)
         {
             // Rendered here, at send time (not at creation), so history reflects the
             // template as it stood at the moment of send (BR-013).

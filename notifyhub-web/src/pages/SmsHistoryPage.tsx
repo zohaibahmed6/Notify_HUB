@@ -6,7 +6,6 @@ import { useSmsHistory } from "@/hooks/useMessages";
 import { toDateInputValue, defaultFromDaysAgo, toInstantRange } from "@/lib/dateRangeFilter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -20,6 +19,7 @@ import { DELIVERY_STATUS_CONFIG, UNKNOWN_STATUS_CONFIG } from "@/components/v2/s
 import { EmptyState } from "@/components/v2/empty-state";
 import { TableRowSkeleton } from "@/components/v2/skeletons";
 import { DateTimePicker } from "@/components/v2/date-time-picker";
+import { FilterBar, FilterField } from "@/components/v2/filter-bar";
 
 const STATUSES = ["All", "Queued", "Sending", "Sent", "Delivered", "Failed", "Expired"];
 const PAGE_SIZE = 25;
@@ -59,6 +59,17 @@ export default function SmsHistoryPage() {
 
   const resetPage = () => setPage(1);
 
+  const resetFilters = () => {
+    setPatientName("");
+    setUsername("");
+    setPhone("");
+    setText("");
+    setStatus("All");
+    setFrom(defaultFromDaysAgo(7));
+    setTo(toDateInputValue(new Date()));
+    setPage(1);
+  };
+
   if (!isAdmin) {
     return (
       <div className="flex h-full flex-col p-4">
@@ -75,9 +86,8 @@ export default function SmsHistoryPage() {
     <div className="flex h-full flex-col overflow-y-auto p-4">
       <h1 className="mb-4 text-lg font-semibold">SMS History</h1>
 
-      <div className="mb-4 flex flex-wrap items-end gap-3">
-        <div className="space-y-1.5">
-          <Label htmlFor="sms-patient">Patient</Label>
+      <FilterBar className="mb-3">
+        <FilterField label="Patient" htmlFor="sms-patient">
           <Input
             id="sms-patient"
             placeholder="Any patient"
@@ -86,11 +96,10 @@ export default function SmsHistoryPage() {
               setPatientName(e.target.value);
               resetPage();
             }}
-            className="w-40"
+            className="h-8"
           />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="sms-username">Sender</Label>
+        </FilterField>
+        <FilterField label="Sender" htmlFor="sms-username">
           <Input
             id="sms-username"
             placeholder="Any sender"
@@ -99,11 +108,10 @@ export default function SmsHistoryPage() {
               setUsername(e.target.value);
               resetPage();
             }}
-            className="w-36"
+            className="h-8"
           />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="sms-phone">Phone</Label>
+        </FilterField>
+        <FilterField label="Phone" htmlFor="sms-phone">
           <Input
             id="sms-phone"
             placeholder="Any phone"
@@ -112,11 +120,10 @@ export default function SmsHistoryPage() {
               setPhone(e.target.value);
               resetPage();
             }}
-            className="w-36"
+            className="h-8"
           />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="sms-text">Text</Label>
+        </FilterField>
+        <FilterField label="Text" htmlFor="sms-text">
           <Input
             id="sms-text"
             placeholder="Search message text"
@@ -125,11 +132,10 @@ export default function SmsHistoryPage() {
               setText(e.target.value);
               resetPage();
             }}
-            className="w-48"
+            className="h-8"
           />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="sms-status">Status</Label>
+        </FilterField>
+        <FilterField label="Status" htmlFor="sms-status">
           <Select
             value={status}
             onValueChange={(v) => {
@@ -137,7 +143,7 @@ export default function SmsHistoryPage() {
               resetPage();
             }}
           >
-            <SelectTrigger id="sms-status" className="w-36">
+            <SelectTrigger id="sms-status" className="h-8 w-full text-sm">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -148,9 +154,8 @@ export default function SmsHistoryPage() {
               ))}
             </SelectContent>
           </Select>
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="sms-from">From</Label>
+        </FilterField>
+        <FilterField label="From" htmlFor="sms-from">
           <DateTimePicker
             id="sms-from"
             mode="date"
@@ -159,11 +164,10 @@ export default function SmsHistoryPage() {
               setFrom(v);
               resetPage();
             }}
-            className="w-40"
+            variant="compact"
           />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="sms-to">To</Label>
+        </FilterField>
+        <FilterField label="To" htmlFor="sms-to">
           <DateTimePicker
             id="sms-to"
             mode="date"
@@ -172,9 +176,15 @@ export default function SmsHistoryPage() {
               setTo(v);
               resetPage();
             }}
-            className="w-40"
+            variant="compact"
           />
-        </div>
+        </FilterField>
+      </FilterBar>
+
+      <div className="mb-4 flex items-center justify-end">
+        <Button variant="outline" size="sm" className="h-8" onClick={resetFilters}>
+          Reset
+        </Button>
       </div>
 
       {!isLoading && data && (

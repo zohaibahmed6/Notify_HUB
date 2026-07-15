@@ -50,6 +50,31 @@ public class RemindersTests(CustomWebApplicationFactory factory) : IClassFixture
     }
 
     [Fact]
+    public async Task CreateReminder_WithBody_CommitsItAsRenderedBody()
+    {
+        // Rule 31 reversal: the Reminder SMS dialog is now freely editable, and an edited
+        // body is committed at creation instead of staying null/rendered-fresh-at-dispatch.
+        var (threadId, templateId) = await SeedThreadAndTemplateAsync("+19990005007");
+        var (client, _) = await _client.AsStaffAsync();
+
+        var response = await client.PostAsJsonAsync($"/api/threads/{threadId}/reminders", new CreateReminderRequest
+        {
+            TemplateId = templateId,
+            EventTime = DateTime.UtcNow.AddDays(2),
+            Body = "Hi Jane, your appointment is on Jul 20, 2026, 3:00 PM.",
+        });
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
+        var message = await db.OutboundMessages.SingleAsync(m => m.ThreadId == threadId);
+
+        Assert.Equal(templateId, message.TemplateId); // still linked, kept for idempotency/reporting
+        Assert.Equal("Hi Jane, your appointment is on Jul 20, 2026, 3:00 PM.", message.RenderedBody);
+    }
+
+    [Fact]
     public async Task CreateReminder_RejectsPastScheduledSendTime()
     {
         var (threadId, templateId) = await SeedThreadAndTemplateAsync("+19990005002");

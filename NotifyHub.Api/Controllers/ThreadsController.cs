@@ -388,13 +388,21 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
 
     /// P9-08: Reminder SMS creation. Generic event-based reminder, no Appointment coupling
     /// (rule 34) — EventTime is a raw caller-supplied instant. Scheduled Send Time and
-    /// Expiry Time are always computed server-side (rules 4/5/15/25/31), snapshotting the
+    /// Expiry Time are always computed server-side (rules 4/5/15/25), snapshotting the
     /// *current* Reminder Offset/Expiry Offset settings onto the message (rule 7 — a later
-    /// Settings change never applies retroactively). Stays TemplateId-linked (not rendered
-    /// to an ad-hoc RenderedBody at creation like a Standard SMS composer reply) so rule
-    /// 30's duplicate check has a real templateId to hash, and so P9-05's template-edit
-    /// safety nets and the normal dispatch-time render both apply unmodified — the modal's
-    /// preview (GET .../templates/{templateId}/preview) is read-only, not committed text.
+    /// Settings change never applies retroactively). Stays TemplateId-linked (kept for
+    /// idempotency hashing/reporting — rule 30's duplicate check still needs a real
+    /// templateId), but as of the Reminder SMS dialog becoming freely editable, the
+    /// caller's edited text is committed as RenderedBody at creation (request.Body) —
+    /// **rule 31 reversal**: the original "read-only preview, always rendered fresh at
+    /// dispatch from the live template" guarantee only still holds when Body is omitted
+    /// (backward-compat path for callers that don't send one). See
+    /// MessageDispatcher.DispatchOneAsync's matching `RenderedBody is null` guard, which
+    /// is what actually stops the dispatcher from clobbering a committed edit — P9-05's
+    /// template-edit safety net still applies to committed reminders too (editing the
+    /// linked template later still nulls RenderedBody and forces a fresh render, same as
+    /// any other TemplateId-linked Queued message — deliberate, not narrowly scoped to
+    /// exclude reminders).
     [HttpPost("{id}/reminders")]
     public async Task<ActionResult> CreateReminder(long id, CreateReminderRequest request, CancellationToken ct)
     {
@@ -440,7 +448,7 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
             SenderType = SenderType.Staff,
             SentByUsername = User.FindFirstValue(ClaimTypes.Name),
             TriggerReference = null,
-            RenderedBody = null,
+            RenderedBody = string.IsNullOrWhiteSpace(request.Body) ? null : request.Body,
             CreatedAt = now,
             Status = MessageStatus.Queued,
             IdempotencyKey = idempotencyKey,

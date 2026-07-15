@@ -6,7 +6,6 @@ import { useAuditLog } from "@/hooks/useAudit";
 import { toDateInputValue, defaultFromDaysAgo, toInstantRange } from "@/lib/dateRangeFilter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -21,6 +20,7 @@ import { EmptyState } from "@/components/v2/empty-state";
 import { TableRowSkeleton } from "@/components/v2/skeletons";
 import { Sparkline } from "@/components/v2/sparkline";
 import { DateTimePicker } from "@/components/v2/date-time-picker";
+import { FilterBar, FilterField } from "@/components/v2/filter-bar";
 import type { AuditLogDto } from "@/types/audit";
 
 const ACTIONS = [
@@ -91,7 +91,7 @@ export default function AuditLogPageV2() {
   const dailyCounts = useMemo(() => {
     const buckets = new Map<string, number>();
     for (const log of logs) {
-      const day = log.occurredAt.slice(0, 10);
+      const day = toDateInputValue(new Date(log.occurredAt));
       buckets.set(day, (buckets.get(day) ?? 0) + 1);
     }
     return Array.from(buckets.entries())
@@ -100,6 +100,14 @@ export default function AuditLogPageV2() {
   }, [logs]);
 
   const resetPage = () => setPage(1);
+
+  const resetFilters = () => {
+    setActor("");
+    setAction("All");
+    setFrom(defaultFromDaysAgo(7));
+    setTo(toDateInputValue(new Date()));
+    setPage(1);
+  };
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -131,9 +139,8 @@ export default function AuditLogPageV2() {
     <div className="flex h-full flex-col overflow-y-auto p-4">
       <h1 className="mb-4 text-lg font-semibold">Audit log</h1>
 
-      <div className="mb-4 flex flex-wrap items-end gap-3">
-        <div className="space-y-1.5">
-          <Label htmlFor="audit-actor">Actor</Label>
+      <FilterBar className="mb-3">
+        <FilterField label="Actor" htmlFor="audit-actor">
           <Input
             id="audit-actor"
             placeholder="Any actor"
@@ -142,11 +149,10 @@ export default function AuditLogPageV2() {
               setActor(e.target.value);
               resetPage();
             }}
-            className="w-40"
+            className="h-8"
           />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="audit-action">Action</Label>
+        </FilterField>
+        <FilterField label="Action" htmlFor="audit-action">
           <Select
             value={action}
             onValueChange={(v) => {
@@ -154,7 +160,7 @@ export default function AuditLogPageV2() {
               resetPage();
             }}
           >
-            <SelectTrigger id="audit-action" className="w-40">
+            <SelectTrigger id="audit-action" className="h-8 w-full text-sm">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -165,9 +171,8 @@ export default function AuditLogPageV2() {
               ))}
             </SelectContent>
           </Select>
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="audit-from">From</Label>
+        </FilterField>
+        <FilterField label="From" htmlFor="audit-from">
           <DateTimePicker
             id="audit-from"
             mode="date"
@@ -176,11 +181,10 @@ export default function AuditLogPageV2() {
               setFrom(v);
               resetPage();
             }}
-            className="w-40"
+            variant="compact"
           />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="audit-to">To</Label>
+        </FilterField>
+        <FilterField label="To" htmlFor="audit-to">
           <DateTimePicker
             id="audit-to"
             mode="date"
@@ -189,9 +193,15 @@ export default function AuditLogPageV2() {
               setTo(v);
               resetPage();
             }}
-            className="w-40"
+            variant="compact"
           />
-        </div>
+        </FilterField>
+      </FilterBar>
+
+      <div className="mb-4 flex items-center justify-end">
+        <Button variant="outline" size="sm" className="h-8" onClick={resetFilters}>
+          Reset
+        </Button>
       </div>
 
       {!isLoading && dailyCounts.length > 1 && (

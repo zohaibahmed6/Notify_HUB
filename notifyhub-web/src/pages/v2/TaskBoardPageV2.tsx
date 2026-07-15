@@ -12,7 +12,6 @@ import { cn } from "@/lib/utils";
 import { defaultFromDaysAgo, toDateInputValue, toInstantRange } from "@/lib/dateRangeFilter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select,
@@ -25,6 +24,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { NewTaskForm } from "@/components/tasks/NewTaskForm";
 import { TaskCard } from "@/components/v2/task-card";
 import { DateTimePicker } from "@/components/v2/date-time-picker";
+import { FilterBar, FilterField } from "@/components/v2/filter-bar";
 import { TaskDetailSheet } from "@/components/v2/task-detail-sheet";
 import { EmptyState } from "@/components/v2/empty-state";
 import { CardGridSkeleton } from "@/components/v2/skeletons";
@@ -119,6 +119,18 @@ export default function TaskBoardPageV2() {
   // assigned to them could never appear as a filter option at all.
   const assigneeOptions = assignableUsers ?? [];
 
+  const resetFilters = () => {
+    setDescriptionFilter("");
+    setPatientFilter("");
+    setDueFrom(defaultFromDaysAgo(6));
+    setDueTo(toDateInputValue(new Date()));
+    setActiveFilter("Active");
+    setStatusFilter("all");
+    setAssigneeFilter("all");
+    setPriorityFilter("all");
+    setRecurringOnly(false);
+  };
+
   const filteredTasks = useMemo(
     () =>
       tasks.filter((t) => {
@@ -185,30 +197,47 @@ export default function TaskBoardPageV2() {
   return (
     <div className="flex h-full flex-col overflow-y-auto p-4">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <Tabs value={view} onValueChange={(v) => setView(v as "board" | "list")}>
-            <TabsList>
-              <TabsTrigger value="board">Board</TabsTrigger>
-              <TabsTrigger value="list">List</TabsTrigger>
-            </TabsList>
-          </Tabs>
+        <Tabs value={view} onValueChange={(v) => setView(v as "board" | "list")}>
+          <TabsList>
+            <TabsTrigger value="board">Board</TabsTrigger>
+            <TabsTrigger value="list">List</TabsTrigger>
+          </TabsList>
+        </Tabs>
 
-          <Select value={priorityFilter} onValueChange={(v) => setPriorityFilter(v as TaskPriority | "all")}>
-            <SelectTrigger className="h-9 w-[130px] text-sm">
-              <SelectValue placeholder="Priority" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All priorities</SelectItem>
-              {PRIORITIES.map((p) => (
-                <SelectItem key={p} value={p}>
-                  {p}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        <Button size="sm" className="gap-1.5" onClick={() => setShowNewTaskDialog(true)}>
+          <Plus className="size-4" />
+          New task
+        </Button>
+      </div>
 
+      <FilterBar className="mb-3">
+        <FilterField label="Description" htmlFor="task-filter-description">
+          <Input
+            id="task-filter-description"
+            placeholder="Search description"
+            value={descriptionFilter}
+            onChange={(event) => setDescriptionFilter(event.target.value)}
+            className="h-8"
+          />
+        </FilterField>
+        <FilterField label="Patient" htmlFor="task-filter-patient">
+          <Input
+            id="task-filter-patient"
+            placeholder="Search patient"
+            value={patientFilter}
+            onChange={(event) => setPatientFilter(event.target.value)}
+            className="h-8"
+          />
+        </FilterField>
+        <FilterField label="Due from" htmlFor="task-filter-due-from">
+          <DateTimePicker id="task-filter-due-from" mode="date" value={dueFrom} onChange={setDueFrom} variant="compact" />
+        </FilterField>
+        <FilterField label="Due to" htmlFor="task-filter-due-to">
+          <DateTimePicker id="task-filter-due-to" mode="date" value={dueTo} onChange={setDueTo} variant="compact" />
+        </FilterField>
+        <FilterField label="Status" htmlFor="task-filter-status">
           <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as TaskStatus | "all")}>
-            <SelectTrigger className="h-9 w-[140px] text-sm">
+            <SelectTrigger id="task-filter-status" className="h-8 w-full text-sm">
               <SelectValue placeholder="Status" />
             </SelectTrigger>
             <SelectContent>
@@ -220,9 +249,10 @@ export default function TaskBoardPageV2() {
               ))}
             </SelectContent>
           </Select>
-
+        </FilterField>
+        <FilterField label="Assignee" htmlFor="task-filter-assignee">
           <Select value={assigneeFilter} onValueChange={setAssigneeFilter}>
-            <SelectTrigger className="h-9 w-[150px] text-sm">
+            <SelectTrigger id="task-filter-assignee" className="h-8 w-full text-sm">
               <SelectValue placeholder="Assignee" />
             </SelectTrigger>
             <SelectContent>
@@ -235,9 +265,25 @@ export default function TaskBoardPageV2() {
               ))}
             </SelectContent>
           </Select>
-
+        </FilterField>
+        <FilterField label="Priority" htmlFor="task-filter-priority">
+          <Select value={priorityFilter} onValueChange={(v) => setPriorityFilter(v as TaskPriority | "all")}>
+            <SelectTrigger id="task-filter-priority" className="h-8 w-full text-sm">
+              <SelectValue placeholder="Priority" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All priorities</SelectItem>
+              {PRIORITIES.map((p) => (
+                <SelectItem key={p} value={p}>
+                  {p}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </FilterField>
+        <FilterField label="Active" htmlFor="task-filter-active">
           <Select value={activeFilter} onValueChange={(v) => setActiveFilter(v as "Active" | "Inactive")}>
-            <SelectTrigger className="h-9 w-[110px] text-sm">
+            <SelectTrigger id="task-filter-active" className="h-8 w-full text-sm">
               <SelectValue placeholder="Active" />
             </SelectTrigger>
             <SelectContent>
@@ -245,52 +291,21 @@ export default function TaskBoardPageV2() {
               <SelectItem value="Inactive">Inactive</SelectItem>
             </SelectContent>
           </Select>
+        </FilterField>
+      </FilterBar>
 
-          <Button
-            variant={recurringOnly ? "default" : "outline"}
-            size="sm"
-            className="h-9"
-            onClick={() => setRecurringOnly((v) => !v)}
-          >
-            Recurring only
-          </Button>
-        </div>
-
-        <Button size="sm" className="gap-1.5" onClick={() => setShowNewTaskDialog(true)}>
-          <Plus className="size-4" />
-          New task
+      <div className="mb-4 flex items-center justify-end gap-2">
+        <Button
+          variant={recurringOnly ? "default" : "outline"}
+          size="sm"
+          className="h-8"
+          onClick={() => setRecurringOnly((v) => !v)}
+        >
+          Recurring only
         </Button>
-      </div>
-
-      <div className="mb-4 flex flex-wrap items-end gap-3">
-        <div className="space-y-1.5">
-          <Label htmlFor="task-filter-description">Description</Label>
-          <Input
-            id="task-filter-description"
-            placeholder="Search description"
-            value={descriptionFilter}
-            onChange={(event) => setDescriptionFilter(event.target.value)}
-            className="h-9 w-48"
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="task-filter-patient">Patient</Label>
-          <Input
-            id="task-filter-patient"
-            placeholder="Search patient"
-            value={patientFilter}
-            onChange={(event) => setPatientFilter(event.target.value)}
-            className="h-9 w-48"
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="task-filter-due-from">Due from</Label>
-          <DateTimePicker id="task-filter-due-from" mode="date" value={dueFrom} onChange={setDueFrom} className="h-9 w-40" />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="task-filter-due-to">Due to</Label>
-          <DateTimePicker id="task-filter-due-to" mode="date" value={dueTo} onChange={setDueTo} className="h-9 w-40" />
-        </div>
+        <Button variant="outline" size="sm" className="h-8" onClick={resetFilters}>
+          Reset
+        </Button>
       </div>
 
       {!isLoading && tasks.length > 0 && (

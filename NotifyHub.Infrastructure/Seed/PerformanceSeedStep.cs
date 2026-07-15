@@ -23,23 +23,64 @@ namespace NotifyHub.Infrastructure.Seed;
 ///
 /// Idempotent independently of DemoOutboundMessageSeedStep (which only checks "any outbound
 /// message exists at all", and would otherwise interfere with this step's own "already
-/// seeded" logic either way round): this step checks for its own patient-name marker prefix
+/// seeded" logic either way round): this step checks for its own patient-phone marker prefix
 /// instead of message count.
 ///
 /// targetMessageCount is a constructor parameter (not a hardcoded 50,000) so tests can seed a
 /// much smaller number and stay fast; production DI registers the default (50,000).
 public class PerformanceSeedStep(int targetMessageCount = 50_000) : IDbSeedStep
 {
-    private const string PatientNamePrefix = "PerfSeed Patient ";
+    // Idempotency + synthetic-patient marker: this phone prefix is unique to this step (the
+    // small demo roster in PatientAppointmentSeedStep uses +15550100xxx), so it doubles as
+    // the "already seeded" check without needing a placeholder name prefix.
+    private const string PatientPhonePrefix = "+1777";
     private const int MessagesPerThreadTarget = 50;
     private const int MinThreadCount = 10;
     private const int MaxThreadCount = 1_000;
     private const int BatchSize = 2_000;
     private const double OutboundRatio = 0.9;
 
+    // Realistic sample names (not real patient data — BR-006) instead of "PerfSeed Patient
+    // 00001".. placeholders, so this volume-seed roster reads like real patients too. Four
+    // locale pools (Pakistani English / Indian / Chinese / Japanese), first/last names never
+    // mixed across locales so combinations stay authentic; GenerateName round-robins the
+    // locale by index so the mix stays balanced across however many patients are seeded.
+    private static readonly (string[] FirstNames, string[] LastNames)[] NamePools =
+    [
+        // Pakistani English
+        (
+            ["Ahmed", "Bilal", "Usman", "Hamza", "Ayesha", "Sana", "Zainab", "Imran", "Faisal", "Nadia", "Tariq", "Sara", "Kamran", "Mehwish", "Adeel", "Sobia", "Waqas", "Shazia", "Junaid", "Farah"],
+            ["Khan", "Raza", "Malik", "Sheikh", "Farooq", "Qureshi", "Siddiqui", "Chaudhry", "Baig", "Mahmood", "Iqbal", "Yousuf", "Aslam", "Rashid", "Naveed", "Hussain", "Akhtar", "Zafar", "Anjum", "Hassan"]
+        ),
+        // Indian
+        (
+            ["Rohan", "Priya", "Arjun", "Ananya", "Vikram", "Neha", "Rahul", "Kavya", "Aditya", "Sneha", "Karan", "Divya", "Sanjay", "Pooja", "Manoj", "Ritu", "Arvind", "Meera", "Suresh", "Lakshmi"],
+            ["Sharma", "Patel", "Mehta", "Iyer", "Nair", "Gupta", "Verma", "Reddy", "Rao", "Joshi", "Malhotra", "Menon", "Kapoor", "Desai", "Pillai", "Bhatt", "Chawla", "Krishnan", "Iyengar", "Subramaniam"]
+        ),
+        // Chinese
+        (
+            ["Wei", "Li", "Jing", "Hui", "Yan", "Feng", "Xin", "Mei", "Jun", "Ling", "Tao", "Fang", "Chao", "Hong", "Bo", "Xia", "Ping", "Rui", "Yun", "Qiang"],
+            ["Zhang", "Wang", "Chen", "Liu", "Yang", "Huang", "Zhao", "Wu", "Zhou", "Xu", "Sun", "Ma", "Gao", "Lin", "Zheng", "Liang", "Song", "Xie", "Han", "Deng"]
+        ),
+        // Japanese
+        (
+            ["Haruto", "Yui", "Sora", "Aoi", "Ren", "Hina", "Riku", "Sakura", "Sota", "Yuna", "Hayato", "Mio", "Kaito", "Rin", "Yuto", "Kokoro", "Daiki", "Nanami", "Ryusei", "Akari"],
+            ["Sato", "Suzuki", "Takahashi", "Tanaka", "Watanabe", "Ito", "Yamamoto", "Nakamura", "Kobayashi", "Kato", "Yoshida", "Yamada", "Sasaki", "Matsumoto", "Inoue", "Kimura", "Shimizu", "Hayashi", "Saito", "Mori"]
+        ),
+    ];
+
+    private static string GenerateName(int index)
+    {
+        var pool = NamePools[index % NamePools.Length];
+        var comboIndex = index / NamePools.Length;
+        var firstName = pool.FirstNames[comboIndex % pool.FirstNames.Length];
+        var lastName = pool.LastNames[(comboIndex / pool.FirstNames.Length) % pool.LastNames.Length];
+        return $"{firstName} {lastName}";
+    }
+
     public async Task RunAsync(NotifyHubDbContext db, CancellationToken ct)
     {
-        if (await db.Patients.AnyAsync(p => p.Name.StartsWith(PatientNamePrefix), ct))
+        if (await db.Patients.AnyAsync(p => p.Phone.StartsWith(PatientPhonePrefix), ct))
             return;
 
         var templates = await db.MessageTemplates.ToListAsync(ct);
@@ -52,7 +93,7 @@ public class PerformanceSeedStep(int targetMessageCount = 50_000) : IDbSeedStep
         var threadCount = Math.Clamp(targetMessageCount / MessagesPerThreadTarget, MinThreadCount, MaxThreadCount);
 
         var patients = Enumerable.Range(1, threadCount)
-            .Select(i => new Patient { Name = $"{PatientNamePrefix}{i:D5}", Phone = $"+1777{i:D7}" })
+            .Select(i => new Patient { Name = GenerateName(i - 1), Phone = $"{PatientPhonePrefix}{i:D7}" })
             .ToList();
         db.Patients.AddRange(patients);
         await db.SaveChangesAsync(ct);

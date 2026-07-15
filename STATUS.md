@@ -133,6 +133,49 @@ that were flagged rather than silently fixed or ignored.
       direct SQL and confirmed the real `EscalationWorker` process (not a simulated
       call) auto-reverted the user to `Active` with the correct audit entry within its
       next real poll cycle.
+- [x] **Seed data name realism fix (2026-07-15, ad-hoc, outside `STEP9_PLAN.md` scope)** —
+      `PerformanceSeedStep`'s up-to-1,000 synthetic patients were named
+      `"PerfSeed Patient 00001"`.."00999" (placeholder, not realistic); replaced with
+      `GenerateName`, drawing from four locale-specific first/last-name pools (Pakistani
+      English/Indian/Chinese/Japanese, ~20 names each), round-robinned by index so the mix
+      stays balanced across however many patients get seeded. Idempotency check switched
+      from a patient-name prefix to the patient-phone prefix (`+1777`, already unique to
+      this step) since the name string stopped being a stable marker. Also rebalanced
+      `PatientAppointmentSeedStep`'s 10 demo patients across the same four locales (3
+      Pakistani English/3 Indian/2 Chinese/2 Japanese) — see below for the superseded list.
+      No schema/migration/business-logic changes. `PerformanceSeedStepTests` (3 tests) still
+      green. See `CODEBASE_MAP.md` §4a.
+- [x] **Reminder SMS dialog editable body + Event Time insertion (2026-07-15, ad-hoc,
+      outside `STEP9_PLAN.md` scope — reverses rule 31)** — two reported bugs: (1) the
+      dialog's SMS text was a locked read-only preview that looked/behaved like a disabled
+      text area once a template was picked; (2) there was no way to insert Event Time into
+      the message at all. Root cause for (1): this was P9-08's rule 31 working exactly as
+      designed (deliberately read-only, `TemplateId`-linked, rendered fresh at dispatch so
+      later template edits still reach an already-scheduled reminder) — not a bug, but the
+      user confirmed they want it reversed. Changes: `reminder-sms-dialog.tsx`'s preview
+      `<p>` became a freely-editable `Textarea`; selecting a template still replaces its
+      contents (via P9-04's preview endpoint) but it's editable afterward; a new
+      `insertAtCursor` (mirrors `TemplateForm.insertBookmark`) inserts text at the caret,
+      replacing any selection, cursor placed right after. `DateTimePicker` gained an
+      `onCommit` prop (fires once when its popover closes, unlike `onChange` which fires
+      per clock-drag tick) — Event Time insertion is wired through that, not `onChange`
+      directly, or it would insert dozens of partial values while the user drags the clock
+      hand. Backend: `CreateReminderRequest` gained an optional `Body`, committed as
+      `RenderedBody` at creation when provided (`ThreadsController.CreateReminder`);
+      `MessageDispatcher.DispatchOneAsync`'s auto-render gated on `RenderedBody is null` so
+      a committed body is never clobbered at dispatch. Backward-compatible: omitting `Body`
+      preserves the original null-`RenderedBody`/rendered-fresh-at-dispatch path unchanged
+      (all 6 pre-existing `RemindersTests` pass unmodified). 2 new integration tests
+      (`CreateReminder_WithBody_CommitsItAsRenderedBody`,
+      `DispatchDueMessagesAsync_PreservesCommittedRenderedBody_ForTemplateLinkedReminder`),
+      86 Domain / 107 Integration fast backend tests green. See `CODEBASE_MAP.md` §4b for
+      the full writeup, including the documented trade-off: new reminders now freeze their
+      wording at creation time (same as Standard SMS) — P9-05's template-edit safety net
+      still nulls a committed reminder's `RenderedBody` if the linked template is edited
+      later, forcing a fresh render, deliberately not scoped to exclude reminders. No
+      browser tool available this session — verified via `tsc -b`/`dotnet build`/full test
+      suite, not an actual click-through; a manual pass through the dialog is recommended
+      before treating this as fully verified.
 
 ## Current step (historical, step 7)
 Step 7 of 7 (docs) — README, 3 ADRs, OWASP self-assessment, AI usage log, FR-013 coverage number. Step 6 was reviewed and confirmed working (audit log correct for both roles, pagination/filters work, 50k seed correctly skips the live dispatcher) and is committed (`1c6c47b`). See "Step 7 checklist" below.
@@ -298,7 +341,8 @@ verified end-to-end against the live Docker stack (screenshots taken, not just c
     `index.html` — first favicon this repo has ever had. Seed data: `PatientAppointmentSeedStep`'s
     10 patients renamed from "Patient 01".."10" to realistic names (John Donald, Leonard Allen,
     Wasim Khan, Mateen Anjum, Emily Carter, Robert Chen, Fatima Ali, Michael Brown, Olivia Turner,
-    Ahmed Hassan); `UserSeedStep`/`SecondStaffSeedStep` set `FullName` (Admin → "Dr. Jawad", Staff →
+    Ahmed Hassan — **superseded 2026-07-15, see the seed-data name-realism fix entry above**);
+    `UserSeedStep`/`SecondStaffSeedStep` set `FullName` (Admin → "Dr. Jawad", Staff →
     "Sarah Wilson", Staff2 → "David Lee") while login `Username`s stay config/env-driven as before
     (security-sensitive, not renamed). New `SystemSettingSeedStep` seeds default rows for every
     known setting key, idempotent per-key (not "any setting exists") so a future new key isn't

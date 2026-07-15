@@ -200,6 +200,7 @@ function ClockFace({
 export function DateTimePicker({
   value,
   onChange,
+  onCommit,
   mode = "datetime",
   timeRequired = true,
   minDate,
@@ -207,9 +208,16 @@ export function DateTimePicker({
   disabled,
   id,
   className,
+  variant = "default",
 }: {
   value: string;
   onChange: (value: string) => void;
+  /** Fired once with the current value when the popover closes (Done button, outside
+   * click, Escape) while a value is set — unlike onChange, which fires continuously
+   * during interaction (once per clock-drag tick), this fires once per "the user is
+   * done picking." Optional; callers that don't need a discrete commit point (most)
+   * can ignore it. */
+  onCommit?: (value: string) => void;
   mode?: "date" | "datetime";
   timeRequired?: boolean;
   minDate?: Date;
@@ -217,6 +225,11 @@ export function DateTimePicker({
   disabled?: boolean;
   id?: string;
   className?: string;
+  /** "compact": plain bordered trigger matching Input's height/border with a trailing
+   * 14px Calendar icon, used by the dense filter-bar grids (Task board/SMS
+   * History/Audit log). "default" (unchanged): the existing outlined-button trigger with
+   * a leading icon, used everywhere else (forms/dialogs). */
+  variant?: "default" | "compact";
 }) {
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<"date" | "time">("date");
@@ -230,6 +243,11 @@ export function DateTimePicker({
       setClockPhase("hour");
     }
   }, [open]);
+
+  const handleOpenChange = (next: boolean) => {
+    setOpen(next);
+    if (!next && value) onCommit?.(value);
+  };
 
   const commitDate = (date: Date | undefined) => {
     if (!date) return;
@@ -251,18 +269,34 @@ export function DateTimePicker({
   const display = formatDisplay(value, mode);
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
-        <Button
-          id={id}
-          type="button"
-          variant="outline"
-          disabled={disabled}
-          className={cn("w-full justify-start gap-2 font-normal", !display && "text-muted-foreground", className)}
-        >
-          {mode === "date" ? <CalendarIcon className="size-4" /> : <ClockIcon className="size-4" />}
-          {display ?? placeholder}
-        </Button>
+        {variant === "compact" ? (
+          <button
+            id={id}
+            type="button"
+            disabled={disabled}
+            className={cn(
+              "flex h-8 w-full items-center justify-between gap-2 rounded-md border border-input bg-transparent px-3 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50",
+              !display && "text-muted-foreground",
+              className,
+            )}
+          >
+            <span className="truncate">{display ?? placeholder}</span>
+            <CalendarIcon className="size-3.5 shrink-0 text-muted-foreground" />
+          </button>
+        ) : (
+          <Button
+            id={id}
+            type="button"
+            variant="outline"
+            disabled={disabled}
+            className={cn("w-full justify-start gap-2 font-normal", !display && "text-muted-foreground", className)}
+          >
+            {mode === "date" ? <CalendarIcon className="size-4" /> : <ClockIcon className="size-4" />}
+            {display ?? placeholder}
+          </Button>
+        )}
       </PopoverTrigger>
       <PopoverContent className="w-auto p-0" align="start">
         {mode === "datetime" && (
