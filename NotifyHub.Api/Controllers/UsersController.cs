@@ -164,11 +164,13 @@ public class UsersController(NotifyHubDbContext db, IPasswordHasher<User> passwo
                         && t.Status != NotifyHubTaskStatus.Cancelled)
                     .ToListAsync(ct);
 
+                var forwardedToAdmin = await db.Users.FindAsync([forwardedToAdminId], ct);
+
                 foreach (var task in openTasks)
                 {
                     task.AssignedStaffId = forwardedToAdminId;
                     AuditLogger.Add(db, actor: "system", action: "forward", entityType: "TaskItem", entityId: task.Id,
-                        detail: $"auto-forwarded: assignee marked {newStatus}");
+                        detail: $"Task auto-forwarded from {user.Username} to {forwardedToAdmin!.Username} ({user.Username} marked {newStatus})");
                     forwardedTaskIds.Add(task.Id);
                 }
             }

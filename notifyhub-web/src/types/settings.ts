@@ -7,6 +7,7 @@ export interface SettingsDto {
   rateLimitWindowHours: number;
   reminderOffsetMinutes: number;
   reminderExpiryOffsetMinutes: number;
+  defaultReminderTemplateId: number | null;
 }
 
 export interface UpdateSettingsRequest {
@@ -18,6 +19,7 @@ export interface UpdateSettingsRequest {
   rateLimitWindowHours?: number;
   reminderOffsetMinutes?: number;
   reminderExpiryOffsetMinutes?: number;
+  defaultReminderTemplateId?: number;
 }
 
 export interface SystemInfoDto {

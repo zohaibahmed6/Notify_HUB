@@ -71,63 +71,65 @@
      existing primitive (Button/Card/Input/Badge) reskins automatically for
      any redesign screen without code changes to those primitives. */
   .redesign {
-    --background: 240 25% 98%;
-    --foreground: 240 10% 12%;
+    --background: 150 20% 96%;
+    --foreground: 150 8% 12%;
 
     --card: 0 0% 100%;
-    --card-foreground: 240 10% 12%;
+    --card-foreground: 150 8% 12%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 12%;
+    --popover-foreground: 150 8% 12%;
 
-    --primary: 243 75% 59%;
+    --primary: 142 70% 42%;
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 240 10% 96%;
-    --secondary-foreground: 240 10% 20%;
+    --secondary: 150 15% 93%;
+    --secondary-foreground: 150 8% 20%;
 
-    --muted: 240 10% 95%;
-    --muted-foreground: 240 5% 45%;
+    --muted: 150 12% 93%;
+    --muted-foreground: 150 5% 45%;
 
-    --accent: 243 60% 96%;
-    --accent-foreground: 243 75% 30%;
+    --accent: 142 45% 93%;
+    --accent-foreground: 142 65% 26%;
 
     --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 240 10% 90%;
-    --input: 240 10% 88%;
-    --ring: 243 75% 59%;
+    --border: 150 15% 84%;
+    --input: 150 15% 82%;
+    --ring: 142 70% 42%;
+
+    --radius: 0.75rem;
   }
 
   .redesign.dark {
-    --background: 230 15% 7%;
-    --foreground: 220 15% 92%;
+    --background: 150 12% 7%;
+    --foreground: 140 10% 92%;
 
-    --card: 230 14% 10%;
-    --card-foreground: 220 15% 92%;
+    --card: 150 12% 10%;
+    --card-foreground: 140 10% 92%;
 
-    --popover: 230 14% 10%;
-    --popover-foreground: 220 15% 92%;
+    --popover: 150 12% 10%;
+    --popover-foreground: 140 10% 92%;
 
-    --primary: 243 80% 68%;
-    --primary-foreground: 240 15% 8%;
+    --primary: 142 65% 55%;
+    --primary-foreground: 150 20% 8%;
 
-    --secondary: 230 12% 16%;
-    --secondary-foreground: 220 15% 88%;
+    --secondary: 150 10% 16%;
+    --secondary-foreground: 140 10% 88%;
 
-    --muted: 230 12% 14%;
-    --muted-foreground: 220 10% 60%;
+    --muted: 150 10% 14%;
+    --muted-foreground: 140 8% 60%;
 
-    --accent: 243 30% 18%;
-    --accent-foreground: 220 15% 95%;
+    --accent: 142 30% 18%;
+    --accent-foreground: 140 15% 92%;
 
     --destructive: 0 70% 55%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 230 12% 18%;
-    --input: 230 12% 20%;
-    --ring: 243 80% 68%;
+    --border: 150 10% 18%;
+    --input: 150 10% 20%;
+    --ring: 142 65% 55%;
   }
 }
 

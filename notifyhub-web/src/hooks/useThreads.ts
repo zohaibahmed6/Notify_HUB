@@ -77,8 +77,13 @@ export function useCreateTaskMutation(threadId: number) {
 /// eventTime + the current Reminder Offset setting. `body` (the freely-editable SMS
 /// text, rule 31 reversal) is committed as RenderedBody at creation when provided.
 export function useCreateReminderMutation(threadId: number) {
+  const queryClient = useQueryClient();
+
   return useMutation({
     mutationFn: (payload: { templateId: number; eventTime: string; body?: string }) =>
       apiClient.post(`/api/threads/${threadId}/reminders`, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["thread", threadId] });
+    },
   });
 }

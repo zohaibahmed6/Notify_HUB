@@ -6,7 +6,7 @@ namespace NotifyHub.Infrastructure.Settings;
 
 public record QuietHoursSettings(bool Enabled, TimeOnly Start, TimeOnly End);
 public record RateLimitSettings(bool Enabled, int MaxMessages, int WindowHours);
-public record ReminderSettings(int OffsetMinutes, int ExpiryOffsetMinutes);
+public record ReminderSettings(int OffsetMinutes, int ExpiryOffsetMinutes, long? DefaultTemplateId);
 
 /// §6/§8: typed accessors over the generic SystemSetting key-value table — parsing/
 /// validation/defaults live here once instead of scattered across controllers/consumers.
@@ -28,6 +28,12 @@ public class SettingsService(NotifyHubDbContext db)
     /// values are current when created.
     public const string ReminderOffsetMinutesKey = "Reminder:OffsetMinutes";
     public const string ReminderExpiryOffsetMinutesKey = "Reminder:ExpiryOffsetMinutes";
+
+    /// The template preselected when opening the Reminder SMS dialog from a thread — a
+    /// convenience default only, never enforced server-side (staff can still pick any
+    /// other active template). `0`/unparseable/absent all mean "no default" (real
+    /// MessageTemplate ids are DB auto-increment, so 0 is never a real id).
+    public const string DefaultReminderTemplateIdKey = "Reminder:DefaultTemplateId";
 
     public async Task<QuietHoursSettings> GetQuietHoursAsync(CancellationToken ct)
     {
@@ -55,7 +61,8 @@ public class SettingsService(NotifyHubDbContext db)
 
         return new ReminderSettings(
             OffsetMinutes: values.TryGetValue(ReminderOffsetMinutesKey, out var o) && int.TryParse(o, out var offset) ? offset : 1440,
-            ExpiryOffsetMinutes: values.TryGetValue(ReminderExpiryOffsetMinutesKey, out var e) && int.TryParse(e, out var expiryOffset) ? expiryOffset : 15);
+            ExpiryOffsetMinutes: values.TryGetValue(ReminderExpiryOffsetMinutesKey, out var e) && int.TryParse(e, out var expiryOffset) ? expiryOffset : 15,
+            DefaultTemplateId: values.TryGetValue(DefaultReminderTemplateIdKey, out var t) && long.TryParse(t, out var tid) && tid > 0 ? tid : null);
     }
 
     public async Task<bool> IsQuietHoursNowAsync(CancellationToken ct)

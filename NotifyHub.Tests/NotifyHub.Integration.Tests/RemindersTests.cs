@@ -2,11 +2,14 @@ using System.Net;
 using System.Net.Http.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using NotifyHub.Api.Messages.Dtos;
 using NotifyHub.Api.Threads.Dtos;
 using NotifyHub.Domain.Entities;
 using NotifyHub.Domain.Enums;
+using NotifyHub.Infrastructure.Messaging;
 using NotifyHub.Infrastructure.Persistence;
+using NotifyHub.Infrastructure.Settings;
 using Xunit;
 
 namespace NotifyHub.Integration.Tests;
@@ -72,6 +75,35 @@ public class RemindersTests(CustomWebApplicationFactory factory) : IClassFixture
 
         Assert.Equal(templateId, message.TemplateId); // still linked, kept for idempotency/reporting
         Assert.Equal("Hi Jane, your appointment is on Jul 20, 2026, 3:00 PM.", message.RenderedBody);
+    }
+
+    [Fact]
+    public async Task CreateReminder_AppearsInThreadDetail_WithEventTimeAndScheduledAt()
+    {
+        // End-to-end proof (not just the entity-level assertions above) that a newly
+        // created reminder is actually visible in the inbox: still Queued, and carrying
+        // both its Event Time and computed Scheduled Send Time through GET /api/threads/{id}.
+        var (threadId, templateId) = await SeedThreadAndTemplateAsync("+19990005009");
+        var (client, _) = await _client.AsStaffAsync();
+        var eventTime = DateTime.UtcNow.AddDays(2);
+
+        var created = await client.PostAsJsonAsync($"/api/threads/{threadId}/reminders", new CreateReminderRequest
+        {
+            TemplateId = templateId,
+            EventTime = eventTime,
+            Body = "Reminder body committed at creation",
+        });
+        Assert.Equal(HttpStatusCode.NoContent, created.StatusCode);
+
+        var response = await client.GetAsync($"/api/threads/{threadId}");
+        var body = await response.Content.ReadFromJsonAsync<ThreadDetailDto>();
+        var message = body!.Messages.Items.Single(m => m.Body == "Reminder body committed at creation");
+
+        Assert.Equal("Queued", message.Status);
+        Assert.NotNull(message.EventTime);
+        Assert.Equal(eventTime, message.EventTime!.Value, TimeSpan.FromSeconds(1));
+        Assert.NotNull(message.ScheduledAt);
+        Assert.Equal(eventTime.AddMinutes(-1440), message.ScheduledAt!.Value, TimeSpan.FromSeconds(1));
     }
 
     [Fact]
@@ -182,6 +214,67 @@ public class RemindersTests(CustomWebApplicationFactory factory) : IClassFixture
 
         var cancelled = await client.PostAsync($"/api/messages/{messageId}/cancel", null);
         Assert.Equal(HttpStatusCode.BadRequest, cancelled.StatusCode);
+    }
+
+    [Fact]
+    public async Task Dispatch_RendersAppointmentTimeFromEventTime_WhenBodyLeftBlankAtCreation()
+    {
+        // Closes the gap where a Reminder SMS created with a blank body (RenderedBody left
+        // null, deferring rendering to dispatch time) would previously go out with the
+        // literal, unresolved "{{appointment_time}}" text — RenderAsync never read
+        // message.EventTime, only TriggerReference (which reminders always leave null).
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
+
+        var gatewayClient = factory.Services.GetRequiredService<IHttpClientFactory>().CreateClient("self");
+        var dispatcher = new MessageDispatcher(db, gatewayClient, NullLogger<MessageDispatcher>.Instance, new SettingsService(db));
+
+        // Drain the factory's seeded performance-test backlog first (Seed:PerformanceMessageCount
+        // in CustomWebApplicationFactory) — otherwise those older-CreatedAt rows fill the
+        // batch (Take(10)) ahead of the message this test creates below, and it never gets
+        // dispatched within a single call.
+        while (await dispatcher.DispatchDueMessagesAsync(CancellationToken.None) > 0)
+        {
+        }
+
+        var patient = new Patient { Name = "Dispatch Reminder Test Patient", Phone = "+19990005008" };
+        db.Patients.Add(patient);
+
+        var template = new MessageTemplate
+        {
+            Name = "Dispatch reminder test template",
+            Body = "Hi {{patient_name}}, see you at {{appointment_time}}.",
+            TriggerType = TriggerType.AppointmentReminder,
+            OffsetHours = 24,
+        };
+        db.MessageTemplates.Add(template);
+        await db.SaveChangesAsync();
+
+        var eventTime = DateTime.UtcNow.AddHours(2);
+        var message = new OutboundMessage
+        {
+            PatientId = patient.Id,
+            TemplateId = template.Id,
+            SenderType = SenderType.Staff,
+            TriggerReference = null,
+            RenderedBody = null, // blank-body-at-creation path
+            CreatedAt = DateTime.UtcNow,
+            Status = MessageStatus.Queued,
+            AttemptCount = 0,
+            ScheduledAt = DateTime.UtcNow.AddMinutes(-1), // already due
+            ExpiresAt = DateTime.UtcNow.AddHours(1), // not yet expired
+            EventTime = eventTime,
+            ReminderOffsetMinutes = 1440,
+            ReminderExpiryOffsetMinutes = 15,
+        };
+        db.OutboundMessages.Add(message);
+        await db.SaveChangesAsync();
+
+        await dispatcher.DispatchDueMessagesAsync(CancellationToken.None);
+
+        var updated = await db.OutboundMessages.SingleAsync(m => m.Id == message.Id);
+        Assert.Contains(eventTime.ToString("u"), updated.RenderedBody);
+        Assert.DoesNotContain("{{appointment_time}}", updated.RenderedBody);
     }
 
     private async Task<(long ThreadId, long TemplateId)> SeedThreadAndTemplateAsync(string phone)

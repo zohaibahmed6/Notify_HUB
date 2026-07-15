@@ -48,6 +48,9 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
                 // whole suite seed 50k rows per fixture. PerformanceSeedStepTests exercises the
                 // real behavior directly with its own explicit count instead.
                 ["Seed:PerformanceMessageCount"] = "50",
+                // Same reasoning as above — cap TaskSeedStep so it doesn't also seed 1,000
+                // tasks per fixture.
+                ["Seed:TaskCount"] = "20",
                 ["Webhooks:SharedSecret"] = SharedSecret,
                 ["MockGateway:FailRatePercent"] = MockGatewayFailRatePercent.ToString(),
                 ["MockGateway:MinDelayMs"] = "1",

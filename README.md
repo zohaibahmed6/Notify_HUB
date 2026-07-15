@@ -5,6 +5,9 @@ inbox, and task orchestration — built as a solo 3-day assessment build. Full r
 record lives in [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md); this README is the practical
 "how do I run/test/understand this" entry point.
 
+New and non-technical? Start with [`docs/HOW_IT_WORKS.md`](docs/HOW_IT_WORKS.md) — a plain-English
+walkthrough with a flow diagram, no jargon.
+
 ## Stack
 
 ASP.NET Core Web API + EF Core (MySQL) + SignalR + JWT auth, a separate `Worker` process for

@@ -221,6 +221,14 @@ export function ConversationPanelV2({ threadId, onBack }: { threadId: number; on
                 message.direction === "outbound" && message.status
                   ? (DELIVERY_STATUS_CONFIG[message.status] ?? UNKNOWN_STATUS_CONFIG)
                   : null;
+              // eventTime is only ever populated for a Reminder SMS (P9-08) — used here to
+              // scope the "Will send" line to reminders, not plain staff-scheduled replies,
+              // which share the same Queued/scheduledAt mechanism but no EventTime.
+              const isQueuedReminder =
+                message.direction === "outbound" &&
+                message.status === "Queued" &&
+                message.eventTime &&
+                message.scheduledAt;
               return (
                 <div
                   key={index}
@@ -249,6 +257,11 @@ export function ConversationPanelV2({ threadId, onBack }: { threadId: number; on
                         {new Date(message.timestamp).toLocaleString()}
                       </span>
                     </div>
+                    {isQueuedReminder && (
+                      <div className="mt-0.5 flex items-center justify-end gap-1.5 text-[10px] opacity-80">
+                        <span>Will send {new Date(message.scheduledAt!).toLocaleString()}</span>
+                      </div>
+                    )}
                     {statusConfig && (
                       <div className="mt-1 flex justify-end">
                         <StatusBadge {...statusConfig} size="xs" />

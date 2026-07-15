@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using NotifyHub.Api.Settings.Dtos;
 using NotifyHub.Infrastructure.Persistence;
 using NotifyHub.Infrastructure.Settings;
@@ -30,6 +31,7 @@ public class SettingsController(SettingsService settingsService, NotifyHubDbCont
             RateLimitWindowHours = rateLimit.WindowHours,
             ReminderOffsetMinutes = reminder.OffsetMinutes,
             ReminderExpiryOffsetMinutes = reminder.ExpiryOffsetMinutes,
+            DefaultReminderTemplateId = reminder.DefaultTemplateId,
         });
     }
 
@@ -55,6 +57,9 @@ public class SettingsController(SettingsService settingsService, NotifyHubDbCont
         if (request.ReminderExpiryOffsetMinutes is <= 0)
             return Problem(statusCode: StatusCodes.Status400BadRequest, title: "ReminderExpiryOffsetMinutes must be positive.");
 
+        if (request.DefaultReminderTemplateId is { } templateId && templateId > 0 && !await db.MessageTemplates.AnyAsync(t => t.Id == templateId, ct))
+            return Problem(statusCode: StatusCodes.Status400BadRequest, title: "DefaultReminderTemplateId does not reference an existing template.");
+
         var updates = new Dictionary<string, string>();
 
         if (request.QuietHoursEnabled is not null)
@@ -73,6 +78,8 @@ public class SettingsController(SettingsService settingsService, NotifyHubDbCont
             updates[SettingsService.ReminderOffsetMinutesKey] = request.ReminderOffsetMinutes.Value.ToString();
         if (request.ReminderExpiryOffsetMinutes is not null)
             updates[SettingsService.ReminderExpiryOffsetMinutesKey] = request.ReminderExpiryOffsetMinutes.Value.ToString();
+        if (request.DefaultReminderTemplateId is not null)
+            updates[SettingsService.DefaultReminderTemplateIdKey] = request.DefaultReminderTemplateId.Value.ToString();
 
         if (updates.Count > 0)
             await settingsService.SetAsync(updates, ct);

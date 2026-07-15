@@ -5,6 +5,9 @@ analyzing source for any feature. One tree entry per feature below, cross-refere
 frontend/backend/worker/database/security/business-rule/API/related-feature/dependency
 documentation rather than duplicating it.
 
+Looking for a plain-English, non-technical overview instead? See
+[`HOW_IT_WORKS.md`](HOW_IT_WORKS.md).
+
 **Documentation priority** (when sources conflict — report the conflict, don't guess):
 1. Approved Business Rules (`PROJECT_CONTEXT.md` BR- entries, explicit user instruction)
 2. Functional Specification (`PROJECT_CONTEXT.md` FR- entries)

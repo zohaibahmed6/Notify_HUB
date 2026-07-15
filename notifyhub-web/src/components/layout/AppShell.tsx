@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
-import { Menu } from "lucide-react";
+import { Bell, Menu } from "lucide-react";
 
 import { useAuth } from "@/context/AuthContext";
 import { useUIVersion } from "@/context/UIVersionContext";
@@ -47,18 +47,34 @@ export default function AppShell() {
 
   return (
     <div className="flex h-screen flex-col bg-background">
-      <header className="flex shrink-0 items-center justify-between gap-3 border-b px-3 py-3 sm:px-4">
+      <header
+        className={cn(
+          "flex shrink-0 items-center justify-between gap-3 px-3 py-3 sm:px-4",
+          isRedesign ? "bg-primary text-primary-foreground shadow-sm" : "border-b bg-background",
+        )}
+      >
         <div className="flex min-w-0 items-center gap-3 sm:gap-6">
           <Button
             variant="ghost"
             size="icon"
-            className="shrink-0 md:hidden"
+            className={cn(
+              "shrink-0 md:hidden",
+              isRedesign && "text-primary-foreground hover:bg-white/10 hover:text-primary-foreground",
+            )}
             onClick={() => setNavOpen(true)}
           >
             <Menu className="size-5" />
             <span className="sr-only">Open navigation</span>
           </Button>
-          <span className="shrink-0 font-semibold">NotifyHub</span>
+          <span
+            className={cn(
+              "flex shrink-0 items-center gap-1.5 font-semibold",
+              isRedesign && "text-primary-foreground",
+            )}
+          >
+            <Bell className="size-4" />
+            NotifyHub
+          </span>
           <nav className="hidden gap-1 md:flex">
             {visibleNavLinks.map((link) => (
               <NavLink
@@ -67,8 +83,16 @@ export default function AppShell() {
                 end={link.end}
                 className={({ isActive }) =>
                   cn(
-                    "rounded-md px-3 py-1.5 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground",
-                    isActive && "bg-accent text-accent-foreground",
+                    "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                    isRedesign
+                      ? cn(
+                          "text-primary-foreground/80 hover:bg-white/10 hover:text-primary-foreground",
+                          isActive && "bg-white/15 text-primary-foreground",
+                        )
+                      : cn(
+                          "hover:bg-accent hover:text-accent-foreground",
+                          isActive && "bg-accent text-accent-foreground",
+                        ),
                   )
                 }
               >
@@ -79,7 +103,12 @@ export default function AppShell() {
         </div>
         <div className="flex items-center gap-2 sm:gap-3">
           <TaskNavWidget />
-          <span className="hidden text-sm text-muted-foreground md:inline">
+          <span
+            className={cn(
+              "hidden text-sm md:inline",
+              isRedesign ? "text-primary-foreground/70" : "text-muted-foreground",
+            )}
+          >
             {user?.username} ({user?.role})
           </span>
           <Button variant="outline" size="sm" onClick={() => void logout()}>
@@ -93,7 +122,10 @@ export default function AppShell() {
       <Sheet open={navOpen} onOpenChange={setNavOpen}>
         <SheetContent side="left" className="flex w-3/4 max-w-xs flex-col gap-4">
           <SheetHeader>
-            <SheetTitle>NotifyHub</SheetTitle>
+            <SheetTitle className="flex items-center gap-1.5">
+              <Bell className="size-4" />
+              NotifyHub
+            </SheetTitle>
           </SheetHeader>
           <nav className="flex flex-col gap-1">
             {visibleNavLinks.map((link) => (

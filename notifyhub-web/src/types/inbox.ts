@@ -21,6 +21,8 @@ export interface ThreadMessageDto {
   body: string;
   timestamp: string;
   status: string | null;
+  eventTime: string | null; // outbound only, Reminder SMS only
+  scheduledAt: string | null; // outbound only: when a Queued message will actually dispatch
 }
 
 export interface ThreadDetailDto extends ThreadDto {

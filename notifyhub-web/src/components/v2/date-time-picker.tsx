@@ -345,7 +345,7 @@ export function DateTimePicker({
                 if (clockPhase === "hour") {
                   setClockPhase("minute");
                 } else {
-                  setOpen(false);
+                  handleOpenChange(false);
                 }
               }}
             />
@@ -353,7 +353,7 @@ export function DateTimePicker({
         )}
 
         <div className="flex items-center justify-end gap-2 border-t p-2">
-          <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false)}>
+          <Button type="button" size="sm" variant="ghost" onClick={() => handleOpenChange(false)}>
             Done
           </Button>
         </div>

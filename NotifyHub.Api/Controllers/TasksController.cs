@@ -200,7 +200,7 @@ public class TasksController(NotifyHubDbContext db, IHubContext<InboxHub> inboxH
         task.AssignedStaff = targetUser; // keep the loaded nav in sync so ToDto below isn't stale
 
         var callerUsername = User.FindFirstValue(ClaimTypes.Name)!;
-        var detail = $"forwarded to {targetUser.Username} (was {previousAssignee})" + (string.IsNullOrWhiteSpace(request.Note) ? "" : $": {request.Note}");
+        var detail = $"Task forwarded from {previousAssignee} to {targetUser.Username}" + (string.IsNullOrWhiteSpace(request.Note) ? "" : $": {request.Note}");
         AuditLogger.Add(db, actor: callerUsername, action: "forward", entityType: "TaskItem", entityId: task.Id, detail: detail);
 
         await db.SaveChangesAsync(ct);

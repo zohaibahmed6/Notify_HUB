@@ -12,4 +12,7 @@ public class SettingsDto
     /// P9-08 rule 6/16 — current defaults applied to newly created Reminder SMS.
     public int ReminderOffsetMinutes { get; set; }
     public int ReminderExpiryOffsetMinutes { get; set; }
+
+    /// Preselected template when opening the Reminder SMS dialog from a thread; null = none configured.
+    public long? DefaultReminderTemplateId { get; set; }
 }

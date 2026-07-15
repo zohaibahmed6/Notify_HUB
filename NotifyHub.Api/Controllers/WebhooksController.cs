@@ -26,7 +26,8 @@ public class WebhooksController(NotifyHubDbContext db, IHubContext<InboxHub> inb
     [HttpPost("gateway-receipt")]
     public async Task<ActionResult> GatewayReceipt(GatewayReceiptRequest request, CancellationToken ct)
     {
-        var message = await db.OutboundMessages.FindAsync([request.MessageId], ct);
+        var message = await db.OutboundMessages.Include(m => m.Patient)
+            .SingleOrDefaultAsync(m => m.Id == request.MessageId, ct);
         if (message is null)
             return NotFound();
 
@@ -48,7 +49,8 @@ public class WebhooksController(NotifyHubDbContext db, IHubContext<InboxHub> inb
                 Status = MessageStatus.Delivered,
                 OccurredAt = now,
             });
-            AuditLogger.Add(db, actor: "system", action: "receipt", entityType: "OutboundMessage", entityId: message.Id, detail: "delivered");
+            AuditLogger.Add(db, actor: "system", action: "receipt", entityType: "OutboundMessage", entityId: message.Id,
+                detail: $"Delivery confirmed for SMS to {message.Patient.Name} ({message.Patient.Phone})");
         }
         else
         {
@@ -65,14 +67,14 @@ public class WebhooksController(NotifyHubDbContext db, IHubContext<InboxHub> inb
                 message.Status = MessageStatus.Failed;
                 message.NextRetryAt = null;
                 AuditLogger.Add(db, actor: "system", action: "receipt", entityType: "OutboundMessage", entityId: message.Id,
-                    detail: $"failed, terminal after {message.AttemptCount} attempts");
+                    detail: $"SMS to {message.Patient.Name} ({message.Patient.Phone}) failed, terminal after {message.AttemptCount} attempts");
             }
             else
             {
                 message.Status = MessageStatus.Queued;
                 message.NextRetryAt = now + RetryBackoffPolicy.NextDelay(message.AttemptCount);
                 AuditLogger.Add(db, actor: "system", action: "receipt", entityType: "OutboundMessage", entityId: message.Id,
-                    detail: $"failed, retry {message.AttemptCount} scheduled for {message.NextRetryAt:o}");
+                    detail: $"SMS to {message.Patient.Name} ({message.Patient.Phone}) failed, retry {message.AttemptCount} scheduled for {message.NextRetryAt:o}");
             }
         }
 
@@ -113,7 +115,7 @@ public class WebhooksController(NotifyHubDbContext db, IHubContext<InboxHub> inb
         {
             patient.OptOutAt = now;
             AuditLogger.Add(db, actor: "system", action: "opt-out", entityType: "Patient", entityId: patient.Id,
-                detail: $"received keyword: {request.Body}");
+                detail: $"Opt-out (STOP) received from {patient.Name} ({patient.Phone}): \"{request.Body}\"");
         }
 
         db.InboundMessages.Add(new InboundMessage

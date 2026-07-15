@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using NotifyHub.Api.Gateway;
 using NotifyHub.Api.Gateway.Dtos;
@@ -29,7 +30,8 @@ public class MockGatewayController(
     [HttpPost("send")]
     public async Task<ActionResult> Send(MockGatewaySendRequest request, CancellationToken ct)
     {
-        var message = await db.OutboundMessages.FindAsync([request.MessageId], ct);
+        var message = await db.OutboundMessages.Include(m => m.Patient)
+            .SingleOrDefaultAsync(m => m.Id == request.MessageId, ct);
         if (message is null)
             return NotFound();
 
@@ -42,7 +44,8 @@ public class MockGatewayController(
             Status = MessageStatus.Sent,
             OccurredAt = now,
         });
-        AuditLogger.Add(db, actor: "system", action: "send", entityType: "OutboundMessage", entityId: message.Id);
+        AuditLogger.Add(db, actor: "system", action: "send", entityType: "OutboundMessage", entityId: message.Id,
+            detail: $"SMS sent to {message.Patient.Name} ({message.Patient.Phone}) by {message.SentByUsername ?? "System"}");
         await db.SaveChangesAsync(ct);
 
         // Simulates carrier delay + random delivery outcome, then reports back via the

@@ -138,12 +138,12 @@ Refresh-token cookie name `notifyhub_refresh` (:26); set/clear in `SetRefreshCoo
 | Verb + route | Method:line | Auth | Notes |
 |---|---|---|---|
 | GET `api/threads` | `List` :23-41 | default authenticated | paginated |
-| GET `api/threads/{id}` | `Detail` :43-74 | default authenticated | resets `UnreadCount = 0` on open (:58-60); messages paginated via `GetMessagesPageAsync` (:89-132, step 6/FR-010 — see §5) instead of the old unpaginated `.Include(InboundMessages).Include(OutboundMessages)` |
+| GET `api/threads/{id}` | `Detail` :43-74 | default authenticated | resets `UnreadCount = 0` on open (:58-60); messages paginated via `GetMessagesPageAsync` (:89-132, step 6/FR-010 — see §5) instead of the old unpaginated `.Include(InboundMessages).Include(OutboundMessages)`. **Bug fix (this session)**: `ThreadMessageDto`'s outbound projection now also carries `EventTime`/`ScheduledAt` (straight from the `OutboundMessage` columns, no query restructuring) so a Queued message's actual pending send time reaches the frontend — previously only `CreatedAt`/`Status` were exposed, so a Reminder SMS or a plain scheduled reply showed only a generic "Queued" chip with no indication of when it would actually go out. `EventTime` is populated only for Reminder SMS (§4b), so the frontend uses its presence to scope the new "Will send at" bubble line to reminders specifically, not plain scheduled replies (both share the same `ScheduledAt`/`Queued` mechanism). |
 | POST `api/threads` | `CreateConversation` (added increment 10) | default authenticated | §6: staff-initiated conversation with a brand-new patient — body `{name, phone, message, scheduledAt?}`; creates `Patient`+`ConversationThread`+first `OutboundMessage` in one call; 409 on duplicate phone (pre-check + `catch (DbUpdateException)` fallback, same pattern as `WebhooksController.FindOrCreateThreadAsync`); 400 if `scheduledAt` isn't in the future |
 | POST `api/threads/{id}/messages` | `Reply` :139 | default authenticated | BR-001b opt-out check (:145-148); broadcasts `outboundMessageSent` (:169); **increment 10**: accepts optional `scheduledAt` (400 if not future), enforces the per-patient rate limit via `RateLimitExceededAsync` (429 if exceeded, no-op when `RateLimit:Enabled=false`) |
 | POST `api/threads/{id}/assign` | `Assign` :177 | default authenticated | self-assign OK; assigning others requires caller role Admin, else 403 (:190-191); broadcasts `threadAssigned` (:203) |
 | POST `api/threads/{id}/tasks` | `CreateTask` :209 | default authenticated | accepts `Description`/`TaskType` (increment 5); `Description` auto-populates server-side from `LatestMessageBodyAsync` (compares each table's single most-recent row, no full-history load) when the client omits it. **P9-10**: assignee is now resolved via `FallbackUserResolver.ResolveNewTaskAssigneeAsync` instead of the natural `AssignedStaffId ?? callerId` directly — see that method's writeup above |
-| GET `api/threads/{id}/templates/{templateId}/preview` | `PreviewTemplate` (P9-04) | default authenticated | resolves a template's `{{patient_name}}`/`{{appointment_time}}` merge fields against the thread's real patient (+ next real `Scheduled` `Appointment` for that patient if one exists, else a generated dummy time `now.Date.AddDays(3).AddHours(10)`) via the existing `NotifyHub.Domain.Messaging.TemplateRenderer.Render` — reused as-is, no Domain-layer changes (Domain has no EF/HTTP deps, so the DB-querying field resolution lives here, not in `TemplateRenderer`). Returns `{ renderedBody }`; frontend fills this into the composer's editable textarea, not a locked preview. BR-013 unaffected — dispatch-time rendering (`MessageDispatcher.RenderAsync`) is untouched and still snapshots `RenderedBody` at actual send time from whatever the staff member ends up sending. |
+| GET `api/threads/{id}/templates/{templateId}/preview` | `PreviewTemplate` (P9-04) | default authenticated | resolves a template's `{{patient_name}}`/`{{appointment_time}}` merge fields against the thread's real patient (+ next real `Scheduled` `Appointment` for that patient if one exists, else a generated dummy time `now.Date.AddDays(3).AddHours(10)`) via the existing `NotifyHub.Domain.Messaging.TemplateRenderer.Render` — reused as-is, no Domain-layer changes (Domain has no EF/HTTP deps, so the DB-querying field resolution lives here, not in `TemplateRenderer`). Returns `{ renderedBody }`; frontend fills this into the composer's editable textarea, not a locked preview. BR-013 unaffected — dispatch-time rendering (`MessageDispatcher.RenderAsync`) is untouched and still snapshots `RenderedBody` at actual send time from whatever the staff member ends up sending. **Bug fix (this session)**: gained an optional `isReminder` query param (bool, default `false`, additive/non-breaking — the Standard composer never passes it). When `true`, skips the real-`Appointment` lookup entirely and never adds `appointment_time` to the fields dict, leaving `{{appointment_time}}` as a literal unresolved token (via `TemplateRenderer`'s existing unknown-field passthrough, BR-013) — the Reminder SMS dialog (below) passes this, since Reminder SMS is deliberately Appointment-independent (rule 34) and the real-Appointment lookup was resolving to a value unrelated to the reminder's own Event Time. |
 
 ### `UsersController` — `NotifyHub.Api/Controllers/UsersController.cs` (`[Route("api/users")]`, added this feature set/increment 2)
 | Verb + route | Auth | Notes |
@@ -227,8 +227,8 @@ projection, which stays directly in the `Select()`.
 ### `SettingsController` — `NotifyHub.Api/Controllers/SettingsController.cs` (`[Route("api/settings")]`, added increment 10)
 | Verb + route | Auth | Notes |
 |---|---|---|
-| GET `api/settings` | default authenticated | Quiet Hours + rate-limit config, via `SettingsService` |
-| PATCH `api/settings` | `[Authorize(Roles="Admin")]` | partial update; validates `HH:mm` time strings and positive counts before writing |
+| GET `api/settings` | default authenticated | Quiet Hours + rate-limit + Reminder SMS defaults (incl. **default reminder template id**, this session — see §4b), via `SettingsService` |
+| PATCH `api/settings` | `[Authorize(Roles="Admin")]` | partial update; validates `HH:mm` time strings and positive counts before writing; **default reminder template id** (this session) additionally 400s if the given id doesn't reference an existing `MessageTemplate` (`db` already injected into this controller) |
 | GET `api/settings/system-info` | default authenticated | **not** `SystemSetting`-backed — live diagnostics: `db.Database.CanConnectAsync()`, dispatcher/escalation poll intervals (the latter read straight from `IConfiguration`, key `Escalation:PollIntervalSeconds`). No reminder poll interval anymore (P9-08 retired the poll-based reminder engine — `SystemInfoDto.ReminderPollIntervalSeconds` removed) |
 
 ### `DashboardController` — `NotifyHub.Api/Controllers/DashboardController.cs` (`[Route("api/dashboard")]`, added increment 12)
@@ -256,6 +256,26 @@ until an Admin opts in via `PATCH api/settings`.
 | GET `api/audit/mine` | `Mine` :29-35 | default authenticated | same filters minus `actor` — server hardcodes `actor` to the caller's own username (:33), ignoring any client value |
 
 Shared query logic: `QueryAsync` (:37-63).
+
+**Audit `Detail` enrichment (this session)**: every `AuditLogger.Add` call site for an
+SMS-related action (`send`/`receipt`/`opt-out`/`expired`/`blocked`/`reminder-created`/
+`reminder-updated`/`reminder-cancelled`) now interpolates the patient's `Name`/`Phone` into
+`Detail` (loading `Patient` via `.Include`/query, not bare `FindAsync`, at
+`MockGatewayController.Send`, `WebhooksController.GatewayReceipt`/`Inbound`,
+`MessageDispatcher.ExpireOverdueMessagesAsync`/`DispatchOneAsync`'s opt-out-blocked branch,
+`MessagesController.UpdateReminder`/`Cancel`), and every task-assignment action
+(`forward`/`assignment`) now interpolates both the previous and new assignee's `Username`
+(`TasksController.Forward` already did; `ThreadsController.CreateTask`'s auto-forward-on-
+creation, `UsersController.UpdateStatus`'s auto-forward-on-deactivation, and
+`EscalationJob.EscalateOverdueTasksAsync`'s auto-reassign now do too, each adding one extra
+username lookup/batch query). Still a write-time change only — `AuditLog.Detail` stays a
+free-text `string?`, `AuditLogger.Add`'s signature is unchanged, no new audit event types, no
+schema change. Correspondingly, the raw `{entityType} #{entityId}` column/row was removed
+from both Audit Log pages (`AuditLogPage.tsx`, `AuditLogPageV2.tsx` — including its `"entity"`
+`SortKey`) and from the Dashboard's Recent Activity widget (`DashboardPage.tsx`, which now
+renders `entry.detail` instead — previously showed neither `Detail` nor anything readable).
+`AuditLogDto`/`AuditLog.EntityType`/`EntityId` are unchanged on the wire, just no longer
+rendered — still available for direct API callers.
 
 ### `WebhooksController` — `NotifyHub.Api/Controllers/WebhooksController.cs` (`[Route("api/webhooks")]` :18, class-level `[AllowAnonymous][SharedSecret]` :19-20)
 | Verb + route | Method:line | Notes |
@@ -336,6 +356,25 @@ behavior. Exposed via `GET`/`PATCH api/settings` (`SettingsDto.reminderOffsetMin
 `reminderExpiryOffsetMinutes`), Settings → SMS tab (`sms-tab.tsx`'s new "Reminder SMS
 defaults" card).
 
+**Default reminder template (this session)** — a third key, `SettingsService.DefaultReminderTemplateIdKey`
+(`ReminderSettings.DefaultTemplateId`, `long?`), stores the template preselected when
+opening the Reminder SMS dialog from a thread — a UX convenience only, never enforced
+server-side (staff can still pick any other active template in the dialog). `0`/absent/
+unparseable all mean "no default" (real `MessageTemplate` ids are DB auto-increment, never
+`0`), so no schema/migration was needed — same flat `SystemSetting.Key/Value` store as
+every other setting. `SettingsController.Update` validates a non-zero id actually
+references an existing `MessageTemplate` (400 otherwise) before writing it via `db`
+(already injected into that controller). Exposed via `GET`/`PATCH api/settings`
+(`SettingsDto.defaultReminderTemplateId`, nullable), Settings → SMS tab (`sms-tab.tsx`'s
+"Reminder SMS defaults" card gained a template `Select` — "No default" sentinel value
+`"none"` maps to `0` on save since Radix `Select`/`SelectItem` can't use an empty string).
+Consumed by `reminder-sms-dialog.tsx`: a new effect (alongside the pre-existing reset-on-
+close effect) fires on open, and if no template has been picked yet this open, the
+configured default is auto-selected via the existing `handleTemplateChange` (so the body
+textarea is resolved too, same as a manual pick) — guarded against a default that's since
+been deleted/deactivated by checking it's still in the active `templates` list already
+fetched by this component.
+
 **Pure calculations** (`NotifyHub.Domain/Messaging/ReminderScheduleCalculator.cs`):
 `CalculateScheduledSendTime(eventTime, offsetMinutes)` = `eventTime - offset` (rule 5);
 `CalculateExpiryTime(eventTime, expiryOffsetMinutes)` = `eventTime - expiryOffset` (rules
@@ -344,6 +383,17 @@ Standard SMS math); `MinSelectableEventTime(now, offsetMinutes)` = `now + offset
 `IdempotencyKeyGenerator.GenerateForReminder(patientId, templateId, eventTime,
 reminderOffsetMinutes)` — separate hash input from Standard SMS's `Generate` (rule 30), so
 the two families of idempotency keys never collide.
+
+**Bug fix (this session)** — `MessageDispatcher.RenderAsync` (§4) previously only resolved
+`{{appointment_time}}` by parsing `TriggerReference` (`"appointment:{id}:..."`), which
+`ThreadsController.CreateReminder` always leaves `null` for reminders. So a reminder created
+with a blank `body` (deferring rendering to dispatch time, the pre-rule-31-reversal fallback
+path) would previously dispatch with the literal, unresolved `{{appointment_time}}` text —
+`message.EventTime` was never read anywhere. Fixed by adding an `else if (message.EventTime is
+{ } eventTime)` branch alongside the `TriggerReference` check, populating `appointment_time`
+from it (`"u"` format, matching the existing convention in that method) — the two branches are
+mutually exclusive by construction (Reminder SMS carries `EventTime`/no `TriggerReference`,
+Standard/appointment-triggered sends carry `TriggerReference`/no `EventTime`).
 
 ### API — `ThreadsController` (`NotifyHub.Api/Controllers/ThreadsController.cs`)
 | Verb + route | Notes |
@@ -369,16 +419,28 @@ manage reminders they create from a thread, same as any other message action).
   computed line shows what it resolves to.
   **Post-Step-9 fix — rule 31 reversed**: the body is now a freely-editable `Textarea`
   (`ref`-tracked, `bodyRef`), not a locked read-only preview. `handleTemplateChange` fetches
-  P9-04's `GET .../templates/{id}/preview` and replaces the box's contents with the resolved
-  text (same behavior as the composer's `handleInsertTemplate`/`setDraft`) — editable
+  P9-04's `GET .../templates/{id}/preview?isReminder=true` and replaces the box's contents
+  with the resolved text (same behavior as the composer's `handleInsertTemplate`/`setDraft`,
+  minus `appointment_time` resolution — see the `isReminder` bug fix above) — editable
   afterward, never reset by further typing. `insertAtCursor` (mirrors `TemplateForm`'s
   `insertBookmark`) inserts text at the `Textarea`'s current caret position, replacing any
   active selection, then restores focus with the caret placed immediately after the inserted
-  text. Event Time insertion is wired through `DateTimePicker`'s new `onCommit` prop (see
-  below) rather than `onChange` directly — `handleEventTimeCommit` calls `insertAtCursor` with
-  the picked value formatted via `toLocaleString()` once the user finishes picking (not on
-  every intermediate tick). Submits `{templateId, eventTime, body}`; the previous submit-time
-  validation (must pick a template/Event Time) gained a third check (`body` can't be blank).
+  text. Submits `{templateId, eventTime, body}`; the previous submit-time validation (must
+  pick a template/Event Time) gained a third check (`body` can't be blank).
+  **Bug fix (this session) — Event Time now replaces `{{appointment_time}}`**: previously,
+  `handleEventTimeCommit` (wired through `DateTimePicker`'s `onCommit`, which fires once when
+  the popover closes rather than on every intermediate drag tick) unconditionally called
+  `insertAtCursor` with the picked value — a blind text splice at the caret, never aware of
+  the `{{appointment_time}}` token, so picking/changing Event Time never actually updated a
+  template's placeholder (root cause: the *old* unconditional `/preview` call had already
+  resolved `{{appointment_time}}` to an unrelated real/dummy Appointment date before Event
+  Time was ever picked). Now: `handleEventTimeCommit` first tries replacing the literal
+  `{{appointment_time}}` token (regex, tolerant of whitespace per `TemplateRenderer`'s own
+  pattern) with `toLocaleString()`-formatted Event Time; if that token was already replaced by
+  a prior pick, replaces *that* text instead (tracked via a `lastEventTimeTextRef`, reset on
+  template change / dialog close) so repeated Event Time changes update in place rather than
+  duplicating; only falls back to the old blind `insertAtCursor` when neither is found (e.g. a
+  free-typed message with no template, or the placeholder was manually deleted).
 - `components/v2/date-time-picker.tsx`'s `DateTimePicker` gained an optional
   `onCommit?: (value: string) => void` prop — fires once when the popover closes (Done /
   outside click / Escape) while a value is set, unlike `onChange`, which fires continuously
@@ -387,7 +449,21 @@ manage reminders they create from a thread, same as any other message action).
   `conversation-panel`/`task-tab`/`user-management-tab`/filter bars) doesn't pass it and is
   unaffected.
 - `hooks/useThreads.ts`'s `useCreateReminderMutation(threadId)` mutation payload gained an
-  optional `body?: string` field → `POST /api/threads/{id}/reminders`.
+  optional `body?: string` field → `POST /api/threads/{id}/reminders`. **Bug fix (this
+  session)**: the mutation had no `onSuccess` at all (every sibling mutation in that file does,
+  e.g. `useReplyMutation` invalidates `["thread", threadId]`) — so scheduling a reminder never
+  refreshed the currently-open conversation panel; the new Queued message simply didn't appear
+  until something unrelated happened to refetch. Now invalidates `["thread", threadId]` on
+  success, same pattern as `useReplyMutation`.
+- `conversation-panel.tsx` (`ConversationPanelV2`, this session) — the message bubble now
+  renders an additional "Will send {date}" line (10px, opacity-80, right-aligned, same
+  convention as the existing created-at meta line) for any outbound message that's
+  `status === "Queued"` **and** has `eventTime` set — `eventTime` is populated only for
+  Reminder SMS (see above), so this deliberately doesn't fire for a plain staff-scheduled
+  reply (composer's "Schedule" toggle), which shares the same `ScheduledAt`/`Queued`
+  mechanism but has no `EventTime`. Sourced from the new `ThreadMessageDto.scheduledAt`
+  field (§3) — no client-side date math, the value is the server's own computed Scheduled
+  Send Time.
 - `status-config.ts`'s `AUDIT_ACTION_CONFIG` gained `expired`/`reminder-created`/
   `reminder-updated`/`reminder-cancelled` entries; both Audit Log pages' `ACTIONS` filter
   list extended to match.
@@ -419,7 +495,33 @@ Pakistani English/Indian/Chinese/Japanese locales — 3/3/2/2, not real patient 
 Time"/`{{appointment_time}}`, matching exactly what `TemplateRenderer` resolves at send time) →
 `SystemSettingSeedStep` (increment 10 — default rows for every known setting key, idempotent
 per-key rather than "any setting exists" so a future new key isn't skipped on an already-seeded
-install; both Quiet Hours and rate limiting default disabled) → `DemoOutboundMessageSeedStep` (10 demo messages: 5 appointment-reminder + 3 medication + 2 prescription, `DemoOutboundMessageSeedStep.cs:32-49` — corrected from a stale "5" here) → `PerformanceSeedStep` (step 6, FR-010, 45,000 outbound + 5,000 inbound at the default `targetMessageCount=50,000`, `OutboundRatio=0.9`).
+install; both Quiet Hours and rate limiting default disabled) → `DemoOutboundMessageSeedStep` (10 demo messages: 5 appointment-reminder + 3 medication + 2 prescription, `DemoOutboundMessageSeedStep.cs:32-49` — corrected from a stale "5" here) → `PerformanceSeedStep` (step 6, FR-010, 45,000 outbound + 5,000 inbound at the default `targetMessageCount=50,000`, `OutboundRatio=0.9`) → `TaskSeedStep` (new — 1,000 `TaskItem` rows, see below).
+
+`TaskSeedStep` (`NotifyHub.Infrastructure/Seed/TaskSeedStep.cs`) — bulk demo data for the Tasks
+screen, same motivation as `PerformanceSeedStep` for Threads/Messages. Idempotent via
+`db.Tasks.AnyAsync()` (no other step touches `TaskItem`). Constructor `targetTaskCount` (default
+1,000, read from config key `Seed:TaskCount` in `Program.cs`'s DI registration, same
+factory-lambda pattern as `PerformanceSeedStep`; capped to 20 in both test factories). Registered
+*after* `PerformanceSeedStep` so it can reuse the ~1,010 existing threads (1,000 perf + 10 demo)
+instead of creating its own — in the default/prod config it never creates new patients at all,
+just attaches one task to each of the first `targetTaskCount` existing threads (`OrderBy(Id)`,
+deterministic). Only pads with placeholder `Patient`/`ConversationThread` rows (phone marker
+`+1778`, names `"TaskSeed Patient NNNN"` — distinct from `PerformanceSeedStep`'s `+1777`
+locale-name roster) when fewer threads exist than the target, which only happens in constrained
+configs (e.g. the test factories' capped `Seed:PerformanceMessageCount`). Assignment/spread is
+deterministic index math (`i` over `0..targetTaskCount-1`), no RNG for the mix (RNG only jitters
+past due-dates): `AssignedStaffId = OriginalOwnerId` round-robins across every live
+`Status == Active` user (queried fresh, not hardcoded usernames — adapts to however many
+Admin/Staff accounts exist); `Priority`/`TaskType` round-robin across all enum values; `Status`
+via fixed `i % 100` buckets giving an exact 20% Open / 25% InProgress / 30% Completed / 10%
+Escalated / 15% Cancelled split. `DueAt` deliberately differs by status rather than being
+uniform: Open/InProgress reuse `TaskDueDateDefaults.DefaultDueAt` (future) since
+`EscalationJob.EscalateOverdueTasksAsync` only ever touches overdue Open/InProgress tasks — a
+past due-date on either would get flipped to Escalated and reassigned on the very next escalation
+poll, corrupting the seeded mix; Completed/Cancelled/Escalated get a randomized past date instead
+(safe, since the job excludes all three, and more realistic for an already-resolved task).
+`IsActive = true` on every seeded task, so all 1,000 show up under `TasksController.List`'s
+default `isActive=true` filter with no special-casing.
 
 Deterministic seed-only baseline for `outbound_messages`: 45,000 (perf) + 10 (demo) = 45,010, **plus any Reminder SMS created through the P9-08 UI/API and any live-verification rows from Step 9 sessions** (both grow the count going forward — neither is a seeding bug). Historical note: before P9-08 retired it, `ReminderScheduler.CreateDueRemindersAsync` used to keep inserting new rows over wall-clock time for the 10 real `PatientAppointmentSeedStep` appointments as their 48h/2h reminder windows opened; that growth path no longer exists. Distinguish by `TriggerReference` prefix for the still-relevant static baseline: `perfseed:*` (45,000), `appointment:*:created`/`medication:*:seed`/`prescription:*:seed` (10) — `appointment:*:reminder:*h:*` (the old poll-based reminder rows) stopped growing once P9-08 shipped; new Reminder SMS rows have `TriggerReference = null` and are identifiable instead by a non-null `EventTime`.
 
@@ -505,7 +607,7 @@ rather than deferred — no longer an open item.
 - `components/ui/*` — shadcn primitives (generated).
 
 **Hooks** (`src/hooks/`):
-- `useThreads.ts`: `useThreads()` :7 (list), `useThread(id)` :14 (detail — `messages` is now `PagedResult<ThreadMessageDto>`, page 1 only, step 6/FR-010; invalidates `["threads"]` since opening resets unread), `useReplyMutation` :30, `useAssignMutation` :41, `useCreateTaskMutation` :53.
+- `useThreads.ts`: `useThreads()` :7 (list), `useThread(id)` :14 (detail — `messages` is now `PagedResult<ThreadMessageDto>`, page 1 only, step 6/FR-010; invalidates `["threads"]` since opening resets unread), `useReplyMutation` :30, `useAssignMutation` :41, `useCreateTaskMutation` :53, `useCreateReminderMutation(threadId)` (P9-08 — see §4b; **bug fix this session**: now invalidates `["thread", threadId]` on success, same as `useReplyMutation` — previously had no `onSuccess` at all, so a scheduled reminder never appeared in the open conversation panel).
 - `useTasks.ts`: `useTasks(statusOrFilters?)` — accepts either a bare status shorthand (legacy `TaskBoardPage`) or a full `TaskListFilters` object (`TaskBoardPageV2`'s filter bar, increment 7: description/patientName/dueFrom/dueTo/isActive/assignedStaffId), `useTask(id)` (triggers BR-014 revert), `useUpdateTaskMutation()`, `useForwardTaskMutation()` (increment 7, `POST /api/tasks/{id}/forward`).
 - `useInboxHub.ts`: `useInboxHub()` :20 — owns SignalR connection lifecycle + query invalidation.
 - `useAudit.ts` (step 6): `useAuditLog(isAdmin, filters)` — picks `/api/audit` vs `/api/audit/mine` based on `isAdmin`, builds the query string from `actor`/`action`/`from`/`to`/`page`/`pageSize`.
@@ -631,7 +733,15 @@ legacy file listed in §6 above is unmodified.
     escalated→in-progress revert exactly as before; "Assign to me"/"Complete" call the same
     `useUpdateTaskMutation()` instance the board owns (one shared mutation, matching legacy's
     single-instance-for-all-rows behavior). `?task={id}` drives the sheet the same way Inbox's
-    `?thread={id}` drives thread selection. **Increment 7 additions**: `TaskType`/`Description`
+    `?thread={id}` drives thread selection. **Bug fix (this session)**: "Assign to me" is now
+    hidden (on both `TaskCard` and `TaskDetailSheet`) when the task's `assignedStaffId` already
+    equals the caller's own id — previously shown unconditionally alongside "Complete" for any
+    non-terminal task, so re-assigning to yourself was an exposed no-op. `TaskCard` gained a
+    required `isAssignedToCurrentUser` prop computed by `TaskBoardPageV2` (`task.assignedStaffId
+    === user?.id`); `TaskDetailSheet` gained an optional `currentUserId` prop and derives the
+    same comparison itself against its own loaded `task` (it only receives `taskId` from the
+    parent, not the task object). "Complete" is unaffected in both. Redesign-only — legacy
+    `TaskBoardPage.tsx`/`TaskDetailPanel.tsx` deliberately left unchanged. **Increment 7 additions**: `TaskType`/`Description`
     displayed (badge + text block if present); "Mark inactive"/"Mark active" toggle
     (`useUpdateTaskMutation` with `isActive`); "Forward" button opens a `Dialog` with a
     `useAssignableUsers()`-backed `Select` + optional note, calling the new
@@ -844,6 +954,14 @@ regression. Out of scope to fix here (not part of `STEP9_PLAN.md`); flagged in S
 
 ## 6g. Shared `DateTimePicker` (P9-03)
 
+- **Bug fix (this session)** — the "Done" button (and the clock face's minute-drag-release path)
+  called `setOpen(false)` directly instead of going through `handleOpenChange`, the only place
+  `onCommit` is invoked. Since `onCommit` is what the Reminder SMS dialog's `{{appointment_time}}`
+  substitution relies on (see §4b), clicking "Done" — the primary, most natural way to close the
+  picker — silently never fired `onCommit` at all; only closing via outside-click or Escape did.
+  Found via an actual browser click-through (headless Playwright), not just automated tests, since
+  this is a UI-interaction bug invisible to `tsc`/unit tests. Fixed both call sites to go through
+  `handleOpenChange(false)` instead of `setOpen(false)` directly.
 - **New shadcn primitive**: `components/ui/calendar.tsx` (`npx shadcn add calendar`, react-day-picker
   v10 — a major-version jump from the v8-era templates shadcn usually ships, but the generated
   component matches the installed version and compiles clean). Note for future `shadcn add` runs

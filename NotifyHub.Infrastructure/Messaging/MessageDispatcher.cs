@@ -57,6 +57,7 @@ public class MessageDispatcher(NotifyHubDbContext db, HttpClient gatewayClient, 
     private async Task ExpireOverdueMessagesAsync(DateTime now, CancellationToken ct)
     {
         var overdue = await db.OutboundMessages
+            .Include(m => m.Patient)
             .Where(m => m.Status == MessageStatus.Queued && m.ExpiresAt != null && m.ExpiresAt <= now)
             .ToListAsync(ct);
 
@@ -79,7 +80,7 @@ public class MessageDispatcher(NotifyHubDbContext db, HttpClient gatewayClient, 
                 OccurredAt = now,
             });
             AuditLogger.Add(db, actor: "system", action: "expired", entityType: "OutboundMessage", entityId: message.Id,
-                detail: message.ExpiryReason);
+                detail: $"SMS to {message.Patient.Name} ({message.Patient.Phone}) expired: {message.ExpiryReason}");
         }
 
         await db.SaveChangesAsync(ct);
@@ -95,7 +96,7 @@ public class MessageDispatcher(NotifyHubDbContext db, HttpClient gatewayClient, 
             message.Status = MessageStatus.Failed;
             message.NextRetryAt = null;
             AuditLogger.Add(db, actor: "system", action: "blocked", entityType: "OutboundMessage", entityId: message.Id,
-                detail: "patient opted out, message not sent");
+                detail: $"SMS to {message.Patient.Name} ({message.Patient.Phone}) blocked: patient opted out");
             await db.SaveChangesAsync(ct);
             return;
         }
@@ -156,6 +157,8 @@ public class MessageDispatcher(NotifyHubDbContext db, HttpClient gatewayClient, 
 
         // trigger_reference encodes the business event (BR-009), e.g. "appointment:{id}:created" —
         // parsed here to resolve {{appointment_time}} for appointment-reminder templates.
+        // Reminder SMS (P9-08, rule 34) carries EventTime instead and never sets TriggerReference,
+        // so the two branches are mutually exclusive on any given OutboundMessage.
         if (message.TriggerReference is { } reference && reference.StartsWith("appointment:", StringComparison.Ordinal))
         {
             var parts = reference.Split(':');
@@ -165,6 +168,10 @@ public class MessageDispatcher(NotifyHubDbContext db, HttpClient gatewayClient, 
                 if (appointment is not null)
                     fields["appointment_time"] = appointment.ScheduledAt.ToString("u");
             }
+        }
+        else if (message.EventTime is { } eventTime)
+        {
+            fields["appointment_time"] = eventTime.ToString("u");
         }
 
         return TemplateRenderer.Render(message.Template!.Body, fields);

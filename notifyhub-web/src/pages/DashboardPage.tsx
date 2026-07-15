@@ -105,9 +105,7 @@ export default function DashboardPage() {
                       <div className="flex min-w-0 items-center gap-2">
                         <StatusBadge {...(AUDIT_ACTION_CONFIG[entry.action] ?? UNKNOWN_STATUS_CONFIG)} size="xs" />
                         <span className="font-medium">{entry.actor}</span>
-                        <span className="truncate text-muted-foreground">
-                          {entry.entityType} #{entry.entityId}
-                        </span>
+                        <span className="truncate text-muted-foreground">{entry.detail ?? "—"}</span>
                       </div>
                       <span className="shrink-0 text-xs text-muted-foreground">{new Date(entry.occurredAt).toLocaleString()}</span>
                     </li>

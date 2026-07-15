@@ -183,6 +183,58 @@ public class ThreadsControllerTests(CustomWebApplicationFactory factory) : IClas
     }
 
     [Fact]
+    public async Task Detail_IncludesEventTimeAndScheduledAt_ForQueuedReminder_ButNotForPlainScheduledReply()
+    {
+        var thread = await CreateThreadAsync("+19990000110");
+        var eventTime = DateTime.UtcNow.AddDays(2);
+        var scheduledAt = DateTime.UtcNow.AddDays(1).AddHours(23); // reminder's own computed send time
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
+            db.OutboundMessages.Add(new OutboundMessage
+            {
+                PatientId = thread.PatientId,
+                ThreadId = thread.Id,
+                SenderType = Domain.Enums.SenderType.Staff,
+                RenderedBody = "Reminder body",
+                CreatedAt = DateTime.UtcNow,
+                Status = Domain.Enums.MessageStatus.Queued,
+                EventTime = eventTime,
+                ScheduledAt = scheduledAt,
+            });
+            // Plain staff-scheduled reply — Queued + ScheduledAt set, but no EventTime, since
+            // it didn't come from the Reminder SMS flow.
+            db.OutboundMessages.Add(new OutboundMessage
+            {
+                PatientId = thread.PatientId,
+                ThreadId = thread.Id,
+                SenderType = Domain.Enums.SenderType.Staff,
+                RenderedBody = "Plain scheduled reply",
+                CreatedAt = DateTime.UtcNow,
+                Status = Domain.Enums.MessageStatus.Queued,
+                ScheduledAt = DateTime.UtcNow.AddHours(2),
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var (client, _) = await _client.AsStaffAsync();
+        var response = await client.GetAsync($"/api/threads/{thread.Id}");
+        var body = await response.Content.ReadFromJsonAsync<ThreadDetailDto>();
+
+        var reminderMessage = body!.Messages.Items.Single(m => m.Body == "Reminder body");
+        Assert.Equal("Queued", reminderMessage.Status);
+        Assert.NotNull(reminderMessage.EventTime);
+        Assert.Equal(eventTime, reminderMessage.EventTime!.Value, TimeSpan.FromSeconds(1));
+        Assert.NotNull(reminderMessage.ScheduledAt);
+        Assert.Equal(scheduledAt, reminderMessage.ScheduledAt!.Value, TimeSpan.FromSeconds(1));
+
+        var plainScheduledMessage = body.Messages.Items.Single(m => m.Body == "Plain scheduled reply");
+        Assert.Null(plainScheduledMessage.EventTime);
+        Assert.NotNull(plainScheduledMessage.ScheduledAt);
+    }
+
+    [Fact]
     public async Task CreateTask_UsesDefaultPriorityAndDueDate_WhenNotSpecified()
     {
         var thread = await CreateThreadAsync("+19990000007");
@@ -365,6 +417,43 @@ public class ThreadsControllerTests(CustomWebApplicationFactory factory) : IClas
 
         var body = await response.Content.ReadFromJsonAsync<TemplatePreviewDto>();
         Assert.Contains(scheduledAt.ToString("u"), body!.RenderedBody);
+    }
+
+    /// Reminder SMS is deliberately Appointment-independent (STEP9_PLAN.md rule 34) — the
+    /// isReminder=true flag must skip the real-Appointment lookup and leave
+    /// {{appointment_time}} as a literal unresolved token, so the Reminder SMS dialog can
+    /// substitute the staff member's own picked Event Time in client-side.
+    [Fact]
+    public async Task PreviewTemplate_WithIsReminderTrue_LeavesAppointmentTimeTokenUnresolved()
+    {
+        var thread = await CreateThreadAsync("+19990000203");
+        var scheduledAt = DateTime.UtcNow.AddDays(5);
+        long templateId;
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
+            // Even with a real upcoming appointment present, isReminder=true must not use it.
+            db.Appointments.Add(new Appointment { PatientId = thread.PatientId, ScheduledAt = scheduledAt, Status = AppointmentStatus.Scheduled });
+            var template = new MessageTemplate
+            {
+                Name = "Preview test template 3",
+                Body = "Hi {{patient_name}}, see you at {{appointment_time}}.",
+                TriggerType = TriggerType.AppointmentReminder,
+                OffsetHours = 48,
+            };
+            db.MessageTemplates.Add(template);
+            await db.SaveChangesAsync();
+            templateId = template.Id;
+        }
+
+        var (client, _) = await _client.AsStaffAsync();
+        var response = await client.GetAsync($"/api/threads/{thread.Id}/templates/{templateId}/preview?isReminder=true");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<TemplatePreviewDto>();
+        Assert.Contains("Test Patient +19990000203", body!.RenderedBody); // patient_name still resolved
+        Assert.Contains("{{appointment_time}}", body.RenderedBody); // left unresolved, not the real appointment
+        Assert.DoesNotContain(scheduledAt.ToString("u"), body.RenderedBody);
     }
 
     private async Task<ConversationThread> CreateThreadAsync(string phone, bool patientOptedOut = false, int initialUnreadCount = 0)

@@ -1,6 +1,10 @@
 using System.Net;
 using System.Net.Http.Json;
+using Microsoft.Extensions.DependencyInjection;
 using NotifyHub.Api.Settings.Dtos;
+using NotifyHub.Domain.Entities;
+using NotifyHub.Domain.Enums;
+using NotifyHub.Infrastructure.Persistence;
 using Xunit;
 
 namespace NotifyHub.Integration.Tests;
@@ -73,5 +77,66 @@ public class SettingsControllerTests(CustomWebApplicationFactory factory) : ICla
 
         Assert.True(info!.DatabaseConnected);
         Assert.Equal(5, info.DispatcherPollIntervalSeconds);
+    }
+
+    [Fact]
+    public async Task Update_SetsDefaultReminderTemplateId_RoundTripsViaGet()
+    {
+        var (client, _) = await _client.AsAdminAsync();
+        var templateId = await SeedTemplateAsync("Default reminder template test");
+
+        var response = await client.PatchAsJsonAsync("/api/settings", new { defaultReminderTemplateId = templateId });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var updated = await response.Content.ReadFromJsonAsync<SettingsDto>();
+        Assert.Equal(templateId, updated!.DefaultReminderTemplateId);
+
+        var fetched = await client.GetFromJsonAsync<SettingsDto>("/api/settings");
+        Assert.Equal(templateId, fetched!.DefaultReminderTemplateId);
+
+        // Reset for other tests in this class's shared factory instance.
+        await client.PatchAsJsonAsync("/api/settings", new { defaultReminderTemplateId = 0 });
+    }
+
+    [Fact]
+    public async Task Update_ClearingDefaultReminderTemplateId_ZeroResetsToNull()
+    {
+        var (client, _) = await _client.AsAdminAsync();
+        var templateId = await SeedTemplateAsync("Default reminder template clear test");
+        await client.PatchAsJsonAsync("/api/settings", new { defaultReminderTemplateId = templateId });
+
+        var response = await client.PatchAsJsonAsync("/api/settings", new { defaultReminderTemplateId = 0 });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var updated = await response.Content.ReadFromJsonAsync<SettingsDto>();
+        Assert.Null(updated!.DefaultReminderTemplateId);
+    }
+
+    [Fact]
+    public async Task Update_RejectsUnknownDefaultReminderTemplateId()
+    {
+        var (client, _) = await _client.AsAdminAsync();
+
+        var response = await client.PatchAsJsonAsync("/api/settings", new { defaultReminderTemplateId = 999_999_999 });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    private async Task<long> SeedTemplateAsync(string name)
+    {
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
+
+        var template = new MessageTemplate
+        {
+            Name = name,
+            Body = "Hi {{patient_name}}, this is a reminder.",
+            TriggerType = TriggerType.AppointmentReminder,
+            OffsetHours = 24,
+        };
+        db.MessageTemplates.Add(template);
+        await db.SaveChangesAsync();
+
+        return template.Id;
     }
 }

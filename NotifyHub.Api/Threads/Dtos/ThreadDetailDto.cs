@@ -18,4 +18,6 @@ public class ThreadMessageDto
     public string Body { get; set; } = default!;
     public DateTime Timestamp { get; set; }
     public string? Status { get; set; } // outbound only
+    public DateTime? EventTime { get; set; } // outbound only, Reminder SMS only — marks this as a reminder
+    public DateTime? ScheduledAt { get; set; } // outbound only: when a Queued message will actually dispatch
 }

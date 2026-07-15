@@ -41,26 +41,50 @@ export function ReminderSmsDialog({
   const [body, setBody] = useState("");
   const [bodyLoading, setBodyLoading] = useState(false);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
+  // Tracks whatever text was last substituted in for the Event Time, so a second
+  // time-change can find-and-replace it instead of inserting a duplicate — see
+  // handleEventTimeCommit below.
+  const lastEventTimeTextRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!open) {
       setTemplateId("");
       setEventTime("");
       setBody("");
+      lastEventTimeTextRef.current = null;
     }
   }, [open]);
 
-  // Selecting a template replaces the box with its resolved text (patient_name etc.
-  // already substituted) — same behavior as the composer's "Insert template", not a
-  // locked preview. Editable afterward: this is a plain useState set, not tied back to
+  // Preselects the Settings > SMS "Default reminder template" (if one is configured and
+  // still an active template) on open, same as a manual pick — reuses handleTemplateChange
+  // so the body textarea is resolved too. templateId is deliberately omitted from the deps
+  // so this doesn't re-fire and clobber a manual pick right after handleTemplateChange sets it.
+  useEffect(() => {
+    if (!open || templateId) return;
+    const defaultId = settings?.defaultReminderTemplateId;
+    if (!defaultId) return;
+    if (!templates?.some((t) => String(t.id) === String(defaultId))) return;
+    void handleTemplateChange(String(defaultId));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, settings, templates]);
+
+  // Selecting a template replaces the box with its resolved text (patient_name
+  // substituted; appointment_time deliberately left as a literal {{appointment_time}}
+  // token — isReminder=true — since Reminder SMS is Appointment-independent, rule 34;
+  // handleEventTimeCommit below fills that token in from the Event Time the staff member
+  // actually picks) — same behavior as the composer's "Insert template", not a locked
+  // preview. Editable afterward: this is a plain useState set, not tied back to
   // templateId reactively, so further typing in the Textarea below is never overwritten.
   const handleTemplateChange = async (value: string) => {
     setTemplateId(value);
+    lastEventTimeTextRef.current = null;
     const template = templates?.find((t) => String(t.id) === value);
     if (!template) return;
     setBodyLoading(true);
     try {
-      const res = await apiClient.get<{ renderedBody: string }>(`/api/threads/${threadId}/templates/${value}/preview`);
+      const res = await apiClient.get<{ renderedBody: string }>(
+        `/api/threads/${threadId}/templates/${value}/preview?isReminder=true`,
+      );
       setBody(res.renderedBody);
     } catch (error) {
       toast.error(errorMessage(error, "Couldn't resolve template fields, inserting raw text"));
@@ -91,8 +115,28 @@ export function ReminderSmsDialog({
   // of partial values. onCommit instead fires once, when the picker's popover closes
   // (Done / outside click / Escape) — "the user is done selecting" — which is what
   // actually drives insertion here.
+  //
+  // Prefers replacing the {{appointment_time}} merge-field token (left unresolved by
+  // handleTemplateChange's isReminder=true preview call) with the picked Event Time; if
+  // that's already been replaced by a previous pick, replaces THAT text instead (so
+  // changing the Event Time twice updates in place rather than duplicating). Falls back to
+  // the old cursor-insert behavior only when neither is found — e.g. a free-typed message
+  // with no template, or the placeholder was manually deleted.
   const handleEventTimeCommit = (value: string) => {
-    insertAtCursor(new Date(value).toLocaleString());
+    const formatted = new Date(value).toLocaleString();
+    const token = /\{\{\s*appointment_time\s*\}\}/;
+    if (token.test(body)) {
+      setBody(body.replace(token, formatted));
+      lastEventTimeTextRef.current = formatted;
+      return;
+    }
+    if (lastEventTimeTextRef.current && body.includes(lastEventTimeTextRef.current)) {
+      setBody(body.replace(lastEventTimeTextRef.current, formatted));
+      lastEventTimeTextRef.current = formatted;
+      return;
+    }
+    insertAtCursor(formatted);
+    lastEventTimeTextRef.current = formatted;
   };
 
   // Rule 9/10: minimum selectable Event Time = Current Time + Reminder Offset. Enforced
@@ -188,7 +232,8 @@ export function ReminderSmsDialog({
               minDate={minEventTime}
             />
             <p className="text-xs text-muted-foreground">
-              Inserted into the message above at your cursor once you finish picking a date/time.
+              Replaces {"{{appointment_time}}"} (or a previously-picked time) in the message
+              above once you finish picking a date/time — otherwise inserted at your cursor.
             </p>
           </div>
 

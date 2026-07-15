@@ -115,6 +115,8 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
                 Body = m.RenderedBody ?? string.Empty,
                 Timestamp = m.CreatedAt,
                 Status = m.Status.ToString(),
+                EventTime = m.EventTime,
+                ScheduledAt = m.ScheduledAt,
             })
             .ToListAsync(ct);
 
@@ -295,7 +297,7 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
         thread.AssignedStaffId = targetStaffId;
         var callerUsername = User.FindFirstValue(ClaimTypes.Name)!;
         AuditLogger.Add(db, actor: callerUsername, action: "assignment", entityType: "Thread", entityId: thread.Id,
-            detail: $"assigned to {targetUser.Username}");
+            detail: $"Thread assigned to {targetUser.Username}");
 
         await db.SaveChangesAsync(ct);
         await inboxHub.Clients.All.SendAsync("threadAssigned", new { threadId = thread.Id, assignedStaffId = targetStaffId }, ct);
@@ -377,8 +379,11 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
         // same convention as today's auto-forward-on-deactivation entries.
         if (assigneeId != naturalAssigneeId)
         {
+            var forwardUsernames = await db.Users
+                .Where(u => u.Id == naturalAssigneeId || u.Id == assigneeId)
+                .ToDictionaryAsync(u => u.Id, u => u.Username, ct);
             AuditLogger.Add(db, actor: "system", action: "forward", entityType: "TaskItem", entityId: task.Id,
-                detail: "auto-forwarded on creation: natural assignee inactive");
+                detail: $"Task auto-forwarded from {forwardUsernames.GetValueOrDefault(naturalAssigneeId, naturalAssigneeId.ToString())} to {forwardUsernames.GetValueOrDefault(assigneeId, assigneeId.ToString())} (natural assignee inactive)");
             await db.SaveChangesAsync(ct);
         }
 
@@ -472,7 +477,7 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
         }
 
         AuditLogger.Add(db, actor: User.FindFirstValue(ClaimTypes.Name)!, action: "reminder-created", entityType: "OutboundMessage",
-            entityId: message.Id, detail: $"event time {request.EventTime:o}");
+            entityId: message.Id, detail: $"Reminder SMS scheduled for {thread.Patient.Name} ({thread.Patient.Phone}), event time {request.EventTime:o}");
         await db.SaveChangesAsync(ct);
 
         return NoContent();
@@ -486,8 +491,14 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
     /// composer's editable textbox — not a locked preview. BR-013 is unaffected: rendered_body
     /// is still snapshotted at actual dispatch time (MessageDispatcher.RenderAsync) regardless
     /// of what was shown here, using whatever text staff ends up sending.
+    /// isReminder (bool, additive/optional, default false): the Reminder SMS dialog passes
+    /// true, since Reminder SMS is deliberately Appointment-independent (rule 34) — the real-
+    /// Appointment lookup below would resolve {{appointment_time}} to a value unrelated to the
+    /// reminder's own Event Time. When true, {{appointment_time}} is left unresolved (literal
+    /// token, via TemplateRenderer's existing unknown-field passthrough) so the frontend can
+    /// substitute the staff member's picked Event Time in as they select/change it.
     [HttpGet("{id}/templates/{templateId}/preview")]
-    public async Task<ActionResult<TemplatePreviewDto>> PreviewTemplate(long id, long templateId, CancellationToken ct)
+    public async Task<ActionResult<TemplatePreviewDto>> PreviewTemplate(long id, long templateId, [FromQuery] bool isReminder, CancellationToken ct)
     {
         var thread = await db.Threads.Include(t => t.Patient).SingleOrDefaultAsync(t => t.Id == id, ct);
         if (thread is null)
@@ -502,14 +513,17 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
             ["patient_name"] = thread.Patient.Name,
         };
 
-        var now = DateTime.UtcNow;
-        var nextAppointment = await db.Appointments
-            .Where(a => a.PatientId == thread.PatientId && a.Status == AppointmentStatus.Scheduled && a.ScheduledAt > now)
-            .OrderBy(a => a.ScheduledAt)
-            .FirstOrDefaultAsync(ct);
+        if (!isReminder)
+        {
+            var now = DateTime.UtcNow;
+            var nextAppointment = await db.Appointments
+                .Where(a => a.PatientId == thread.PatientId && a.Status == AppointmentStatus.Scheduled && a.ScheduledAt > now)
+                .OrderBy(a => a.ScheduledAt)
+                .FirstOrDefaultAsync(ct);
 
-        var appointmentTime = nextAppointment?.ScheduledAt ?? now.Date.AddDays(3).AddHours(10);
-        fields["appointment_time"] = appointmentTime.ToString("u");
+            var appointmentTime = nextAppointment?.ScheduledAt ?? now.Date.AddDays(3).AddHours(10);
+            fields["appointment_time"] = appointmentTime.ToString("u");
+        }
 
         return Ok(new TemplatePreviewDto { RenderedBody = TemplateRenderer.Render(template.Body, fields) });
     }

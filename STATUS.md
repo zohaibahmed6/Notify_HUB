@@ -453,6 +453,7 @@ This step was self-verified live in Docker this session — significantly more t
 - `{{appointment_time}}` resolution via `trigger_reference` parsing (carried over from step 3, still applies).
 - Worker's dispatcher/escalation loops don't gate on Api's migration completing (no health-check endpoint to gate on) — self-heals via error-retry backoff, confirmed in this session's fresh-volume test, but produces a few seconds of expected "table doesn't exist" warnings in worker logs at cold start.
 - No frontend unit test suite (Vitest/RTL) — not required by FR-013, out of scope for a 3-day build. End-to-end coverage exists instead via the new Playwright suite (11/11 passing, see above).
+- **Follow-up flagged (this session)**: `MessagesController.UpdateReminder` (P9-08) recalculates `ScheduledAt`/`ExpiresAt` when a `Queued` reminder's `EventTime` is edited, but never re-renders `RenderedBody` — so if the Reminder SMS dialog's Event Time substitution (see `CODEBASE_MAP.md` §4b's "Bug fix (this session)") already baked a formatted Event Time into `RenderedBody` at creation, editing the Event Time afterward via `UpdateReminder` leaves that stale text in place rather than updating it. Not fixed as part of this session's Event-Time-substitution fix (out of scope — a separate gap in the edit path, not the create path that was reported), left as a known follow-up.
 
 ## How to run
 ```

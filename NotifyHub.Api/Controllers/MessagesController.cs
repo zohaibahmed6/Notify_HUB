@@ -106,7 +106,7 @@ public class MessagesController(NotifyHubDbContext db) : ControllerBase
     [HttpPatch("{id}")]
     public async Task<ActionResult> UpdateReminder(long id, UpdateReminderRequest request, CancellationToken ct)
     {
-        var message = await db.OutboundMessages.SingleOrDefaultAsync(m => m.Id == id, ct);
+        var message = await db.OutboundMessages.Include(m => m.Patient).SingleOrDefaultAsync(m => m.Id == id, ct);
         if (message is null)
             return NotFound();
 
@@ -139,7 +139,7 @@ public class MessagesController(NotifyHubDbContext db) : ControllerBase
         message.IdempotencyKey = newIdempotencyKey;
 
         AuditLogger.Add(db, actor: User.FindFirstValue(ClaimTypes.Name)!, action: "reminder-updated", entityType: "OutboundMessage",
-            entityId: message.Id, detail: $"event time changed to {request.EventTime:o}");
+            entityId: message.Id, detail: $"Reminder SMS for {message.Patient.Name} ({message.Patient.Phone}) rescheduled to {request.EventTime:o}");
         await db.SaveChangesAsync(ct);
 
         return NoContent();
@@ -150,7 +150,7 @@ public class MessagesController(NotifyHubDbContext db) : ControllerBase
     [HttpPost("{id}/cancel")]
     public async Task<ActionResult> Cancel(long id, CancellationToken ct)
     {
-        var message = await db.OutboundMessages.SingleOrDefaultAsync(m => m.Id == id, ct);
+        var message = await db.OutboundMessages.Include(m => m.Patient).SingleOrDefaultAsync(m => m.Id == id, ct);
         if (message is null)
             return NotFound();
 
@@ -163,7 +163,8 @@ public class MessagesController(NotifyHubDbContext db) : ControllerBase
         var now = DateTime.UtcNow;
         message.Status = MessageStatus.Cancelled;
         db.DeliveryStatusHistories.Add(new DeliveryStatusHistory { MessageId = message.Id, Status = MessageStatus.Cancelled, OccurredAt = now });
-        AuditLogger.Add(db, actor: User.FindFirstValue(ClaimTypes.Name)!, action: "reminder-cancelled", entityType: "OutboundMessage", entityId: message.Id);
+        AuditLogger.Add(db, actor: User.FindFirstValue(ClaimTypes.Name)!, action: "reminder-cancelled", entityType: "OutboundMessage", entityId: message.Id,
+            detail: $"Reminder SMS for {message.Patient.Name} ({message.Patient.Phone}) cancelled");
 
         await db.SaveChangesAsync(ct);
 

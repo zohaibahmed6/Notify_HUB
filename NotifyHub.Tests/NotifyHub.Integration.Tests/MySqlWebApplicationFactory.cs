@@ -37,6 +37,9 @@ public class MySqlWebApplicationFactory : WebApplicationFactory<Program>
                 // benefit to inserting the full 50,000-row production default just to boot
                 // this race-condition test.
                 ["Seed:PerformanceMessageCount"] = "100",
+                // Same reasoning as above — cap TaskSeedStep so it doesn't also seed 1,000
+                // tasks against the real MySQL instance just to boot this test.
+                ["Seed:TaskCount"] = "20",
                 ["Webhooks:SharedSecret"] = SharedSecret,
                 ["MockGateway:FailRatePercent"] = "0",
                 ["MockGateway:MinDelayMs"] = "1",

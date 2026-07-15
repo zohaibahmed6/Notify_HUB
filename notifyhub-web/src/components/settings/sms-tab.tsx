@@ -2,17 +2,20 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { useSettings, useUpdateSettingsMutation } from "@/hooks/useSettings";
+import { useTemplates } from "@/hooks/useTemplates";
 import { errorMessage } from "@/lib/errorMessage";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 /// §6/§8: Quiet Hours and per-patient rate limiting — both default disabled server-side,
 /// so this tab is where an Admin opts them in.
 export function SmsTab() {
   const { data: settings, isLoading } = useSettings();
+  const { data: templates } = useTemplates(true);
   const updateSettings = useUpdateSettingsMutation();
 
   const [quietHoursEnabled, setQuietHoursEnabled] = useState(false);
@@ -23,6 +26,7 @@ export function SmsTab() {
   const [rateLimitWindowHours, setRateLimitWindowHours] = useState("24");
   const [reminderOffsetMinutes, setReminderOffsetMinutes] = useState("1440");
   const [reminderExpiryOffsetMinutes, setReminderExpiryOffsetMinutes] = useState("15");
+  const [defaultReminderTemplateId, setDefaultReminderTemplateId] = useState("none");
 
   useEffect(() => {
     if (!settings) return;
@@ -34,6 +38,7 @@ export function SmsTab() {
     setRateLimitWindowHours(String(settings.rateLimitWindowHours));
     setReminderOffsetMinutes(String(settings.reminderOffsetMinutes));
     setReminderExpiryOffsetMinutes(String(settings.reminderExpiryOffsetMinutes));
+    setDefaultReminderTemplateId(settings.defaultReminderTemplateId ? String(settings.defaultReminderTemplateId) : "none");
   }, [settings]);
 
   const handleSaveQuietHours = async () => {
@@ -63,6 +68,7 @@ export function SmsTab() {
       await updateSettings.mutateAsync({
         reminderOffsetMinutes: Number(reminderOffsetMinutes),
         reminderExpiryOffsetMinutes: Number(reminderExpiryOffsetMinutes),
+        defaultReminderTemplateId: defaultReminderTemplateId === "none" ? 0 : Number(defaultReminderTemplateId),
       });
       toast.success("Reminder SMS defaults saved");
     } catch (error) {
@@ -159,6 +165,25 @@ export function SmsTab() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="reminder-default-template">Default reminder template</Label>
+            <Select value={defaultReminderTemplateId} onValueChange={setDefaultReminderTemplateId}>
+              <SelectTrigger id="reminder-default-template">
+                <SelectValue placeholder="No default" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">No default</SelectItem>
+                {(templates ?? []).map((t) => (
+                  <SelectItem key={t.id} value={String(t.id)}>
+                    {t.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Preselected when opening the Reminder SMS dialog from a thread — staff can still pick a different template there.
+            </p>
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="reminder-offset">Reminder offset (minutes before Event Time)</Label>

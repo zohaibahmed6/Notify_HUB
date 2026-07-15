@@ -11,6 +11,7 @@ import { InitialsAvatar } from "@/components/v2/initials-avatar";
 import { StatusBadge } from "@/components/v2/status-badge";
 import { TASK_PRIORITY_CONFIG, TASK_STATUS_CONFIG } from "@/components/v2/status-config";
 import { isTaskOverdue } from "@/components/v2/task-card";
+import { encodeThreadId } from "@/lib/threadIdCodec";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -30,6 +31,7 @@ export function TaskDetailSheet({
   onAssignToMe,
   onComplete,
   isMutating,
+  currentUserId,
 }: {
   taskId: number | null;
   threadName?: string;
@@ -37,6 +39,7 @@ export function TaskDetailSheet({
   onAssignToMe: (taskId: number) => void;
   onComplete: (taskId: number) => void;
   isMutating: boolean;
+  currentUserId?: number;
 }) {
   const navigate = useNavigate();
   const { data: task, isLoading } = useTask(taskId);
@@ -56,6 +59,7 @@ export function TaskDetailSheet({
   }, [task, queryClient]);
 
   const isActionable = task && task.status !== "Completed" && task.status !== "Cancelled";
+  const isAssignedToCurrentUser = task?.assignedStaffId != null && task.assignedStaffId === currentUserId;
 
   // P9-01c: the sheet auto-closes after any action taken on the task from within it
   // (forward, complete, active/inactive toggle, assign-to-me, or any other
@@ -114,7 +118,7 @@ export function TaskDetailSheet({
               <SheetDescription>
                 <button
                   type="button"
-                  onClick={() => navigate(`/inbox?thread=${task.threadId}`)}
+                  onClick={() => navigate(`/inbox?thread=${encodeThreadId(task.threadId)}`)}
                   className="text-primary underline-offset-2 hover:underline"
                 >
                   View conversation
@@ -175,9 +179,11 @@ export function TaskDetailSheet({
               </div>
               {isActionable && (
                 <div className="flex w-full flex-col gap-2 sm:flex-row">
-                  <Button variant="outline" className="flex-1" onClick={handleAssignToMe} disabled={isMutating}>
-                    Assign to me
-                  </Button>
+                  {!isAssignedToCurrentUser && (
+                    <Button variant="outline" className="flex-1" onClick={handleAssignToMe} disabled={isMutating}>
+                      Assign to me
+                    </Button>
+                  )}
                   <Button className="flex-1" onClick={handleCompleteTask} disabled={isMutating}>
                     Complete
                   </Button>

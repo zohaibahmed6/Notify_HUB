@@ -133,7 +133,6 @@ export default function AuditLogPage() {
                 <tr>
                   <th className="p-2">Actor</th>
                   <th className="p-2">Action</th>
-                  <th className="p-2">Entity</th>
                   <th className="p-2">Occurred at</th>
                   <th className="p-2">Detail</th>
                 </tr>
@@ -143,9 +142,6 @@ export default function AuditLogPage() {
                   <tr key={log.id} className="border-t">
                     <td className="p-2">{log.actor}</td>
                     <td className="p-2">{log.action}</td>
-                    <td className="p-2 text-xs text-muted-foreground">
-                      {log.entityType} #{log.entityId}
-                    </td>
                     <td className="p-2">{new Date(log.occurredAt).toLocaleString()}</td>
                     <td className="p-2 text-xs text-muted-foreground">{log.detail ?? "—"}</td>
                   </tr>

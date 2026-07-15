@@ -18,6 +18,7 @@ export function TaskCard({
   onAssignToMe,
   onComplete,
   isMutating,
+  isAssignedToCurrentUser,
 }: {
   task: TaskDto;
   threadName?: string;
@@ -25,6 +26,7 @@ export function TaskCard({
   onAssignToMe: () => void;
   onComplete: () => void;
   isMutating: boolean;
+  isAssignedToCurrentUser: boolean;
 }) {
   const overdue = isTaskOverdue(task);
   const isActionable = task.status !== "Completed" && task.status !== "Cancelled";
@@ -73,15 +75,17 @@ export function TaskCard({
 
         {isActionable && (
           <div className="flex shrink-0 gap-1" onClick={(e) => e.stopPropagation()}>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 px-1.5 text-2xs"
-              onClick={onAssignToMe}
-              disabled={isMutating}
-            >
-              Assign to me
-            </Button>
+            {!isAssignedToCurrentUser && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-1.5 text-2xs"
+                onClick={onAssignToMe}
+                disabled={isMutating}
+              >
+                Assign to me
+              </Button>
+            )}
             <Button size="sm" className="h-6 px-1.5 text-2xs" onClick={onComplete} disabled={isMutating}>
               Complete
             </Button>

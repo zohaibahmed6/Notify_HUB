@@ -34,6 +34,11 @@ public class EscalationJob(NotifyHubDbContext db, ILogger<EscalationJob> logger)
 
         var fallbackAdminId = await FallbackUserResolver.ResolveFallbackAdminIdAsync(db, ct);
 
+        var involvedUserIds = overdue.Select(t => t.AssignedStaffId).Where(id => id is not null).Select(id => id!.Value).ToHashSet();
+        if (fallbackAdminId is not null)
+            involvedUserIds.Add(fallbackAdminId.Value);
+        var usernames = await db.Users.Where(u => involvedUserIds.Contains(u.Id)).ToDictionaryAsync(u => u.Id, u => u.Username, ct);
+
         foreach (var task in overdue)
         {
             var previousAssignee = task.AssignedStaffId;
@@ -44,8 +49,9 @@ public class EscalationJob(NotifyHubDbContext db, ILogger<EscalationJob> logger)
             if (fallbackAdminId is not null && task.AssignedStaffId != fallbackAdminId)
             {
                 task.AssignedStaffId = fallbackAdminId;
+                var previousUsername = previousAssignee is { } prevId && usernames.TryGetValue(prevId, out var prevName) ? prevName : "unassigned";
                 AuditLogger.Add(db, actor: "system", action: "assignment", entityType: "TaskItem", entityId: task.Id,
-                    detail: $"auto-reassigned to Admin (was {previousAssignee?.ToString() ?? "unassigned"})");
+                    detail: $"Task auto-reassigned from {previousUsername} to {usernames[fallbackAdminId.Value]} (escalated, overdue)");
             }
         }
 

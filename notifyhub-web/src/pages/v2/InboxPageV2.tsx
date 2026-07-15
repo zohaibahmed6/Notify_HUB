@@ -7,6 +7,7 @@ import { ThreadList } from "@/components/v2/thread-list";
 import { ConversationPanelV2 } from "@/components/v2/conversation-panel";
 import { EmptyState } from "@/components/v2/empty-state";
 import { cn } from "@/lib/utils";
+import { decodeThreadId, encodeThreadId } from "@/lib/threadIdCodec";
 
 export default function InboxPageV2() {
   const { data, isLoading } = useThreads();
@@ -14,19 +15,19 @@ export default function InboxPageV2() {
 
   // ?thread= lets the command palette (and any future deep link) jump straight to a
   // conversation; kept in sync both ways so selecting a thread updates the URL too.
+  // The URL carries an obfuscated token (threadIdCodec), not the raw id — cosmetic only.
   const [searchParams, setSearchParams] = useSearchParams();
-  const [selectedThreadId, setSelectedThreadId] = useState<number | null>(() => {
-    const fromUrl = searchParams.get("thread");
-    return fromUrl ? Number(fromUrl) : null;
-  });
+  const [selectedThreadId, setSelectedThreadId] = useState<number | null>(() =>
+    decodeThreadId(searchParams.get("thread")),
+  );
 
   // Deliberately keyed on searchParams only (not selectedThreadId) — this effect reacts
   // to external URL changes (e.g. palette navigation); selecting a thread in-page updates
   // the URL via handleSelect below, not the other way around.
   useEffect(() => {
-    const fromUrl = searchParams.get("thread");
-    if (fromUrl && Number(fromUrl) !== selectedThreadId) {
-      setSelectedThreadId(Number(fromUrl));
+    const fromUrl = decodeThreadId(searchParams.get("thread"));
+    if (fromUrl !== null && fromUrl !== selectedThreadId) {
+      setSelectedThreadId(fromUrl);
     }
   }, [searchParams]);
 
@@ -34,7 +35,7 @@ export default function InboxPageV2() {
     setSelectedThreadId(id);
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
-      next.set("thread", String(id));
+      next.set("thread", encodeThreadId(id));
       return next;
     });
   };

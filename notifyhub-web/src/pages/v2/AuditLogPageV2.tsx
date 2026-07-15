@@ -39,7 +39,7 @@ const ACTIONS = [
 ];
 const PAGE_SIZE = 25;
 
-type SortKey = "actor" | "action" | "entity" | "occurredAt";
+type SortKey = "actor" | "action" | "occurredAt";
 type SortDir = "asc" | "desc";
 
 function sortLogs(logs: AuditLogDto[], key: SortKey, dir: SortDir): AuditLogDto[] {
@@ -49,8 +49,6 @@ function sortLogs(logs: AuditLogDto[], key: SortKey, dir: SortDir): AuditLogDto[
         return a.actor.localeCompare(b.actor);
       case "action":
         return a.action.localeCompare(b.action);
-      case "entity":
-        return `${a.entityType}#${a.entityId}`.localeCompare(`${b.entityType}#${b.entityId}`);
       case "occurredAt":
         return new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime();
     }
@@ -233,10 +231,6 @@ export default function AuditLogPageV2() {
                     <StatusBadge {...config} />
                   </div>
                   <div className="mt-2 grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-xs">
-                    <span className="text-muted-foreground">Entity</span>
-                    <span>
-                      {log.entityType} #{log.entityId}
-                    </span>
                     <span className="text-muted-foreground">Occurred at</span>
                     <span className="font-mono">{new Date(log.occurredAt).toLocaleString()}</span>
                     <span className="text-muted-foreground">Detail</span>
@@ -255,7 +249,6 @@ export default function AuditLogPageV2() {
                     [
                       ["actor", "Actor"],
                       ["action", "Action"],
-                      ["entity", "Entity"],
                       ["occurredAt", "Occurred at"],
                     ] as [SortKey, string][]
                   ).map(([key, label]) => (
@@ -281,9 +274,6 @@ export default function AuditLogPageV2() {
                       <TableCell className="font-mono text-xs">{log.actor}</TableCell>
                       <TableCell>
                         <StatusBadge {...config} />
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
-                        {log.entityType} #{log.entityId}
                       </TableCell>
                       <TableCell className="font-mono text-xs">{new Date(log.occurredAt).toLocaleString()}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">{log.detail ?? "—"}</TableCell>

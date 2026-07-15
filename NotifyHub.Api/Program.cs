@@ -64,6 +64,10 @@ builder.Services.AddScoped<IDbSeedStep, DemoOutboundMessageSeedStep>();
 // 50k rows each time (see CustomWebApplicationFactory/MySqlWebApplicationFactory).
 builder.Services.AddScoped<IDbSeedStep>(sp =>
     new PerformanceSeedStep(builder.Configuration.GetValue("Seed:PerformanceMessageCount", 50_000)));
+// Registered after PerformanceSeedStep so it can reuse the patients/threads that step creates;
+// test factories override Seed:TaskCount to a small number for the same reason as above.
+builder.Services.AddScoped<IDbSeedStep>(sp =>
+    new TaskSeedStep(builder.Configuration.GetValue("Seed:TaskCount", 1_000)));
 builder.Services.AddScoped<DbSeedRunner>();
 builder.Services.AddScoped<NotifyHub.Infrastructure.Settings.SettingsService>();
 

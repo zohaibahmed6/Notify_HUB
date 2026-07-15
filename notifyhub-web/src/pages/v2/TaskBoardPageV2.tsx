@@ -191,6 +191,7 @@ export default function TaskBoardPageV2() {
       onAssignToMe={() => handleAssignToMe(task.id)}
       onComplete={() => handleComplete(task.id)}
       isMutating={updateTask.isPending}
+      isAssignedToCurrentUser={task.assignedStaffId != null && task.assignedStaffId === user?.id}
     />
   );
 
@@ -369,6 +370,7 @@ export default function TaskBoardPageV2() {
         onAssignToMe={handleAssignToMe}
         onComplete={handleComplete}
         isMutating={updateTask.isPending}
+        currentUserId={user?.id}
       />
 
       <Dialog open={showNewTaskDialog} onOpenChange={setShowNewTaskDialog}>
