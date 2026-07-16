@@ -16,13 +16,28 @@ public class TemplatesController(NotifyHubDbContext db) : ControllerBase
 {
     /// §5: `isActive` filter — omit to see everything (unlike Tasks, there's no
     /// "defaults to Active" requirement for Templates, just a filter control on the screen).
+    /// `communicationMode` is a second, independent optional filter — used by the two
+    /// send-time template pickers (composer "Insert template", Reminder SMS dialog) to
+    /// only show Sms templates; the Templates management screen omits it to see every mode.
     [HttpGet]
-    public async Task<ActionResult<IReadOnlyList<TemplateDto>>> List(bool? isActive, CancellationToken ct)
+    public async Task<ActionResult<IReadOnlyList<TemplateDto>>> List(bool? isActive, string? communicationMode, CancellationToken ct)
     {
         var query = db.MessageTemplates.AsQueryable();
 
         if (isActive is not null)
             query = query.Where(t => t.IsActive == isActive.Value);
+
+        if (communicationMode is not null)
+        {
+            if (!Enum.TryParse<CommunicationMode>(communicationMode, ignoreCase: true, out var mode))
+            {
+                return Problem(
+                    statusCode: StatusCodes.Status400BadRequest,
+                    title: $"Invalid communication mode '{communicationMode}'. Valid values: {string.Join(", ", Enum.GetNames<CommunicationMode>())}.");
+            }
+
+            query = query.Where(t => t.CommunicationMode == mode);
+        }
 
         var templates = await query
             .OrderBy(t => t.Id)
@@ -31,9 +46,10 @@ public class TemplatesController(NotifyHubDbContext db) : ControllerBase
                 Id = t.Id,
                 Name = t.Name,
                 Body = t.Body,
-                TriggerType = t.TriggerType.ToString(),
                 OffsetHours = t.OffsetHours,
                 IsActive = t.IsActive,
+                CommunicationMode = t.CommunicationMode.ToString(),
+                BookmarkIds = t.Bookmarks.Select(b => b.Id).ToList(),
             })
             .ToListAsync(ct);
 
@@ -43,20 +59,29 @@ public class TemplatesController(NotifyHubDbContext db) : ControllerBase
     [HttpPost]
     public async Task<ActionResult<TemplateDto>> Create(CreateTemplateRequest request, CancellationToken ct)
     {
-        if (!Enum.TryParse<TriggerType>(request.TriggerType, ignoreCase: true, out var triggerType))
+        var communicationMode = CommunicationMode.Sms;
+        if (request.CommunicationMode is not null)
         {
-            return Problem(
-                statusCode: StatusCodes.Status400BadRequest,
-                title: $"Invalid trigger type '{request.TriggerType}'. Valid values: {string.Join(", ", Enum.GetNames<TriggerType>())}.");
+            if (!Enum.TryParse(request.CommunicationMode, ignoreCase: true, out communicationMode))
+            {
+                return Problem(
+                    statusCode: StatusCodes.Status400BadRequest,
+                    title: $"Invalid communication mode '{request.CommunicationMode}'. Valid values: {string.Join(", ", Enum.GetNames<CommunicationMode>())}.");
+            }
         }
 
         var template = new MessageTemplate
         {
             Name = request.Name,
             Body = request.Body,
-            TriggerType = triggerType,
             OffsetHours = request.OffsetHours,
+            CommunicationMode = communicationMode,
         };
+
+        if (request.BookmarkIds is { Count: > 0 })
+        {
+            template.Bookmarks = await db.Bookmarks.Where(b => request.BookmarkIds.Contains(b.Id)).ToListAsync(ct);
+        }
 
         db.MessageTemplates.Add(template);
         await db.SaveChangesAsync(ct);
@@ -67,7 +92,7 @@ public class TemplatesController(NotifyHubDbContext db) : ControllerBase
     [HttpPatch("{id}")]
     public async Task<ActionResult<TemplateDto>> Update(long id, UpdateTemplateRequest request, CancellationToken ct)
     {
-        var template = await db.MessageTemplates.SingleOrDefaultAsync(t => t.Id == id, ct);
+        var template = await db.MessageTemplates.Include(t => t.Bookmarks).SingleOrDefaultAsync(t => t.Id == id, ct);
         if (template is null)
             return NotFound();
 
@@ -77,23 +102,28 @@ public class TemplatesController(NotifyHubDbContext db) : ControllerBase
         if (request.Body is not null)
             template.Body = request.Body;
 
-        if (request.TriggerType is not null)
-        {
-            if (!Enum.TryParse<TriggerType>(request.TriggerType, ignoreCase: true, out var triggerType))
-            {
-                return Problem(
-                    statusCode: StatusCodes.Status400BadRequest,
-                    title: $"Invalid trigger type '{request.TriggerType}'. Valid values: {string.Join(", ", Enum.GetNames<TriggerType>())}.");
-            }
-
-            template.TriggerType = triggerType;
-        }
-
         if (request.OffsetHours is not null)
             template.OffsetHours = request.OffsetHours.Value;
 
         if (request.IsActive is not null)
             template.IsActive = request.IsActive.Value;
+
+        if (request.CommunicationMode is not null)
+        {
+            if (!Enum.TryParse<CommunicationMode>(request.CommunicationMode, ignoreCase: true, out var mode))
+            {
+                return Problem(
+                    statusCode: StatusCodes.Status400BadRequest,
+                    title: $"Invalid communication mode '{request.CommunicationMode}'. Valid values: {string.Join(", ", Enum.GetNames<CommunicationMode>())}.");
+            }
+
+            template.CommunicationMode = mode;
+        }
+
+        if (request.BookmarkIds is not null)
+        {
+            template.Bookmarks = await db.Bookmarks.Where(b => request.BookmarkIds.Contains(b.Id)).ToListAsync(ct);
+        }
 
         await db.SaveChangesAsync(ct);
 
@@ -134,8 +164,9 @@ public class TemplatesController(NotifyHubDbContext db) : ControllerBase
         Id = t.Id,
         Name = t.Name,
         Body = t.Body,
-        TriggerType = t.TriggerType.ToString(),
         OffsetHours = t.OffsetHours,
         IsActive = t.IsActive,
+        CommunicationMode = t.CommunicationMode.ToString(),
+        BookmarkIds = t.Bookmarks.Select(b => b.Id).ToList(),
     };
 }

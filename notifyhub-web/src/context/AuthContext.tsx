@@ -7,6 +7,7 @@ import { tokenStore, type TokenSet } from "@/lib/tokenStore";
 export interface AuthUser {
   id: number;
   username: string;
+  fullName: string | null;
   role: "Admin" | "Staff";
 }
 

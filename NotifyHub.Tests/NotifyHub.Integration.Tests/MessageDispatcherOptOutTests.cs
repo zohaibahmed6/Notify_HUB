@@ -75,7 +75,6 @@ public class MessageDispatcherOptOutTests(CustomWebApplicationFactory factory) :
         {
             Name = "Committed reminder test template",
             Body = "This is the CURRENT live template body — should NOT appear in RenderedBody.",
-            TriggerType = TriggerType.AppointmentReminder,
             OffsetHours = 24,
         };
         db.MessageTemplates.Add(template);

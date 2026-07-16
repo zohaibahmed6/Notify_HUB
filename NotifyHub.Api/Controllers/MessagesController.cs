@@ -83,7 +83,7 @@ public class MessagesController(NotifyHubDbContext db) : ControllerBase
                 Phone = m.Patient.Phone,
                 Text = m.RenderedBody,
                 Status = m.Status.ToString(),
-                ScheduledTime = m.ScheduledAt,
+                ScheduledTime = m.ScheduledAt ?? m.CreatedAt,
                 ExpiryTime = m.ExpiresAt, // wired for real now that P9-07 added ExpiresAt
                 PduCount = m.PduCount, // wired for real now that P9-09 added the column
             })

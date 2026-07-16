@@ -9,4 +9,6 @@ public class Bookmark
     public string Label { get; set; } = default!;
     public string Description { get; set; } = default!;
     public string InsertText { get; set; } = default!;
+
+    public ICollection<MessageTemplate> Templates { get; set; } = new List<MessageTemplate>();
 }

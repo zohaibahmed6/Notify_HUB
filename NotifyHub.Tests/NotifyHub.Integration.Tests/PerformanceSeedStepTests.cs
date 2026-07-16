@@ -53,6 +53,23 @@ public class PerformanceSeedStepTests
     }
 
     [Fact]
+    public async Task RunAsync_SetsPduCount_OnEveryMessage()
+    {
+        await using var db = CreateContext();
+        await EnsureTemplateExistsAsync(db);
+
+        var step = new PerformanceSeedStep(targetMessageCount: 200);
+        await step.RunAsync(db, CancellationToken.None);
+
+        var perfSeedMessages = await db.OutboundMessages
+            .Where(m => m.TriggerReference != null && m.TriggerReference.StartsWith("perfseed:"))
+            .ToListAsync();
+
+        Assert.NotEmpty(perfSeedMessages);
+        Assert.All(perfSeedMessages, m => Assert.NotNull(m.PduCount));
+    }
+
+    [Fact]
     public async Task RunAsync_GeneratesRealisticNames_NoPlaceholderPrefix()
     {
         await using var db = CreateContext();
@@ -100,7 +117,6 @@ public class PerformanceSeedStepTests
         {
             Name = "Perf seed test template",
             Body = "Test body",
-            TriggerType = TriggerType.AppointmentReminder,
             OffsetHours = 48,
         });
         await db.SaveChangesAsync();

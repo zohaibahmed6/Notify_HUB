@@ -100,13 +100,14 @@ public class AuthController(
 
     /// Proves RBAC/JWT wiring end-to-end: any authenticated user can read their own identity.
     [HttpGet("me")]
-    public ActionResult<AuthUserDto> Me()
+    public async Task<ActionResult<AuthUserDto>> Me()
     {
         var id = long.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
         var username = User.FindFirstValue(ClaimTypes.Name)!;
         var role = User.FindFirstValue(ClaimTypes.Role)!;
+        var fullName = await db.Users.Where(u => u.Id == id).Select(u => u.FullName).SingleOrDefaultAsync();
 
-        return Ok(new AuthUserDto { Id = id, Username = username, Role = role });
+        return Ok(new AuthUserDto { Id = id, Username = username, FullName = fullName, Role = role });
     }
 
     /// Admin-only diagnostic route proving role-based restriction is enforced server-side.
@@ -153,6 +154,7 @@ public class AuthController(
             {
                 Id = user.Id,
                 Username = user.Username,
+                FullName = user.FullName,
                 Role = user.Role.ToString(),
             },
         };

@@ -2,6 +2,8 @@ using System.Net;
 using System.Net.Http.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using NotifyHub.Api.Common;
+using NotifyHub.Api.Tasks.Dtos;
 using NotifyHub.Domain.Entities;
 using NotifyHub.Domain.Enums;
 using NotifyHub.Infrastructure.Persistence;
@@ -278,6 +280,88 @@ public class TasksControllerTests(CustomWebApplicationFactory factory) : IClassF
         public bool IsActive { get; set; }
     }
 
+    [Fact]
+    public async Task List_And_Detail_IncludePatientName()
+    {
+        var (client, staffId) = await _client.AsStaffAsync();
+        var task = await CreateTaskAsync("+19990001013", staffId, DateTime.UtcNow.AddDays(1));
+
+        var listResponse = await client.GetAsync("/api/tasks?isActive=true&pageSize=100");
+        listResponse.EnsureSuccessStatusCode();
+        var listResult = await listResponse.Content.ReadFromJsonAsync<PagedResult<TaskDto>>();
+        Assert.Contains(listResult!.Items, t => t.Id == task.Id && t.PatientName == "Test Patient +19990001013");
+
+        var detailResponse = await client.GetAsync($"/api/tasks/{task.Id}");
+        detailResponse.EnsureSuccessStatusCode();
+        var detail = await detailResponse.Content.ReadFromJsonAsync<TaskDto>();
+        Assert.Equal("Test Patient +19990001013", detail!.PatientName);
+    }
+
+    [Fact]
+    public async Task List_SortByPriority_OrdersBySeverityNotAlphabetically()
+    {
+        var (client, staffId) = await _client.AsStaffAsync();
+        var due = DateTime.UtcNow.AddDays(1);
+        var urgent = await CreateTaskAsync("+19990001014", staffId, due, priority: TaskPriority.Urgent);
+        var low = await CreateTaskAsync("+19990001015", staffId, due, priority: TaskPriority.Low);
+        var high = await CreateTaskAsync("+19990001016", staffId, due, priority: TaskPriority.High);
+
+        var response = await client.GetAsync("/api/tasks?sortBy=priority&pageSize=100");
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<PagedResult<TaskDto>>();
+
+        var ids = result!.Items.Select(t => t.Id).ToList();
+        // Alphabetical would give High, Low, Medium, Urgent — severity-ascending must give
+        // Low before High before Urgent instead.
+        Assert.True(ids.IndexOf(low.Id) < ids.IndexOf(high.Id));
+        Assert.True(ids.IndexOf(high.Id) < ids.IndexOf(urgent.Id));
+    }
+
+    [Fact]
+    public async Task List_SortByStatusDesc_UsesStatusRankOrder()
+    {
+        var (client, staffId) = await _client.AsStaffAsync();
+        var due = DateTime.UtcNow.AddDays(1);
+        var open = await CreateTaskAsync("+19990001017", staffId, due, status: NotifyHubTaskStatus.Open);
+        var completed = await CreateTaskAsync("+19990001018", staffId, due, status: NotifyHubTaskStatus.Completed);
+
+        var response = await client.GetAsync("/api/tasks?sortBy=status&sortDir=desc&pageSize=100");
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<PagedResult<TaskDto>>();
+
+        var ids = result!.Items.Select(t => t.Id).ToList();
+        // Rank order matches the Board's Kanban columns (Open, InProgress, Escalated,
+        // Completed, Cancelled) — descending puts the highest-rank (Completed) first.
+        Assert.True(ids.IndexOf(completed.Id) < ids.IndexOf(open.Id));
+    }
+
+    [Fact]
+    public async Task List_UnassignedTrue_ReturnsOnlyNullAssignee()
+    {
+        var (client, staffId) = await _client.AsStaffAsync();
+        var due = DateTime.UtcNow.AddDays(1);
+        var assigned = await CreateTaskAsync("+19990001019", staffId, due);
+        var unassigned = await CreateTaskAsync("+19990001020", staffId, due, assignedStaffId: null);
+
+        var response = await client.GetAsync("/api/tasks?unassigned=true&pageSize=100");
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<PagedResult<TaskDto>>();
+
+        var ids = result!.Items.Select(t => t.Id).ToList();
+        Assert.Contains(unassigned.Id, ids);
+        Assert.DoesNotContain(assigned.Id, ids);
+    }
+
+    [Fact]
+    public async Task List_PriorityFilter_InvalidValue_Returns400()
+    {
+        var (client, _) = await _client.AsStaffAsync();
+
+        var response = await client.GetAsync("/api/tasks?priority=NotAPriority");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
     private async Task<TaskItem> CreateTaskAsync(
         string phone,
         long ownerId,
@@ -285,7 +369,9 @@ public class TasksControllerTests(CustomWebApplicationFactory factory) : IClassF
         bool isRecurring = false,
         int? recurrenceIntervalDays = null,
         int? recurrenceMaxOccurrences = null,
-        NotifyHubTaskStatus status = NotifyHubTaskStatus.Open)
+        NotifyHubTaskStatus status = NotifyHubTaskStatus.Open,
+        TaskPriority priority = TaskPriority.Medium,
+        long? assignedStaffId = -1)
     {
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
@@ -298,13 +384,15 @@ public class TasksControllerTests(CustomWebApplicationFactory factory) : IClassF
         db.Threads.Add(thread);
         await db.SaveChangesAsync();
 
+        // -1 is a sentinel meaning "default to ownerId" (distinct from an explicit null,
+        // which callers pass to test an unassigned task).
         var task = new TaskItem
         {
             ThreadId = thread.Id,
-            Priority = TaskPriority.Medium,
+            Priority = priority,
             DueAt = dueAt,
             Status = status,
-            AssignedStaffId = ownerId,
+            AssignedStaffId = assignedStaffId == -1 ? ownerId : assignedStaffId,
             OriginalOwnerId = ownerId,
             IsRecurring = isRecurring,
             RecurrenceIntervalDays = recurrenceIntervalDays,

@@ -5,15 +5,15 @@ import {
   ArrowUp,
   ArrowUpCircle,
   Ban,
-  Calendar,
   Check,
   CheckCheck,
   Clock,
-  ClipboardList,
   CornerUpRight,
+  FileText,
   Hourglass,
+  Mail,
+  MessageSquare,
   Minus,
-  Pill,
   Send,
   ShieldAlert,
   UserPlus,
@@ -22,7 +22,7 @@ import {
 
 import type { StatusBadgeConfig, StatusTone } from "@/components/v2/status-badge";
 import type { TaskPriority, TaskStatus } from "@/types/tasks";
-import type { TemplateTriggerType } from "@/types/templates";
+import type { CommunicationMode } from "@/types/templates";
 
 // Solid-fill counterpart to StatusBadge's pastel tones, for small-area marks (segmented
 // distribution bars, sparkline bars) where a soft badge background would be invisible.
@@ -81,10 +81,10 @@ export const AUDIT_ACTION_CONFIG: Record<string, StatusBadgeConfig> = {
   "reminder-cancelled": { icon: Ban, tone: "muted", label: "Reminder cancelled" },
 };
 
-export const TRIGGER_TYPE_CONFIG: Record<TemplateTriggerType, StatusBadgeConfig> = {
-  AppointmentReminder: { icon: Calendar, tone: "info", label: "Appointment reminder" },
-  MedicationAlert: { icon: Pill, tone: "progress", label: "Medication alert" },
-  PrescriptionAlert: { icon: ClipboardList, tone: "neutral", label: "Prescription alert" },
+export const COMMUNICATION_MODE_CONFIG: Record<CommunicationMode, StatusBadgeConfig> = {
+  Sms: { icon: MessageSquare, tone: "info", label: "SMS" },
+  Email: { icon: Mail, tone: "neutral", label: "Email" },
+  Letter: { icon: FileText, tone: "muted", label: "Letter" },
 };
 
 // Fallback for any status/action string not covered above (defensive against future

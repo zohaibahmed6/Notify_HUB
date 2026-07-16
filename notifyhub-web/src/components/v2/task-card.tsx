@@ -5,15 +5,16 @@ import { StatusBadge } from "@/components/v2/status-badge";
 import { TASK_PRIORITY_CONFIG } from "@/components/v2/status-config";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { parseUtc } from "@/lib/dateUtc";
 import type { TaskDto } from "@/types/tasks";
 
 export function isTaskOverdue(task: TaskDto): boolean {
-  return new Date(task.dueAt) < new Date() && task.status !== "Completed" && task.status !== "Cancelled";
+  const dueAt = parseUtc(task.dueAt);
+  return dueAt !== null && dueAt < new Date() && task.status !== "Completed" && task.status !== "Cancelled";
 }
 
 export function TaskCard({
   task,
-  threadName,
   onOpen,
   onAssignToMe,
   onComplete,
@@ -21,7 +22,6 @@ export function TaskCard({
   isAssignedToCurrentUser,
 }: {
   task: TaskDto;
-  threadName?: string;
   onOpen: () => void;
   onAssignToMe: () => void;
   onComplete: () => void;
@@ -55,12 +55,12 @@ export function TaskCard({
       </div>
 
       <div className="mt-2 truncate text-sm font-medium">
-        {threadName ?? `Thread #${task.threadId}`}
+        {task.patientName}
       </div>
 
       <div className={cn("mt-1 text-xs", overdue ? "font-medium text-destructive" : "text-muted-foreground")}>
         {overdue ? "Overdue · " : "Due "}
-        {new Date(task.dueAt).toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+        {parseUtc(task.dueAt)?.toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
       </div>
 
       <div className="mt-3 flex items-center justify-between gap-2">

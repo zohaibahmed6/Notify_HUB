@@ -1,14 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "@/lib/apiClient";
-import type { CreateTemplateRequest, TemplateDto, UpdateTemplateRequest } from "@/types/templates";
+import type { CommunicationMode, CreateTemplateRequest, TemplateDto, UpdateTemplateRequest } from "@/types/templates";
 
-export function useTemplates(isActive?: boolean) {
-  const params = isActive === undefined ? "" : `?isActive=${isActive}`;
+export function useTemplates(isActive?: boolean, communicationMode?: CommunicationMode) {
+  const params = new URLSearchParams();
+  if (isActive !== undefined) params.set("isActive", String(isActive));
+  if (communicationMode !== undefined) params.set("communicationMode", communicationMode);
+  const query = params.toString();
 
   return useQuery({
-    queryKey: ["templates", isActive],
-    queryFn: () => apiClient.get<TemplateDto[]>(`/api/templates${params}`),
+    queryKey: ["templates", isActive, communicationMode],
+    queryFn: () => apiClient.get<TemplateDto[]>(`/api/templates${query ? `?${query}` : ""}`),
   });
 }
 

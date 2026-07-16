@@ -4,6 +4,7 @@ public class TaskDto
 {
     public long Id { get; set; }
     public long ThreadId { get; set; }
+    public string PatientName { get; set; } = default!;
     public string Priority { get; set; } = default!;
     public DateTime DueAt { get; set; }
     public string Status { get; set; } = default!;

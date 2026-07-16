@@ -7,6 +7,7 @@ namespace NotifyHub.Infrastructure.Settings;
 public record QuietHoursSettings(bool Enabled, TimeOnly Start, TimeOnly End);
 public record RateLimitSettings(bool Enabled, int MaxMessages, int WindowHours);
 public record ReminderSettings(int OffsetMinutes, int ExpiryOffsetMinutes, long? DefaultTemplateId);
+public record TaskAssignmentSettings(long? DefaultProviderId);
 
 /// §6/§8: typed accessors over the generic SystemSetting key-value table — parsing/
 /// validation/defaults live here once instead of scattered across controllers/consumers.
@@ -34,6 +35,12 @@ public class SettingsService(NotifyHubDbContext db)
     /// other active template). `0`/unparseable/absent all mean "no default" (real
     /// MessageTemplate ids are DB auto-increment, so 0 is never a real id).
     public const string DefaultReminderTemplateIdKey = "Reminder:DefaultTemplateId";
+
+    /// The assignee a new task from an unassigned thread falls back to when the creator
+    /// doesn't explicitly pick one — checked after the thread's own assignee and before
+    /// the creator themselves (see ThreadsController.CreateTask). `0`/unparseable/absent
+    /// all mean "not configured," same convention as DefaultReminderTemplateId.
+    public const string DefaultTaskProviderIdKey = "Task:DefaultProviderId";
 
     public async Task<QuietHoursSettings> GetQuietHoursAsync(CancellationToken ct)
     {
@@ -63,6 +70,14 @@ public class SettingsService(NotifyHubDbContext db)
             OffsetMinutes: values.TryGetValue(ReminderOffsetMinutesKey, out var o) && int.TryParse(o, out var offset) ? offset : 1440,
             ExpiryOffsetMinutes: values.TryGetValue(ReminderExpiryOffsetMinutesKey, out var e) && int.TryParse(e, out var expiryOffset) ? expiryOffset : 15,
             DefaultTemplateId: values.TryGetValue(DefaultReminderTemplateIdKey, out var t) && long.TryParse(t, out var tid) && tid > 0 ? tid : null);
+    }
+
+    public async Task<TaskAssignmentSettings> GetTaskAssignmentAsync(CancellationToken ct)
+    {
+        var values = await GetAllAsync(ct);
+
+        return new TaskAssignmentSettings(
+            DefaultProviderId: values.TryGetValue(DefaultTaskProviderIdKey, out var p) && long.TryParse(p, out var pid) && pid > 0 ? pid : null);
     }
 
     public async Task<bool> IsQuietHoursNowAsync(CancellationToken ct)

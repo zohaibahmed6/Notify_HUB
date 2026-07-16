@@ -6,6 +6,7 @@ import { useAssignMutation, useReplyMutation, useThread } from "@/hooks/useThrea
 import { useTemplates } from "@/hooks/useTemplates";
 import { apiClient } from "@/lib/apiClient";
 import { errorMessage } from "@/lib/errorMessage";
+import { formatUtc } from "@/lib/dateUtc";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -17,6 +18,7 @@ import { DELIVERY_STATUS_CONFIG, UNKNOWN_STATUS_CONFIG } from "@/components/v2/s
 import { CreateTaskForm } from "@/components/inbox/CreateTaskForm";
 import { DateTimePicker } from "@/components/v2/date-time-picker";
 import { ReminderSmsDialog } from "@/components/v2/reminder-sms-dialog";
+import { SmsSegmentHint } from "@/components/v2/sms-segment-hint";
 import type { ThreadDetailDto, ThreadMessageDto } from "@/types/inbox";
 
 const MESSAGES_PAGE_SIZE = 25;
@@ -26,7 +28,7 @@ const MESSAGES_PAGE_SIZE = 25;
 // ThreadMessageDto.status was already returned by the API but never rendered).
 export function ConversationPanelV2({ threadId, onBack }: { threadId: number; onBack?: () => void }) {
   const { data: thread, isLoading } = useThread(threadId);
-  const { data: templates } = useTemplates(true);
+  const { data: templates } = useTemplates(true, "Sms");
   const assign = useAssignMutation(threadId);
   const reply = useReplyMutation(threadId);
 
@@ -188,11 +190,12 @@ export function ConversationPanelV2({ threadId, onBack }: { threadId: number; on
         </div>
       )}
 
-      {showTaskForm && (
-        <div className="shrink-0 border-b p-3">
-          <CreateTaskForm threadId={threadId} onDone={() => setShowTaskForm(false)} />
-        </div>
-      )}
+      <CreateTaskForm
+        threadId={threadId}
+        threadAssignedStaffId={thread.assignedStaffId}
+        open={showTaskForm}
+        onOpenChange={setShowTaskForm}
+      />
 
       <div ref={scrollRef} onScroll={handleScroll} className="flex-1 space-y-3 overflow-y-auto p-4">
         {allMessages.length === 0 ? (
@@ -221,13 +224,13 @@ export function ConversationPanelV2({ threadId, onBack }: { threadId: number; on
                 message.direction === "outbound" && message.status
                   ? (DELIVERY_STATUS_CONFIG[message.status] ?? UNKNOWN_STATUS_CONFIG)
                   : null;
-              // eventTime is only ever populated for a Reminder SMS (P9-08) — used here to
-              // scope the "Will send" line to reminders, not plain staff-scheduled replies,
-              // which share the same Queued/scheduledAt mechanism but no EventTime.
-              const isQueuedReminder =
+              // Any still-Queued outbound message with a scheduledAt hasn't dispatched yet —
+              // covers both Reminder SMS (P9-08) and a plain staff-scheduled reply (the
+              // composer's Schedule toggle), which share the same Queued/scheduledAt
+              // mechanism.
+              const willSendAt =
                 message.direction === "outbound" &&
                 message.status === "Queued" &&
-                message.eventTime &&
                 message.scheduledAt;
               return (
                 <div
@@ -254,12 +257,12 @@ export function ConversationPanelV2({ threadId, onBack }: { threadId: number; on
                           ? "You"
                           : (message.senderType ?? "Patient")}
                         {" · "}
-                        {new Date(message.timestamp).toLocaleString()}
+                        {formatUtc(message.timestamp)}
                       </span>
                     </div>
-                    {isQueuedReminder && (
+                    {willSendAt && (
                       <div className="mt-0.5 flex items-center justify-end gap-1.5 text-[10px] opacity-80">
-                        <span>Will send {new Date(message.scheduledAt!).toLocaleString()}</span>
+                        <span>Will send {formatUtc(message.scheduledAt)}</span>
                       </div>
                     )}
                     {statusConfig && (
@@ -321,23 +324,26 @@ export function ConversationPanelV2({ threadId, onBack }: { threadId: number; on
             )}
           </div>
         )}
-        <div className="flex gap-2">
-          <Textarea
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            placeholder={thread.patientOptedOut ? "Patient has opted out" : "Type a reply..."}
-            disabled={thread.patientOptedOut || reply.isPending}
-            className="min-h-10"
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                handleReply(event);
-              }
-            }}
-          />
-          <Button type="submit" disabled={thread.patientOptedOut || reply.isPending || !draft.trim()}>
-            {showSchedule && scheduledAt ? "Schedule" : "Send"}
-          </Button>
+        <div className="flex flex-col gap-1">
+          <div className="flex gap-2">
+            <Textarea
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              placeholder={thread.patientOptedOut ? "Patient has opted out" : "Type a reply..."}
+              disabled={thread.patientOptedOut || reply.isPending}
+              className="min-h-10"
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  handleReply(event);
+                }
+              }}
+            />
+            <Button type="submit" disabled={thread.patientOptedOut || reply.isPending || !draft.trim()}>
+              {showSchedule && scheduledAt ? "Schedule" : "Send"}
+            </Button>
+          </div>
+          <SmsSegmentHint text={draft} />
         </div>
       </form>
 

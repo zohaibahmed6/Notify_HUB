@@ -244,7 +244,6 @@ public class RemindersTests(CustomWebApplicationFactory factory) : IClassFixture
         {
             Name = "Dispatch reminder test template",
             Body = "Hi {{patient_name}}, see you at {{appointment_time}}.",
-            TriggerType = TriggerType.AppointmentReminder,
             OffsetHours = 24,
         };
         db.MessageTemplates.Add(template);
@@ -293,7 +292,6 @@ public class RemindersTests(CustomWebApplicationFactory factory) : IClassFixture
         {
             Name = $"Reminder test template {phone}",
             Body = "Hi {{patient_name}}, this is a reminder.",
-            TriggerType = TriggerType.AppointmentReminder,
             OffsetHours = 24,
         };
         db.MessageTemplates.Add(template);

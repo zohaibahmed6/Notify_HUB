@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Trash2 } from "lucide-react";
 
 import { useAuth } from "@/context/AuthContext";
 import { useAssignableUsers } from "@/hooks/useUsers";
+import { useSettings, useUpdateSettingsMutation } from "@/hooks/useSettings";
 import {
   useCreateTaskForwardingRuleMutation,
   useDeleteTaskForwardingRuleMutation,
@@ -85,7 +86,7 @@ function TaskForwardingRulesCard() {
   };
 
   return (
-    <Card>
+    <Card id="task-forwarding">
       <CardHeader>
         <CardTitle className="text-base">Task forwarding</CardTitle>
         <CardDescription>
@@ -163,13 +164,80 @@ function TaskForwardingRulesCard() {
   );
 }
 
+/// System-wide fallback assignee for a new task created from an unassigned thread (only
+/// used when the thread itself has no current owner) — see ThreadsController.CreateTask.
+/// Admin-editable; Staff see the configured value but can't change it (server already
+/// enforces this on PATCH, disabling client-side just avoids a pointless 403).
+function DefaultTaskProviderCard() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "Admin";
+  const { data: settings } = useSettings();
+  const { data: assignableUsers } = useAssignableUsers();
+  const updateSettings = useUpdateSettingsMutation();
+
+  const [defaultTaskProviderId, setDefaultTaskProviderId] = useState("none");
+
+  useEffect(() => {
+    if (!settings) return;
+    setDefaultTaskProviderId(settings.defaultTaskProviderId ? String(settings.defaultTaskProviderId) : "none");
+  }, [settings]);
+
+  const handleSave = async () => {
+    try {
+      await updateSettings.mutateAsync({
+        defaultTaskProviderId: defaultTaskProviderId === "none" ? 0 : Number(defaultTaskProviderId),
+      });
+      toast.success("Default task provider saved");
+    } catch (error) {
+      toast.error(errorMessage(error, "Save failed"));
+    }
+  };
+
+  return (
+    <Card id="task-default-provider">
+      <CardHeader>
+        <CardTitle className="text-base">Default task provider</CardTitle>
+        <CardDescription>
+          When a task is created from a thread with no current owner, it's assigned here by default
+          (still changeable per task). Falls back to the lowest-id active Admin if nothing is set.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="space-y-1.5">
+          <Label htmlFor="default-task-provider">Default assignee</Label>
+          <Select value={defaultTaskProviderId} onValueChange={setDefaultTaskProviderId} disabled={!isAdmin}>
+            <SelectTrigger id="default-task-provider">
+              <SelectValue placeholder="No default" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">No default</SelectItem>
+              {(assignableUsers ?? []).map((u) => (
+                <SelectItem key={u.id} value={String(u.id)}>
+                  {u.fullName ?? u.username}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        {isAdmin && (
+          <div className="flex justify-end">
+            <Button size="sm" onClick={handleSave} disabled={updateSettings.isPending}>
+              Save
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 /// Task due-date defaults stay read-only (FR-008 hardcoded Domain constants, not
 /// SystemSetting-backed) — forwarding rules below are the real, editable control this tab
 /// gains in P9-10.
 export function TaskTab() {
   return (
     <div className="space-y-4">
-      <Card>
+      <Card id="task-defaults">
         <CardHeader>
           <CardTitle className="text-base">Task defaults</CardTitle>
           <CardDescription>Due dates auto-suggested by priority when creating a task (not editable here).</CardDescription>
@@ -186,6 +254,7 @@ export function TaskTab() {
         </CardContent>
       </Card>
 
+      <DefaultTaskProviderCard />
       <TaskForwardingRulesCard />
     </div>
   );

@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { TaskAssignmentFields } from "@/components/tasks/TaskAssignmentFields";
 import { DateTimePicker } from "@/components/v2/date-time-picker";
 import { TASK_TYPES, type TaskPriority, type TaskType } from "@/types/tasks";
 
@@ -22,6 +24,7 @@ export function NewTaskForm({ onDone }: { onDone: () => void }) {
   const threads = threadsData?.items ?? [];
 
   const [threadId, setThreadId] = useState<number | "">("");
+  const [assignedStaffId, setAssignedStaffId] = useState<number | "">("");
   const [priority, setPriority] = useState<TaskPriority>("Medium");
   // Date required, time optional (defaults 00:00) — P9-01d, now via the shared
   // DateTimePicker (P9-03) instead of two native inputs.
@@ -38,6 +41,13 @@ export function NewTaskForm({ onDone }: { onDone: () => void }) {
   const [recurrenceMaxOccurrences, setRecurrenceMaxOccurrences] = useState("");
 
   const createTask = useCreateTaskMutation(threadId === "" ? -1 : threadId);
+  const selectedThread = threads.find((t) => t.id === threadId);
+
+  const handleThreadChange = (id: number) => {
+    setThreadId(id);
+    // Re-derive the assignee default from the newly-selected thread's current owner.
+    setAssignedStaffId("");
+  };
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -47,6 +57,10 @@ export function NewTaskForm({ onDone }: { onDone: () => void }) {
     }
     if (!dueAt) {
       toast.error("Pick a due date");
+      return;
+    }
+    if (!assignedStaffId) {
+      toast.error("Pick an assignee");
       return;
     }
     if (isRecurring && !recurrenceIntervalDays) {
@@ -61,6 +75,7 @@ export function NewTaskForm({ onDone }: { onDone: () => void }) {
         taskType,
         // Left blank -> server auto-populates from the thread's most recent message.
         description: description || undefined,
+        assignedStaffId,
         isRecurring,
         recurrenceIntervalDays: isRecurring ? Number(recurrenceIntervalDays) : undefined,
         recurrenceEndDate: isRecurring && recurrenceEndDate ? new Date(recurrenceEndDate).toISOString() : undefined,
@@ -74,38 +89,45 @@ export function NewTaskForm({ onDone }: { onDone: () => void }) {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-3 rounded-md border bg-muted/40 p-4">
+    <form onSubmit={handleSubmit} className="space-y-4">
       <div className="space-y-1.5">
         <Label htmlFor="new-task-thread">Thread</Label>
-        <select
-          id="new-task-thread"
-          value={threadId}
-          onChange={(event) => setThreadId(event.target.value ? Number(event.target.value) : "")}
-          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        <Select
+          value={threadId === "" ? undefined : String(threadId)}
+          onValueChange={(v) => handleThreadChange(Number(v))}
         >
-          <option value="">Select a thread...</option>
-          {threads.map((thread) => (
-            <option key={thread.id} value={thread.id}>
-              {thread.patientName}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger id="new-task-thread">
+            <SelectValue placeholder="Select a thread..." />
+          </SelectTrigger>
+          <SelectContent>
+            {threads.map((thread) => (
+              <SelectItem key={thread.id} value={String(thread.id)}>
+                {thread.patientName}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
+      <TaskAssignmentFields
+        threadAssignedStaffId={selectedThread?.assignedStaffId}
+        value={assignedStaffId}
+        onChange={setAssignedStaffId}
+      />
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div className="space-y-1.5">
           <Label htmlFor="new-task-priority">Priority</Label>
-          <select
-            id="new-task-priority"
-            value={priority}
-            onChange={(event) => setPriority(event.target.value as TaskPriority)}
-            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-          >
-            {PRIORITIES.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
+          <Select value={priority} onValueChange={(v) => setPriority(v as TaskPriority)}>
+            <SelectTrigger id="new-task-priority">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {PRIORITIES.map((p) => (
+                <SelectItem key={p} value={p}>
+                  {p}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         <div className="space-y-1.5 sm:col-span-2">
           <Label htmlFor="new-task-due">Due date (time optional, defaults 00:00)</Label>
@@ -114,18 +136,18 @@ export function NewTaskForm({ onDone }: { onDone: () => void }) {
       </div>
       <div className="space-y-1.5">
         <Label htmlFor="new-task-type">Task type</Label>
-        <select
-          id="new-task-type"
-          value={taskType}
-          onChange={(event) => setTaskType(event.target.value as TaskType)}
-          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-        >
-          {TASK_TYPES.map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
-          ))}
-        </select>
+        <Select value={taskType} onValueChange={(v) => setTaskType(v as TaskType)}>
+          <SelectTrigger id="new-task-type">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {TASK_TYPES.map((t) => (
+              <SelectItem key={t} value={t}>
+                {t}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
       <div className="space-y-1.5">
         <Label htmlFor="new-task-description">Description (optional — defaults to the thread's last message)</Label>

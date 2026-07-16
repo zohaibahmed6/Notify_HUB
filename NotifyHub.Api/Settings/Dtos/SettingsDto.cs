@@ -15,4 +15,7 @@ public class SettingsDto
 
     /// Preselected template when opening the Reminder SMS dialog from a thread; null = none configured.
     public long? DefaultReminderTemplateId { get; set; }
+
+    /// Fallback assignee for a new task created from an unassigned thread; null = none configured.
+    public long? DefaultTaskProviderId { get; set; }
 }

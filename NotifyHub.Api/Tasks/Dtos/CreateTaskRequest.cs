@@ -16,4 +16,9 @@ public class CreateTaskRequest
     /// bare API call (no client) still gets a sensible default.
     public string? Description { get; set; }
     public string? TaskType { get; set; }
+
+    /// Explicit assignee chosen by the creator; when omitted, ThreadsController.CreateTask
+    /// falls back to the thread's current owner, then the configured default task
+    /// provider, then the creator themselves.
+    public long? AssignedStaffId { get; set; }
 }

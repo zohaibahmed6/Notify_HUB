@@ -14,7 +14,7 @@ export function SystemTab() {
   }
 
   return (
-    <Card>
+    <Card id="system-info">
       <CardHeader>
         <CardTitle className="text-base">System</CardTitle>
         <CardDescription>Live diagnostics — not editable.</CardDescription>

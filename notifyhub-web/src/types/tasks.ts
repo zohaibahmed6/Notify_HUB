@@ -26,6 +26,7 @@ export const TASK_TYPES: TaskType[] = [
 export interface TaskDto {
   id: number;
   threadId: number;
+  patientName: string;
   priority: TaskPriority;
   dueAt: string;
   status: TaskStatus;
@@ -51,6 +52,7 @@ export interface CreateTaskRequest {
   recurrenceMaxOccurrences?: number;
   description?: string;
   taskType?: TaskType;
+  assignedStaffId?: number;
 }
 
 export interface UpdateTaskRequest {
@@ -68,12 +70,27 @@ export interface ForwardTaskRequest {
   note?: string;
 }
 
+export type TaskSortBy = "dueAt" | "priority" | "status" | "patientName" | "assignedStaffUsername";
+export type TaskSortDir = "asc" | "desc";
+
 export interface TaskListFilters {
   status?: TaskStatus | "All";
+  /** Comma-joined server-side, e.g. for TaskNavWidget's "Open/InProgress/Escalated" badge
+   * set — wins over `status` when both are present. Lets a caller filter to a status set
+   * without fetching everything and filtering client-side (which silently misses rows once
+   * the true match count exceeds `pageSize`, see TaskNavWidget's bug history). */
+  statuses?: TaskStatus[];
   assignedStaffId?: number;
   description?: string;
   patientName?: string;
   dueFrom?: string;
   dueTo?: string;
   isActive?: boolean;
+  priority?: TaskPriority;
+  isRecurring?: boolean;
+  unassigned?: boolean;
+  sortBy?: TaskSortBy;
+  sortDir?: TaskSortDir;
+  page?: number;
+  pageSize?: number;
 }

@@ -12,6 +12,7 @@ import { StatusBadge } from "@/components/v2/status-badge";
 import { TASK_PRIORITY_CONFIG, TASK_STATUS_CONFIG } from "@/components/v2/status-config";
 import { isTaskOverdue } from "@/components/v2/task-card";
 import { encodeThreadId } from "@/lib/threadIdCodec";
+import { formatUtc } from "@/lib/dateUtc";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -26,7 +27,6 @@ import { cn } from "@/lib/utils";
 // as the legacy TaskDetailPanel, just Sheet-based instead of an inline expando.
 export function TaskDetailSheet({
   taskId,
-  threadName,
   onOpenChange,
   onAssignToMe,
   onComplete,
@@ -34,7 +34,6 @@ export function TaskDetailSheet({
   currentUserId,
 }: {
   taskId: number | null;
-  threadName?: string;
   onOpenChange: (open: boolean) => void;
   onAssignToMe: (taskId: number) => void;
   onComplete: (taskId: number) => void;
@@ -114,7 +113,7 @@ export function TaskDetailSheet({
         ) : (
           <>
             <SheetHeader>
-              <SheetTitle>{threadName ?? `Task #${task.id}`}</SheetTitle>
+              <SheetTitle>{task.patientName}</SheetTitle>
               <SheetDescription>
                 <button
                   type="button"
@@ -138,7 +137,7 @@ export function TaskDetailSheet({
             <div className="space-y-3 text-sm">
               <div className={cn(isTaskOverdue(task) && "font-medium text-destructive")}>
                 {isTaskOverdue(task) ? "Overdue — due " : "Due "}
-                {new Date(task.dueAt).toLocaleString()}
+                {formatUtc(task.dueAt)}
               </div>
 
               <div className="flex items-center gap-2 text-muted-foreground">

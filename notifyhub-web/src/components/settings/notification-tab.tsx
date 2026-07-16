@@ -17,7 +17,7 @@ export function NotificationTab() {
   };
 
   return (
-    <Card>
+    <Card id="notification-browser">
       <CardHeader>
         <CardTitle className="text-base">Browser notifications</CardTitle>
         <CardDescription>Get a desktop notification for real-time inbox/task events.</CardDescription>

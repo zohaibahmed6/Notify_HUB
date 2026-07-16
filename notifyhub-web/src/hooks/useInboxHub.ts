@@ -21,6 +21,11 @@ interface MessageStatusUpdatedEvent {
   status: string;
 }
 
+interface TaskAssignmentChangedEvent {
+  taskId: number;
+  assignedStaffId: number;
+}
+
 /** FR-007: shared inbox real-time — invalidates the affected queries on server push so
  * every connected session (e.g. two open browser tabs) converges without polling. */
 export function useInboxHub() {
@@ -50,6 +55,14 @@ export function useInboxHub() {
     // with no broadcast at all).
     connection.on("messageStatusUpdated", (event: MessageStatusUpdatedEvent) => {
       queryClient.invalidateQueries({ queryKey: ["thread", event.threadId] });
+    });
+
+    // Broadcast on every task creation/reassignment/forward (ThreadsController.CreateTask,
+    // TasksController.Update/Forward, UsersController's auto-forward-on-deactivation) — a
+    // single handler here refreshes both TaskNavWidget's badge and the Task Board's list
+    // for whichever session the task is now assigned to, without per-component polling.
+    connection.on("taskAssignmentChanged", (_event: TaskAssignmentChangedEvent) => {
+      queryClient.invalidateQueries({ queryKey: ["tasks"] });
     });
 
     connection.start().catch((error) => {

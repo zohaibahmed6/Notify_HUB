@@ -131,7 +131,6 @@ public class SettingsControllerTests(CustomWebApplicationFactory factory) : ICla
         {
             Name = name,
             Body = "Hi {{patient_name}}, this is a reminder.",
-            TriggerType = TriggerType.AppointmentReminder,
             OffsetHours = 24,
         };
         db.MessageTemplates.Add(template);

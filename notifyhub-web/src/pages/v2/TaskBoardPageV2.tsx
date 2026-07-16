@@ -5,7 +5,6 @@ import { ChevronDown, ClipboardList, Plus } from "lucide-react";
 
 import { useAuth } from "@/context/AuthContext";
 import { useTasks, useUpdateTaskMutation } from "@/hooks/useTasks";
-import { useThreads } from "@/hooks/useThreads";
 import { useAssignableUsers } from "@/hooks/useUsers";
 import { errorMessage } from "@/lib/errorMessage";
 import { cn } from "@/lib/utils";
@@ -23,6 +22,7 @@ import {
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { NewTaskForm } from "@/components/tasks/NewTaskForm";
 import { TaskCard } from "@/components/v2/task-card";
+import { TaskGrid } from "@/components/v2/task-grid";
 import { DateTimePicker } from "@/components/v2/date-time-picker";
 import { FilterBar, FilterField } from "@/components/v2/filter-bar";
 import { TaskDetailSheet } from "@/components/v2/task-detail-sheet";
@@ -30,7 +30,9 @@ import { EmptyState } from "@/components/v2/empty-state";
 import { CardGridSkeleton } from "@/components/v2/skeletons";
 import { DistributionBar } from "@/components/v2/sparkline";
 import { STATUS_TONE_BAR_CLASS, TASK_STATUS_CONFIG } from "@/components/v2/status-config";
-import type { TaskDto, TaskPriority, TaskStatus } from "@/types/tasks";
+import type { TaskDto, TaskPriority, TaskSortBy, TaskSortDir, TaskStatus } from "@/types/tasks";
+
+const GRID_PAGE_SIZE = 25;
 
 const COLUMNS: { status: TaskStatus; label: string; defaultCollapsed: boolean }[] = [
   { status: "Open", label: "Open", defaultCollapsed: false },
@@ -46,7 +48,7 @@ export default function TaskBoardPageV2() {
   const { user } = useAuth();
   const { data: assignableUsers } = useAssignableUsers();
 
-  const [view, setView] = useState<"board" | "list">("board");
+  const [view, setView] = useState<"board" | "grid">("grid");
   const [priorityFilter, setPriorityFilter] = useState<TaskPriority | "all">("all");
   const [statusFilter, setStatusFilter] = useState<TaskStatus | "all">("all");
   const [assigneeFilter, setAssigneeFilter] = useState<string>("all");
@@ -56,28 +58,59 @@ export default function TaskBoardPageV2() {
   // §1: Description/Patient/Due date/Active are server-side filters (dueFrom/dueTo
   // default to "current date - 6 days" / "current date 23:59", same behavior as the
   // Audit Log page's own date-range default, just 6 days instead of 7). Status/Priority/
-  // Assignee/Recurring stay client-side over the fetched set — the Board view needs every
-  // status at once to populate its columns, so a server-side status filter would fight it.
+  // Assignee/Recurring are applied server-side too for the Grid tab (real pagination needs
+  // that), but stay client-side over the Board's own fetch — the Board needs every status
+  // at once to populate its columns, so a server-side status filter would fight it.
   const [descriptionFilter, setDescriptionFilter] = useState("");
   const [patientFilter, setPatientFilter] = useState("");
   const [dueFrom, setDueFrom] = useState(() => defaultFromDaysAgo(6));
   const [dueTo, setDueTo] = useState(() => toDateInputValue(new Date()));
   const [activeFilter, setActiveFilter] = useState<"Active" | "Inactive">("Active");
 
+  const [gridPage, setGridPage] = useState(1);
+  const [gridSortBy, setGridSortBy] = useState<TaskSortBy>("dueAt");
+  const [gridSortDir, setGridSortDir] = useState<TaskSortDir>("asc");
+  const resetGridPage = () => setGridPage(1);
+
   const dueRange = toInstantRange(dueFrom, dueTo);
-  const { data, isLoading } = useTasks({
-    description: descriptionFilter || undefined,
-    patientName: patientFilter || undefined,
-    isActive: activeFilter === "Active",
-    dueFrom: dueRange.from,
-    dueTo: dueRange.to,
-  });
-  const { data: threadsData } = useThreads();
+  const { data, isLoading } = useTasks(
+    {
+      description: descriptionFilter || undefined,
+      patientName: patientFilter || undefined,
+      isActive: activeFilter === "Active",
+      dueFrom: dueRange.from,
+      dueTo: dueRange.to,
+    },
+    { enabled: view === "board" },
+  );
+
+  const assignedStaffIdFilter =
+    assigneeFilter !== "all" && assigneeFilter !== "unassigned" ? Number(assigneeFilter) : undefined;
+  const { data: gridData, isLoading: isGridLoading } = useTasks(
+    {
+      description: descriptionFilter || undefined,
+      patientName: patientFilter || undefined,
+      isActive: activeFilter === "Active",
+      dueFrom: dueRange.from,
+      dueTo: dueRange.to,
+      status: statusFilter === "all" ? undefined : statusFilter,
+      priority: priorityFilter === "all" ? undefined : priorityFilter,
+      isRecurring: recurringOnly || undefined,
+      unassigned: assigneeFilter === "unassigned" ? true : undefined,
+      assignedStaffId: assignedStaffIdFilter,
+      page: gridPage,
+      pageSize: GRID_PAGE_SIZE,
+      sortBy: gridSortBy,
+      sortDir: gridSortDir,
+    },
+    { enabled: view === "grid" },
+  );
+  const gridTasks = gridData?.items ?? [];
+  const gridTotalPages = gridData ? Math.max(1, Math.ceil(gridData.totalCount / GRID_PAGE_SIZE)) : 1;
+
   const updateTask = useUpdateTaskMutation();
 
   const tasks = data?.items ?? [];
-  const threads = threadsData?.items ?? [];
-  const threadNameById = useMemo(() => new Map(threads.map((t) => [t.id, t.patientName])), [threads]);
   const [collapsed, setCollapsed] = useState<Set<TaskStatus>>(
     () => new Set(COLUMNS.filter((c) => c.defaultCollapsed).map((c) => c.status)),
   );
@@ -129,6 +162,17 @@ export default function TaskBoardPageV2() {
     setAssigneeFilter("all");
     setPriorityFilter("all");
     setRecurringOnly(false);
+    resetGridPage();
+  };
+
+  const handleGridSortChange = (column: TaskSortBy) => {
+    if (gridSortBy === column) {
+      setGridSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setGridSortBy(column);
+      setGridSortDir("asc");
+    }
+    resetGridPage();
   };
 
   const filteredTasks = useMemo(
@@ -186,7 +230,6 @@ export default function TaskBoardPageV2() {
     <TaskCard
       key={task.id}
       task={task}
-      threadName={threadNameById.get(task.threadId)}
       onOpen={() => openTask(task.id)}
       onAssignToMe={() => handleAssignToMe(task.id)}
       onComplete={() => handleComplete(task.id)}
@@ -198,10 +241,10 @@ export default function TaskBoardPageV2() {
   return (
     <div className="flex h-full flex-col overflow-y-auto p-4">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <Tabs value={view} onValueChange={(v) => setView(v as "board" | "list")}>
+        <Tabs value={view} onValueChange={(v) => setView(v as "board" | "grid")}>
           <TabsList>
+            <TabsTrigger value="grid">Grid</TabsTrigger>
             <TabsTrigger value="board">Board</TabsTrigger>
-            <TabsTrigger value="list">List</TabsTrigger>
           </TabsList>
         </Tabs>
 
@@ -217,7 +260,10 @@ export default function TaskBoardPageV2() {
             id="task-filter-description"
             placeholder="Search description"
             value={descriptionFilter}
-            onChange={(event) => setDescriptionFilter(event.target.value)}
+            onChange={(event) => {
+              setDescriptionFilter(event.target.value);
+              resetGridPage();
+            }}
             className="h-8"
           />
         </FilterField>
@@ -226,18 +272,45 @@ export default function TaskBoardPageV2() {
             id="task-filter-patient"
             placeholder="Search patient"
             value={patientFilter}
-            onChange={(event) => setPatientFilter(event.target.value)}
+            onChange={(event) => {
+              setPatientFilter(event.target.value);
+              resetGridPage();
+            }}
             className="h-8"
           />
         </FilterField>
         <FilterField label="Due from" htmlFor="task-filter-due-from">
-          <DateTimePicker id="task-filter-due-from" mode="date" value={dueFrom} onChange={setDueFrom} variant="compact" />
+          <DateTimePicker
+            id="task-filter-due-from"
+            mode="date"
+            value={dueFrom}
+            onChange={(v) => {
+              setDueFrom(v);
+              resetGridPage();
+            }}
+            variant="compact"
+          />
         </FilterField>
         <FilterField label="Due to" htmlFor="task-filter-due-to">
-          <DateTimePicker id="task-filter-due-to" mode="date" value={dueTo} onChange={setDueTo} variant="compact" />
+          <DateTimePicker
+            id="task-filter-due-to"
+            mode="date"
+            value={dueTo}
+            onChange={(v) => {
+              setDueTo(v);
+              resetGridPage();
+            }}
+            variant="compact"
+          />
         </FilterField>
         <FilterField label="Status" htmlFor="task-filter-status">
-          <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as TaskStatus | "all")}>
+          <Select
+            value={statusFilter}
+            onValueChange={(v) => {
+              setStatusFilter(v as TaskStatus | "all");
+              resetGridPage();
+            }}
+          >
             <SelectTrigger id="task-filter-status" className="h-8 w-full text-sm">
               <SelectValue placeholder="Status" />
             </SelectTrigger>
@@ -252,7 +325,13 @@ export default function TaskBoardPageV2() {
           </Select>
         </FilterField>
         <FilterField label="Assignee" htmlFor="task-filter-assignee">
-          <Select value={assigneeFilter} onValueChange={setAssigneeFilter}>
+          <Select
+            value={assigneeFilter}
+            onValueChange={(v) => {
+              setAssigneeFilter(v);
+              resetGridPage();
+            }}
+          >
             <SelectTrigger id="task-filter-assignee" className="h-8 w-full text-sm">
               <SelectValue placeholder="Assignee" />
             </SelectTrigger>
@@ -268,7 +347,13 @@ export default function TaskBoardPageV2() {
           </Select>
         </FilterField>
         <FilterField label="Priority" htmlFor="task-filter-priority">
-          <Select value={priorityFilter} onValueChange={(v) => setPriorityFilter(v as TaskPriority | "all")}>
+          <Select
+            value={priorityFilter}
+            onValueChange={(v) => {
+              setPriorityFilter(v as TaskPriority | "all");
+              resetGridPage();
+            }}
+          >
             <SelectTrigger id="task-filter-priority" className="h-8 w-full text-sm">
               <SelectValue placeholder="Priority" />
             </SelectTrigger>
@@ -283,7 +368,13 @@ export default function TaskBoardPageV2() {
           </Select>
         </FilterField>
         <FilterField label="Active" htmlFor="task-filter-active">
-          <Select value={activeFilter} onValueChange={(v) => setActiveFilter(v as "Active" | "Inactive")}>
+          <Select
+            value={activeFilter}
+            onValueChange={(v) => {
+              setActiveFilter(v as "Active" | "Inactive");
+              resetGridPage();
+            }}
+          >
             <SelectTrigger id="task-filter-active" className="h-8 w-full text-sm">
               <SelectValue placeholder="Active" />
             </SelectTrigger>
@@ -300,7 +391,10 @@ export default function TaskBoardPageV2() {
           variant={recurringOnly ? "default" : "outline"}
           size="sm"
           className="h-8"
-          onClick={() => setRecurringOnly((v) => !v)}
+          onClick={() => {
+            setRecurringOnly((v) => !v);
+            resetGridPage();
+          }}
         >
           Recurring only
         </Button>
@@ -309,13 +403,30 @@ export default function TaskBoardPageV2() {
         </Button>
       </div>
 
-      {!isLoading && tasks.length > 0 && (
+      {view === "board" && !isLoading && tasks.length > 0 && (
         <div className="mb-4">
           <DistributionBar segments={distributionSegments} />
         </div>
       )}
 
-      {isLoading ? (
+      {view === "grid" ? (
+        <TaskGrid
+          tasks={gridTasks}
+          isLoading={isGridLoading}
+          page={gridPage}
+          totalPages={gridTotalPages}
+          totalCount={gridData?.totalCount ?? 0}
+          onPageChange={setGridPage}
+          sortBy={gridSortBy}
+          sortDir={gridSortDir}
+          onSortChange={handleGridSortChange}
+          onOpen={openTask}
+          onAssignToMe={handleAssignToMe}
+          onComplete={handleComplete}
+          isMutating={updateTask.isPending}
+          currentUserId={user?.id}
+        />
+      ) : isLoading ? (
         <CardGridSkeleton count={6} />
       ) : tasks.length === 0 ? (
         <EmptyState
@@ -325,12 +436,6 @@ export default function TaskBoardPageV2() {
         />
       ) : filteredTasks.length === 0 ? (
         <EmptyState icon={ClipboardList} title="No tasks match these filters" description="Try widening your filters." />
-      ) : view === "list" ? (
-        <div className="space-y-2">
-          {[...filteredTasks]
-            .sort((a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime())
-            .map(renderCard)}
-        </div>
       ) : (
         <div className="flex flex-1 gap-4 overflow-x-auto pb-2">
           {COLUMNS.map((column) => {
@@ -365,7 +470,6 @@ export default function TaskBoardPageV2() {
 
       <TaskDetailSheet
         taskId={selectedTaskId}
-        threadName={selectedTaskId ? threadNameById.get(tasks.find((t) => t.id === selectedTaskId)?.threadId ?? -1) : undefined}
         onOpenChange={(open) => !open && closeTask()}
         onAssignToMe={handleAssignToMe}
         onComplete={handleComplete}

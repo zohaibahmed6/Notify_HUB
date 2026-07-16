@@ -51,13 +51,37 @@ column — `OutboundMessage.CreatedAt`, `InboundMessage.ReceivedAt`, `TaskItem.D
 materialization) and no schema change (still a plain `datetime` column, confirmed via
 `dotnet ef migrations add` producing an empty `Up`/`Down`).
 
+**Follow-up hardening (2026-07-16)**: despite the DbContext-level fix above, a scheduled-SMS
+timestamp was still observed rendering in UTC instead of local time on the SMS History page. The
+exact code path that let a non-`Z`-tagged `DateTime` slip through wasn't reproduced locally (no
+matching row in the dev DB, live-API auth out of scope), so two defense-in-depth layers were
+added on top rather than only re-relying on the single DbContext converter: (1)
+`NotifyHub.Api/Common/UtcDateTimeJsonConverter.cs`, registered globally via `AddJsonOptions` in
+`Program.cs`, normalizes every `DateTime` to `Kind=Utc` at JSON-write time regardless of how it
+was produced; (2) `notifyhub-web/src/lib/dateUtc.ts` (`parseUtc`/`formatUtc`) treats any
+timezone-designator-less string as UTC before constructing a `Date`, and is now used at every
+site that renders an API-supplied timestamp instead of raw `new Date(x).toLocaleString()` —
+`SmsHistoryPage.tsx` (scheduled/expiry time), `conversation-panel.tsx`/`ConversationPanel.tsx`
+(message timestamp, scheduled-send time), `task-card.tsx`/`task-detail-sheet.tsx` (`dueAt`,
+including the `isTaskOverdue` comparison). Deliberately *not* applied to
+`reminder-sms-dialog.tsx`'s `eventTime` field — that's local component state bound directly to
+`DateTimePicker`'s naive-local-string output, never round-tripped through the API, so treating it
+as UTC would introduce the same class of bug in reverse.
+
+**Audit log timestamp format (2026-07-16)**: the audit log UI (`AuditLogPage.tsx`,
+`v2/AuditLogPageV2.tsx`, and `DashboardPage.tsx`'s recent-activity feed) was still on raw
+`new Date(log.occurredAt).toLocaleString()`, producing browser-locale-dependent output (e.g.
+`7/16/2026, 8:32:17 AM`) instead of a fixed format. Added `formatUtcDateTime` to `dateUtc.ts`
+(reuses `parseUtc`, then manually zero-pads to `yyyy-MM-dd HH:mm:ss` in local time) and switched
+all four `AuditLogDto.occurredAt` render sites to it.
+
 | Entity → table | Entity file | Config file | Key fields | Relationships / indexes |
 |---|---|---|---|---|
 | `User` → `users` | `NotifyHub.Domain/Entities/User.cs:5` | `UserConfiguration.cs:7` | Id, Username, PasswordHash, Role, **FullName?, Status** (added, see below), **LeaveFrom?, LeaveTo?** (added P9-12, both required together when `Status` is set to `OnLeave`) | Unique index `Username` (:18) |
 | `RefreshToken` → `refresh_tokens` | `RefreshToken.cs:3` | `RefreshTokenConfiguration.cs:7` | Id, UserId, TokenHash, ExpiresAt, RevokedAt | Unique index `TokenHash` (:18); index `UserId` (:25); FK on `User` side |
 | `Patient` → `patients` | `Patient.cs:4` | `PatientConfiguration.cs:7` | Id, Name, Phone, OptOutAt | Unique index `Phone` (:22) |
 | `Appointment` → `appointments` (stub) | `Appointment.cs:6` | `AppointmentConfiguration.cs:7` | Id, PatientId, ScheduledAt, Status | FK `Patient`, cascade delete (:22-25); index `PatientId` (:27) |
-| `MessageTemplate` → `message_templates` | `MessageTemplate.cs:5` | `MessageTemplateConfiguration.cs:7` | Id, Name, Body (≤1000), TriggerType, OffsetHours, **IsActive** (added increment 8, default `true`) | No indexes |
+| `MessageTemplate` → `message_templates` | `MessageTemplate.cs:5` | `MessageTemplateConfiguration.cs:7` | Id, Name, Body (≤1000), OffsetHours, **IsActive** (added increment 8, default `true`). **`TriggerType` removed (this session)** — confirmed vestigial for real behavior (the old `ReminderWorker`/`ReminderScheduler` that would have used it to auto-select a template was deleted in P9-08; today's Reminder SMS engine and `ThreadsController.CreateReminder` always select a template by explicit `templateId`), its only remaining "work" was enum validation on create/update and cosmetic filtering in two seed steps (now `Name`-based instead) — migration `20260716102643_RemoveTemplateTriggerType` drops the column | No indexes |
 | `Bookmark` → `bookmarks` | `Bookmark.cs:5` (added increment 8) | `BookmarkConfiguration.cs:7` | Id, Label (≤100), Description (≤300), InsertText (≤1000) | No indexes, no relations — flat admin-curated snippet library (§5), e.g. Label="Patient Name"/InsertText="{{patient_name}}", inserted into a `MessageTemplate.Body` from the template editor's dropdown |
 | `OutboundMessage` → `outbound_messages` | `OutboundMessage.cs:5` | `OutboundMessageConfiguration.cs:7` | Id, PatientId, ThreadId?, TemplateId?, SenderType, TriggerReference?, RenderedBody?, Status, IdempotencyKey?, AttemptCount, NextRetryAt?, **ScheduledAt?** (added increment 10), **SentByUsername?** (added P9-06, ≤100 chars, denormalized), **ExpiresAt?, ExpiryReason?** (added P9-07), **EventTime?, ReminderOffsetMinutes?, ReminderExpiryOffsetMinutes?, SentAt?** (added P9-08), **PduCount?** (added P9-09, sourced from the gateway receipt, immutable once set) | Unique index `IdempotencyKey` (:32); FKs Patient/Template/Thread all `Restrict` (:36-49); composite index `(Status, NextRetryAt)` (:52); composite index `(ThreadId, CreatedAt)` (:53); composite index `(Status, ExpiresAt)` (P9-07, drives the dispatcher's expiry sweep) |
 | `SystemSetting` → `system_settings` | `SystemSetting.cs:5` (added increment 10) | `SystemSettingConfiguration.cs:7` | Key (PK, ≤100), Value (≤200) | No indexes — generic admin-editable key-value store (Quiet Hours, per-patient rate limiting), wrapped by `SettingsService` (typed accessors, no raw string parsing at call sites) |
@@ -95,7 +119,7 @@ member and would fail to deserialize on read for pre-existing rows).
 Enums: `UserRole` (`Enums/UserRole.cs:3`), **`UserStatus`** (`Enums/UserStatus.cs:3`,
 Active/Inactive/OnLeave), **`TaskType`** (`Enums/TaskType.cs:3`, RepeatRx/Recall/
 AppointmentBooking/FollowUp/Finance/General/ClinicalReview/Administrative/Other), `MessageStatus` (`:3`, Queued/Sending/Sent/Delivered/Failed/Superseded/Expired/**Cancelled** — Superseded (6th, step 5, BR-010) is now vestigial, see §4b, nothing sets it anymore since `ReminderScheduler` was retired in P9-08; Expired (7th) added P9-07, set by `MessageDispatcher.ExpireOverdueMessagesAsync`; Cancelled (8th) added P9-08, set by `MessagesController.Cancel`; none of the three terminal values are ever picked up by `MessageDispatcher`'s `Status == Queued` query),
-`TriggerType` (`:3`, AppointmentReminder/MedicationAlert/PrescriptionAlert), `SenderType` (`:3`,
+`SenderType` (`:3`,
 System/Staff), `AppointmentStatus` (`:4`), `NotifyHubTaskStatus` (`:6`, Open/InProgress/Completed/
 Escalated/**Cancelled** — 5th value added per BR-007b, see STATUS.md), `TaskPriority` (`:3`, Low/
 Medium/High/Urgent).
@@ -131,14 +155,22 @@ new work through those paths either.
 | GET `api/auth/me` | `Me` :102 | default authenticated policy |
 | GET `api/auth/admin-only` | `AdminOnly` :113 | `[Authorize(Roles = "Admin")]` |
 
+`AuthUserDto` (`NotifyHub.Api/Auth/Dtos/AuthResponse.cs`) now also carries `FullName` (string?,
+mirrors `User.FullName`) alongside `Id`/`Username`/`Role`, so the frontend can greet by display
+name instead of login username. `Login`/`Refresh` set it straight from the loaded `User` entity
+(`IssueTokensAsync`); `Me` — built from JWT claims, which don't carry `FullName` — does a small
+`db.Users` lookup by id instead. Frontend `AuthUser` (`context/AuthContext.tsx`) gained a matching
+`fullName: string | null`; `DashboardPage.tsx`'s greeting reads `user?.fullName ?? user?.username`.
+Other `user?.username` displays (top nav, task assignment fields, settings) were left as-is.
+
 Refresh-token cookie name `notifyhub_refresh` (:26); set/clear in `SetRefreshCookie` (:163-173) /
 `DeleteRefreshCookie` (:175-178); issuance in `IssueTokensAsync` (:117-161).
 
 ### `ThreadsController` — `NotifyHub.Api/Controllers/ThreadsController.cs` (`[Route("api/threads")]` :20)
 | Verb + route | Method:line | Auth | Notes |
 |---|---|---|---|
-| GET `api/threads` | `List` :23-41 | default authenticated | paginated |
-| GET `api/threads/{id}` | `Detail` :43-74 | default authenticated | resets `UnreadCount = 0` on open (:58-60); messages paginated via `GetMessagesPageAsync` (:89-132, step 6/FR-010 — see §5) instead of the old unpaginated `.Include(InboundMessages).Include(OutboundMessages)`. **Bug fix (this session)**: `ThreadMessageDto`'s outbound projection now also carries `EventTime`/`ScheduledAt` (straight from the `OutboundMessage` columns, no query restructuring) so a Queued message's actual pending send time reaches the frontend — previously only `CreatedAt`/`Status` were exposed, so a Reminder SMS or a plain scheduled reply showed only a generic "Queued" chip with no indication of when it would actually go out. `EventTime` is populated only for Reminder SMS (§4b), so the frontend uses its presence to scope the new "Will send at" bubble line to reminders specifically, not plain scheduled replies (both share the same `ScheduledAt`/`Queued` mechanism). |
+| GET `api/threads` | `List` :23-41 | default authenticated | paginated; optional `search` param (bug fix, this session) — matches `Patient.Name.Contains(search) \|\| AssignedStaff.Username.Contains(search)`, applied *before* pagination/sort so it covers every thread, not just the requested page. Root cause fixed: the Inbox search box (`thread-list.tsx`) used to filter only the client's already-fetched `pageSize=100` array (`useThreads()`, sorted `OrderByDescending(Id)` — newest-created first), so a real patient whose thread wasn't among the 100 most recently created was silently unsearchable even though it existed and opened fine via direct `GET api/threads/{id}` (discovered via `TaskSeedStep`'s low-thread-id seeded tasks). Frontend now debounces the input (`thread-list.tsx`, 300ms, no shared debounce utility existed so a local `useEffect`/`setTimeout` was used) and calls `useThreads(search)`, which appends `&search=...`; `InboxPageV2` owns the search state and passes it through. `TaskBoardPageV2`/`NewTaskForm`/`InboxPage` (v1) call `useThreads()` with no search term — unaffected. Deliberately out of scope: the *default* (no search typed) view is still capped at the 100 most-recently-created threads, unpaginated beyond that — a separate, smaller browsing limitation not addressed here. |
+| GET `api/threads/{id}` | `Detail` :43-74 | default authenticated | resets `UnreadCount = 0` on open (:58-60); messages paginated via `GetMessagesPageAsync` (:89-132, step 6/FR-010 — see §5) instead of the old unpaginated `.Include(InboundMessages).Include(OutboundMessages)`. **Bug fix (this session)**: `ThreadMessageDto`'s outbound projection now also carries `EventTime`/`ScheduledAt` (straight from the `OutboundMessage` columns, no query restructuring) so a Queued message's actual pending send time reaches the frontend — previously only `CreatedAt`/`Status` were exposed, so a Reminder SMS or a plain scheduled reply showed only a generic "Queued" chip with no indication of when it would actually go out. `EventTime` is populated only for Reminder SMS (§4b); the frontend's "Will send at" bubble line (§6d) originally used its presence to scope the line to reminders only, but was broadened in a later session to key off `ScheduledAt` alone, so it now also covers plain scheduled replies (both share the same `ScheduledAt`/`Queued` mechanism). |
 | POST `api/threads` | `CreateConversation` (added increment 10) | default authenticated | §6: staff-initiated conversation with a brand-new patient — body `{name, phone, message, scheduledAt?}`; creates `Patient`+`ConversationThread`+first `OutboundMessage` in one call; 409 on duplicate phone (pre-check + `catch (DbUpdateException)` fallback, same pattern as `WebhooksController.FindOrCreateThreadAsync`); 400 if `scheduledAt` isn't in the future |
 | POST `api/threads/{id}/messages` | `Reply` :139 | default authenticated | BR-001b opt-out check (:145-148); broadcasts `outboundMessageSent` (:169); **increment 10**: accepts optional `scheduledAt` (400 if not future), enforces the per-patient rate limit via `RateLimitExceededAsync` (429 if exceeded, no-op when `RateLimit:Enabled=false`) |
 | POST `api/threads/{id}/assign` | `Assign` :177 | default authenticated | self-assign OK; assigning others requires caller role Admin, else 403 (:190-191); broadcasts `threadAssigned` (:203) |
@@ -180,6 +212,24 @@ entries. `TaskForwardingRulesController` (`api/task-forwarding-rules`, self-serv
 server-side to the caller's own `UserId` — see below) is where rules are actually
 created/edited/deleted.
 
+**Assignee picker + default task provider (this session)** — `ThreadsController.CreateTask`'s
+`naturalAssigneeId` computation now branches on a new optional `CreateTaskRequest.AssignedStaffId`:
+if the client supplied one (the redesigned Create Task dialog's "Assigned to" `Select` always
+does), it's validated (`404`-shaped 400 if the user doesn't exist, 400 if not `Status == Active`,
+same message convention as `Assign`) and used directly as `naturalAssigneeId`. Otherwise
+(bare API call with no override) the fallback chain gained a new middle rung: `thread.AssignedStaffId
+?? defaultProviderId ?? callerId`, where `defaultProviderId` comes from a fourth `SettingsService`
+key, `TaskAssignmentSettings.DefaultProviderId` (`Task:DefaultProviderId`, same `0`/absent = "not
+configured" convention as `DefaultReminderTemplateId` below). Either way, the result still passes
+through the unchanged `ResolveNewTaskAssigneeAsync` (Inactive/OnLeave → `TaskForwardingRule` →
+Admin fallback), so a client-picked or default-provider assignee who's gone inactive since is still
+caught. Frontend: `components/tasks/TaskAssignmentFields.tsx` (new, shared by `CreateTaskForm.tsx`
+and `NewTaskForm.tsx`) renders a read-only "Assigned from" (`useAuth()`'s current user) and an
+editable "Assigned to" `Select` (`useAssignableUsers()`), pre-filled once per form-open via the
+same priority order as the backend fallback (thread's current assignee → `useSettings()`'s
+`defaultTaskProviderId` → lowest-id Active Admin in the assignable list → the creator) so the
+visible default always matches what an omitted override would resolve to server-side.
+
 ### `TaskForwardingRulesController` — `NotifyHub.Api/Controllers/TaskForwardingRulesController.cs` (`[Route("api/task-forwarding-rules")]`, added P9-10)
 | Verb + route | Auth | Notes |
 |---|---|---|
@@ -195,9 +245,22 @@ isn't Admin-gated like User Management is — flagged as a reasonable reading, n
 requirement either way.
 
 ### `TasksController` — `NotifyHub.Api/Controllers/TasksController.cs` (`[Route("api/tasks")]` :17)
+`TaskDto` gained `PatientName` (bug fix, this session) — `ToDto` now reads `t.Thread.Patient.Name`,
+so every query site that calls it (`List`/`Detail`/`Update`/`Forward`) added
+`.Include(t => t.Thread).ThenInclude(th => th.Patient)` (the `patientName` *filter* in `List`
+already worked without an Include via EF's auto-join in a `Where` predicate, but `ToDto` runs
+against the materialized entity afterward and needs the nav property actually loaded). Root cause
+this replaces: the Task board (`TaskBoardPageV2.tsx`) used to resolve a task's patient name by
+looking up `task.threadId` in a `Map` built from `useThreads()` (only the 100
+most-recently-created threads, see `ThreadsController.List`'s `search` note above) — any task
+whose thread wasn't in that window fell back to a raw `Thread #{id}`/`Task #{id}` display even
+though the thread/patient existed. `TaskCard`/`TaskDetailSheet` now render `task.patientName`
+directly from the API response instead of a `threadName` prop threaded down from that lookup map,
+which `TaskBoardPageV2.tsx` no longer builds at all (`useThreads()` call removed from that page —
+`NewTaskForm`'s separate `useThreads()` for its thread-picker dropdown is unrelated and untouched).
 | Verb + route | Method:line | Auth | Notes |
 |---|---|---|---|
-| GET `api/tasks` | `List` :19 | default authenticated | filters (added increment 5): `status`, `assignedStaffId`, `description` (substring), `patientName` (substring, joins `Thread.Patient.Name` — no `Include`, EF auto-joins for a `Where` predicate), `dueFrom`/`dueTo` (range on `DueAt`), `isActive` (**defaults to `true` when omitted** — matches the Task screen's own "Active selected by default" filter) |
+| GET `api/tasks` | `List` :19 | default authenticated | filters (added increment 5): `status`, `assignedStaffId`, `description` (substring), `patientName` (substring, joins `Thread.Patient.Name` — no `Include`, EF auto-joins for a `Where` predicate), `dueFrom`/`dueTo` (range on `DueAt`), `isActive` (**defaults to `true` when omitted** — matches the Task screen's own "Active selected by default" filter). **Task grid redesign**: added `priority` (enum, 400 on invalid, same pattern as `status`), `isRecurring` (bool), `unassigned` (bool, filters `AssignedStaffId == null` — wins over `assignedStaffId` if both sent; previously there was no way to express "IS NULL" server-side), and `sortBy`/`sortDir` (replacing the hardcoded `OrderBy(DueAt)` — `sortBy` one of `dueAt`/`priority`/`status`/`patientName`/`assignedStaffUsername`, `sortDir` `asc`/`desc`; omitting both reproduces the exact previous behavior). `Priority`/`Status` are stored via `HasConversion<string>()`, so a raw `OrderBy(t => t.Priority)` would sort alphabetically ("High, Low, Medium, Urgent") — `ApplySort` (:below `ToDto`) instead orders by explicit `PriorityRank`/`StatusRank` `Expression<Func<TaskItem,int>>`s (EF translates the conditional to SQL `CASE WHEN`); `StatusRank` matches the Task board's own Kanban column order (Open/InProgress/Escalated/Completed/Cancelled), not `TASK_STATUS_CONFIG`'s differently-ordered object keys. These new params exist for the Grid view below — the Kanban Board's own fetch still applies `priority`/`status`/`assignedStaffId`(unassigned)/`isRecurring` **client-side** post-fetch (unchanged), since it needs every status simultaneously to populate its columns. **Bug fix (this session)**: `status` now also accepts a comma-separated list (e.g. `Open,InProgress,Escalated`) — parsed into `NotifyHubTaskStatus[]` and matched via `.Contains()` (EF translates to SQL `IN`); a single value still behaves exactly as before via a one-element list, fully backward compatible. Root cause this fixes: `TaskNavWidget`'s top-nav badge (`useTasks({ assignedStaffId, isActive: true })`, no `status`) fetched only `pageSize=100` sorted oldest-`DueAt`-first, then filtered to Open/InProgress/Escalated **client-side** — for any user with more than 100 `isActive` tasks (completing/cancelling a task never clears `IsActive`, so historical terminal-status rows accumulate indefinitely), the oldest 100 returned could be 100% Completed/Cancelled, silently pushing every real open task off the page. Reproduced live: the seeded Admin account had 423 `isActive` rows, the fetched page was 100% Completed/Cancelled, and a freshly self-assigned Open task never appeared in the badge even after a full reload — while Staff accounts (fewer historical tasks, under the 100 cap at the time) appeared to work fine, though the same bug would eventually hit any user once their total crossed `pageSize`. Not a role-based bug despite the symptom looking Admin-specific. |
 | GET `api/tasks/{id}` | `Detail` :51 | default authenticated | BR-014 auto-revert if opened by assignee (:58-64) |
 | PATCH `api/tasks/{id}` | `Update` :69 | default authenticated | BR-014 auto-revert on assignee action (:119-124); recurrence spawn via `SpawnNextOccurrenceIfDue` (:133-159, now also carries `TaskType` to the next occurrence — `Description` deliberately doesn't, it was tied to whatever prompted the completed occurrence); `AssignedStaffId` branch now rejects (400) a non-Active target (§7, increment 3) — but still never audited, a pre-existing gap increment 4's `Forward` action doesn't retroactively fix; now also applies `Description`/`TaskType`(validated)/`IsActive` (increment 5) |
 | POST `api/tasks/{id}/forward` | `Forward` (added increment 4) | default authenticated | manual task forwarding (§1) — body `{targetUserId, note?}`; rejects (400) a non-Active target; always audits (`action:"forward"`, detail includes the note if given) unlike the plain `PATCH` reassignment path above; broadcasts `taskAssignmentChanged`; deliberately leaves workflow `Status` untouched (forwarding an Escalated task keeps it Escalated for the new assignee — BR-014's auto-revert is about the current assignee acting on their own task, not who forwarded it to them) |
@@ -205,11 +268,24 @@ requirement either way.
 ### `TemplatesController` — `NotifyHub.Api/Controllers/TemplatesController.cs` (`[Route("api/templates")]` :14)
 | Verb + route | Method:line | Auth | Notes |
 |---|---|---|---|
-| GET `api/templates` | `List` :17 | default authenticated | optional `isActive` filter (increment 8) — omit to see everything, unlike Tasks' "defaults to Active" |
-| POST `api/templates` | `Create` :35 | default authenticated | new templates default `IsActive=true` |
-| PATCH `api/templates/{id}` | `Update` :59-89 | default authenticated | now also applies `IsActive` (increment 8); **P9-05**: when `Body` changes, sweeps every `Queued` `OutboundMessage` with a matching `TemplateId` and nulls `RenderedBody` — dual-safety net #1 ("no wrong SMS could send" per Zohaib's explicit call). Net #2, `MessageDispatcher.DispatchOneAsync`, already unconditionally re-renders from the live template on every dispatch attempt for any `TemplateId`-linked message — verified (not assumed) by reading the code: every current production creation path (`ThreadsController.Reply`/`CreateConversation`/`CreateReminder`, plus the now-retired `ReminderScheduler` at the time this was written) leaves `RenderedBody` null, so net #2 alone already fully covers propagation today; net #1 is kept anyway per the explicit dual-safety request and would be the only net that mattered if a future creation path ever pre-rendered `RenderedBody`. Same InMemory-vs-real-provider branch as `WebhooksController.Inbound`'s `UnreadCount` fix (`ExecuteUpdateAsync`'s `SetProperty` isn't translatable by the InMemory provider used by the fast test suite). |
+| GET `api/templates` | `List` :17 | default authenticated | optional `isActive` filter (increment 8) — omit to see everything, unlike Tasks' "defaults to Active". **New (this session)**: optional `communicationMode` filter (`Sms`/`Email`/`Letter`, 400 on invalid, same validate-or-400 pattern as `MessagesController.List`'s `status`) — used by the two send-time template pickers (composer "Insert template" in `conversation-panel.tsx`, Reminder SMS dialog) to only show `Sms` templates; the Templates management screen (`TemplatesPageV2.tsx`) omits it to see every mode. |
+| POST `api/templates` | `Create` :35 | default authenticated | new templates default `IsActive=true`. `CommunicationMode` optional in `CreateTemplateRequest` (defaults `Sms` server-side when omitted); `BookmarkIds` optional, looked up and assigned to the new `MessageTemplate.Bookmarks` collection. **`TriggerType` removed (this session)** — was `[Required]` on create/PATCH-optional on update, both now gone along with the enum-parse-or-400 validation blocks; see the `MessageTemplate` schema row above for why. |
+| PATCH `api/templates/{id}` | `Update` :59-89 | default authenticated | now also applies `IsActive` (increment 8); **P9-05**: when `Body` changes, sweeps every `Queued` `OutboundMessage` with a matching `TemplateId` and nulls `RenderedBody` — dual-safety net #1 ("no wrong SMS could send" per Zohaib's explicit call). Net #2, `MessageDispatcher.DispatchOneAsync`, already unconditionally re-renders from the live template on every dispatch attempt for any `TemplateId`-linked message — verified (not assumed) by reading the code: every current production creation path (`ThreadsController.Reply`/`CreateConversation`/`CreateReminder`, plus the now-retired `ReminderScheduler` at the time this was written) leaves `RenderedBody` null, so net #2 alone already fully covers propagation today; net #1 is kept anyway per the explicit dual-safety request and would be the only net that mattered if a future creation path ever pre-rendered `RenderedBody`. Same InMemory-vs-real-provider branch as `WebhooksController.Inbound`'s `UnreadCount` fix (`ExecuteUpdateAsync`'s `SetProperty` isn't translatable by the InMemory provider used by the fast test suite). **New (this session)**: also applies `CommunicationMode` (validated, 400 on invalid) and `BookmarkIds` (full-replace semantics when provided — same "full replace, not sparse" convention as `TaskForwardingRulesController`'s PATCH, not additive). |
 
 Applies only non-null fields from `UpdateTemplateRequest` (`NotifyHub.Api/Templates/Dtos/UpdateTemplateRequest.cs`) — added step 6 to close §6b's "create/edit" gap (only `GET`/`POST` existed before).
+
+**New schema (this session)** — `MessageTemplate.CommunicationMode` (new enum `CommunicationMode`:
+Sms/Email/Letter, `NotifyHub.Domain/Enums/CommunicationMode.cs`, default `Sms` so every
+pre-existing template keeps showing up in the Sms-filtered send-time pickers with no data fix).
+Migration `20260716055031_AddTemplateCommunicationModeAndBookmarks` — the generated `AddColumn`
+default (`""`) was hand-corrected to `"Sms"` post-generation, same gotcha/fix as increment 1's
+`AddTaskAndUserFields` (`""` isn't a valid enum member and fails to deserialize on read for
+pre-existing rows). Also adds a `MessageTemplate` ↔ `Bookmark` many-to-many (`message_template_bookmarks`
+join table, EF Core's implicit skip-navigation — no custom join entity class, no existing
+many-to-many precedent in this codebase to mirror) — `MessageTemplate.Bookmarks`/`Bookmark.Templates`
+collections, both FKs `Cascade` (removing a template or a bookmark just drops the join rows; this
+is a display manifest, not a hard dependency). `TemplateDto`/`CreateTemplateRequest`/
+`UpdateTemplateRequest` all gained `CommunicationMode`(string) and `BookmarkIds`(`long[]`).
 
 ### `BookmarksController` — `NotifyHub.Api/Controllers/BookmarksController.cs` (`[Route("api/bookmarks")]`, added increment 8)
 | Verb + route | Auth |
@@ -239,7 +315,7 @@ projection, which stays directly in the `Select()`.
 ### `MessagesController` — `NotifyHub.Api/Controllers/MessagesController.cs` (`[Route("api/messages")]`, added P9-06)
 | Verb + route | Auth | Notes |
 |---|---|---|
-| GET `api/messages` | `[Authorize(Roles="Admin")]` | SMS History report — filters `patientName`/`phone` (substring, via `Patient` nav-property join, no `Include` needed), `username` (substring against `SentByUsername ?? "System"`), `text` (substring against `RenderedBody`), `status` (`MessageStatus` enum), `from`/`to` (range on `CreatedAt`); paginated (`PagedResult<T>.Clamp`, same pattern as every other list endpoint). Returns `SmsHistoryPagedResult` — `TotalCount` doubles as the report's "Total SMS" summary figure (already filter-scoped). **All columns now fully wired**: `ScheduledTime` (`ScheduledAt`, since increment 10), `ExpiryTime` (`ExpiresAt`, since P9-07), `PduCount` (`PduCount`, since P9-09 — null/"pending" until a receipt lands). `TotalPduCount` = `query.SumAsync(m => (int?)m.PduCount ?? 0)` across the **whole filtered set**, not just the current page (a separate aggregate query from the paginated `items` query). |
+| GET `api/messages` | `[Authorize(Roles="Admin")]` | SMS History report — filters `patientName`/`phone` (substring, via `Patient` nav-property join, no `Include` needed), `username` (substring against `SentByUsername ?? "System"`), `text` (substring against `RenderedBody`), `status` (`MessageStatus` enum), `from`/`to` (range on `CreatedAt`); paginated (`PagedResult<T>.Clamp`, same pattern as every other list endpoint). Returns `SmsHistoryPagedResult` — `TotalCount` doubles as the report's "Total SMS" summary figure (already filter-scoped). **All columns now fully wired**: `ScheduledTime` (`ScheduledAt ?? CreatedAt`, non-nullable — **broadened this session**: previously bare `ScheduledAt`, which was null and rendered as "—" for any direct/immediate send that was never explicitly scheduled; now falls back to `CreatedAt`, the same anchor `MessageExpiryCalculator` already uses for Standard SMS expiry math, so every row shows an effective send time), `ExpiryTime` (`ExpiresAt`, since P9-07), `PduCount` (`PduCount`, since P9-09 — null/"pending" until a receipt lands). `TotalPduCount` = `query.SumAsync(m => (int?)m.PduCount ?? 0)` across the **whole filtered set**, not just the current page (a separate aggregate query from the paginated `items` query). |
 | PATCH `api/messages/{id}` | default authenticated | `UpdateReminder` — see §4b |
 | POST `api/messages/{id}/cancel` | default authenticated | `Cancel` — see §4b |
 
@@ -305,7 +381,7 @@ Race-safe find-or-create: `FindOrCreateThreadAsync` (:119-141) — see §5.
 | `inboundMessageReceived` | `WebhooksController.cs:108-114` | `{ threadId, patientId, body, receivedAt }` |
 | `outboundMessageSent` | `ThreadsController.cs:127` | `{ threadId }` |
 | `threadAssigned` | `ThreadsController.cs:161` | `{ threadId, assignedStaffId }` |
-| `taskAssignmentChanged` | `UsersController.cs` (auto-forward on status change, increment 2); `TasksController.cs` (manual forward, increment 4, implemented) | `{ taskId, assignedStaffId }` |
+| `taskAssignmentChanged` | `UsersController.cs` (auto-forward on status change, increment 2); `TasksController.Forward` (increment 4); `TasksController.Update` (this session — only when `AssignedStaffId` actually changes, not on every PATCH); `ThreadsController.CreateTask` (this session — unconditional, every created task has an assignee) | `{ taskId, assignedStaffId }`. **Bug fix, this session**: `useInboxHub.ts` never subscribed to this event at all (frontend silently dropped it even where it was already being broadcast), so `TaskNavWidget`'s top-nav badge never live-updated on (re)assignment — now handled (see below). |
 | `messageStatusUpdated` | `WebhooksController.GatewayReceipt` (P9-02) | `{ threadId, messageId, status }` — `status` is `message.Status.ToString()` (`Delivered`/`Queued`/`Failed`, whichever `GatewayReceipt` just set). Root cause of the pre-P9-02 "double tick" bug: `GatewayReceipt` updated the DB with no broadcast at all, so a delivery-status change was only ever visible after some unrelated refetch. `MockGatewayController.Send`'s earlier `Sent` transition deliberately still doesn't broadcast (out of P9-02's stated scope), so the single-tick `Sent` state is rarely seen live, only on a page load that happens to land mid-transition. Frontend: `useInboxHub.ts` invalidates `["thread", threadId]` only (not `["threads"]` — a status change doesn't affect the thread-list summary fields). Verified live end-to-end this session (see STATUS.md) via a scripted SignalR client — confirmed `outboundMessageSent` then `messageStatusUpdated {..., status:"Delivered"}` both arrive for a real reply. |
 
 ---
@@ -318,6 +394,14 @@ Race-safe find-or-create: `FindOrCreateThreadAsync` (:119-141) — see §5.
 | `MessageDispatcher` | `NotifyHub.Infrastructure/Messaging/MessageDispatcher.cs` | Called by `DispatcherWorker` | **Increment 10**: `DispatchDueMessagesAsync` now starts with a single Quiet Hours gate (`SettingsService.IsQuietHoursNowAsync` — if true, returns 0 immediately, no per-message state change; due messages simply stay `Queued` and get picked up on the next non-quiet poll) and the due-query also requires `ScheduledAt == null \|\| ScheduledAt <= now`. Otherwise unchanged: batch of 10 `Queued` messages due now, ordered by `CreatedAt`. `DispatchOneAsync` (:37-90): opt-out short-circuit (:42-50), renders template if set **and `RenderedBody` is still null** (post-Step-9: gated so a committed Reminder SMS body — rule 31 reversal, see §4b — is never overwritten; previously rendered unconditionally whenever `TemplateId` was set), POSTs to mock gateway (:66-67), on failure increments attempt count and either terminalizes via `RetryBackoffPolicy.IsTerminal` (:77-81) or requeues with backoff (:83-86). `RenderAsync` (:92-113) parses `TriggerReference` for `{{appointment_time}}` (:101-109). Constructor now also takes `SettingsService` — any direct `new MessageDispatcher(...)` call site (tests) needs the 4th arg. **P9-07**: `DispatchDueMessagesAsync` now calls a new private `ExpireOverdueMessagesAsync` *before* the Quiet Hours gate (not after) — marks `Expired` any `Queued` message with a passed `ExpiresAt`, sets `ExpiryReason` (fact-based: "before any send attempt"/"after N send attempt(s)", not a guessed specific cause like "quiet hours" — no per-message signal exists to know that for certain), adds a `DeliveryStatusHistory` row, audits `action:"expired"`. Deliberately checked unconditionally regardless of Quiet Hours: a message can sit `Queued` through its whole 12h window while Quiet Hours suppresses the batch entirely, which is the realistic way expiry gets hit in practice (BR-011's own retry/backoff, max ~31 min across 6 attempts, almost never reaches 12h alone) — if expiry ran after the Quiet Hours early-return, it would never fire during that exact scenario. Verified live end-to-end against the real Docker/MySQL stack (worker stopped, a message created and its `ExpiresAt` backdated via direct SQL, worker restarted, confirmed `Expired` + history + audit all landed on the next 5s poll). |
 | `EscalationWorker` | `NotifyHub.Worker/EscalationWorker.cs:8-36` | Config-driven poll, `Escalation:PollIntervalSeconds` default 60s (:17); 5s error-retry delay (:13) | Resolves `EscalationJob` per scope, calls `EscalateOverdueTasksAsync` (:26) |
 | `EscalationJob` | `NotifyHub.Infrastructure/Escalation/EscalationJob.cs` | Called by `EscalationWorker` | `EscalateOverdueTasksAsync` (:19-61): batch of 100 overdue non-terminal tasks (:23-29), resolves lowest-id Admin as fallback (:36-40), sets `Escalated` + audits (:45-47), reassigns + audits "auto-reassigned" if not already assigned to that admin (:49-54). **P9-12**: `EscalationWorker` also calls a new `RevertExpiredLeaveAsync` every poll cycle (piggybacking on this existing periodic job/poll rather than a new worker process, per the plan) — finds every `Status == OnLeave` user whose `LeaveTo` has passed, flips them back to `Active`, audits (`action:"status-change"`, actor `"system"`, entityType `"User"`). Unrelated to task escalation, just co-located for the free poll loop. |
+**Logging**: `NotifyHub.Worker/appsettings.json` and `appsettings.Development.json` set
+`Microsoft.EntityFrameworkCore.Database.Command: Warning` (added after `DispatcherWorker`'s
+5s poll was found to emit full-SQL "Executed DbCommand" lines at the default `Information`
+level on every cycle). App-level logging in `DispatcherWorker`/`EscalationWorker`/`EscalationJob`
+is unaffected — those already only log count summaries, guarded by `count > 0`. No file sink
+exists; logs still go to the default console provider (Docker `json-file` driver, no rotation
+configured in `docker-compose.yml`).
+
 **`ReminderWorker`/`ReminderScheduler` retired in P9-08**, deleted entirely (not just
 unregistered) — `NotifyHub.Worker/ReminderWorker.cs`, `NotifyHub.Infrastructure/Reminders/*`,
 plus the Domain helpers only they used (`ReminderDueCalculator`, `ReminderTriggerReference`)
@@ -374,6 +458,19 @@ configured default is auto-selected via the existing `handleTemplateChange` (so 
 textarea is resolved too, same as a manual pick) — guarded against a default that's since
 been deleted/deactivated by checking it's still in the active `templates` list already
 fetched by this component.
+
+**Default task provider (this session)** — a fourth `SystemSetting` key,
+`SettingsService.DefaultTaskProviderIdKey` (`TaskAssignmentSettings.DefaultProviderId`,
+`long?`), same shape/sentinel convention as `DefaultReminderTemplateId` above (`0`/absent/
+unparseable = "not configured"; validated by `SettingsController.Update` against
+`db.Users.AnyAsync(u => u.Id == id && u.Status == UserStatus.Active)`, 400 otherwise).
+Exposed via `GET`/`PATCH api/settings` (`SettingsDto.defaultTaskProviderId`), Settings →
+Task tab (`task-tab.tsx`'s new "Default task provider" card, `Select` sourced from
+`useAssignableUsers()` — any Active user, not Admin-role-filtered — with the same
+`"none"`-sentinel-maps-to-`0` pattern as the reminder-template picker). Read-only
+(`disabled`) for Staff — server already enforces `[Authorize(Roles = "Admin")]` on the
+PATCH, disabling client-side just avoids a pointless 403. Consumed by
+`ThreadsController.CreateTask`'s assignee fallback chain — see the P9-10 section above.
 
 **Pure calculations** (`NotifyHub.Domain/Messaging/ReminderScheduleCalculator.cs`):
 `CalculateScheduledSendTime(eventTime, offsetMinutes)` = `eventTime - offset` (rule 5);
@@ -448,6 +545,24 @@ manage reminders they create from a thread, same as any other message action).
   additive: every other call site (`NewTaskForm`/`CreateTaskForm`/`new-conversation-dialog`/
   `conversation-panel`/`task-tab`/`user-management-tab`/filter bars) doesn't pass it and is
   unaffected.
+- **New (this session) — live SMS encoding/segment hint, redesign UI only**:
+  `lib/smsSegmentCalculator.ts` is a client-side TypeScript port of
+  `NotifyHub.Domain/Messaging/PduSegmentCalculator.cs` (same GSM-7 basic/extended character
+  tables, same 160/153 GSM-7 vs 70/67 UCS-2 segment-limit math), used purely for live typing
+  feedback — non-authoritative; the real `PduCount` is still only ever computed server-side
+  at send time (`MockGatewayController.Send`) from `RenderedBody`, unchanged. Iterates by
+  UTF-16 code unit (`text[i]`/`.length`), not Unicode code point, to match C#'s
+  `foreach(char c in text)`/`string.Length` — verified against every case in
+  `PduSegmentCalculatorTests.cs` for parity (emoji/em dash force UCS-2, € and `^{}[~]|` stay
+  GSM-7). `components/v2/sms-segment-hint.tsx`'s `SmsSegmentHint({ text })` renders a red
+  warning line (only when `!isGsm7`) plus an always-visible segment count, purely derived
+  from the passed-in text (no extra state) so it appears/disappears live as a special
+  character is added/removed. Wired into `conversation-panel.tsx`'s reply `Textarea`
+  (`draft`) and `reminder-sms-dialog.tsx`'s message `Textarea` (`body`) — both already funnel
+  template auto-fill and Event Time substitution through `setDraft`/`setBody`, so the hint
+  reacts to those paths too with no separate wiring. Informational only, never disables
+  Send/Schedule/"Schedule reminder". Redesign-only by explicit instruction — legacy
+  `components/inbox/ConversationPanel.tsx` is untouched.
 - `hooks/useThreads.ts`'s `useCreateReminderMutation(threadId)` mutation payload gained an
   optional `body?: string` field → `POST /api/threads/{id}/reminders`. **Bug fix (this
   session)**: the mutation had no `onSuccess` at all (every sibling mutation in that file does,
@@ -455,15 +570,17 @@ manage reminders they create from a thread, same as any other message action).
   refreshed the currently-open conversation panel; the new Queued message simply didn't appear
   until something unrelated happened to refetch. Now invalidates `["thread", threadId]` on
   success, same pattern as `useReplyMutation`.
-- `conversation-panel.tsx` (`ConversationPanelV2`, this session) — the message bubble now
-  renders an additional "Will send {date}" line (10px, opacity-80, right-aligned, same
-  convention as the existing created-at meta line) for any outbound message that's
-  `status === "Queued"` **and** has `eventTime` set — `eventTime` is populated only for
-  Reminder SMS (see above), so this deliberately doesn't fire for a plain staff-scheduled
-  reply (composer's "Schedule" toggle), which shares the same `ScheduledAt`/`Queued`
-  mechanism but has no `EventTime`. Sourced from the new `ThreadMessageDto.scheduledAt`
-  field (§3) — no client-side date math, the value is the server's own computed Scheduled
-  Send Time.
+- `conversation-panel.tsx` (`ConversationPanelV2`) — the message bubble renders an
+  additional "Will send {date}" line (10px, opacity-80, right-aligned, same convention as
+  the existing created-at meta line) for any outbound message that's `status === "Queued"`
+  **and** has a `scheduledAt` (`willSendAt`, :229-233). Originally scoped to Reminder SMS
+  only (gated on `eventTime` too, populated only for reminders — see above); **broadened
+  this session** to cover a plain staff-scheduled reply (composer's "Schedule" toggle) as
+  well, since both share the identical `Queued`/`ScheduledAt` dispatch mechanism and a
+  scheduled reply previously showed no send-time indication at all, just a generic
+  "Queued" chip. Sourced from `ThreadMessageDto.scheduledAt` (§3) — no client-side date
+  math, the value is the server's own computed Scheduled Send Time; no backend change was
+  needed, `ScheduledAt` was already populated unconditionally for both flows.
 - `status-config.ts`'s `AUDIT_ACTION_CONFIG` gained `expired`/`reminder-created`/
   `reminder-updated`/`reminder-cancelled` entries; both Audit Log pages' `ACTIONS` filter
   list extended to match.
@@ -538,7 +655,12 @@ names across locales. Thread count scales with message target (~50 messages/thre
 10-1,000, :93), 90/10 outbound/inbound split (`OutboundRatio`, :41), all outbound messages get a
 terminal status (Delivered/Failed, :106 — never `Queued`, so `DispatcherWorker` never picks any of
 them up), batched inserts via `SeedOutboundMessagesAsync`/`SeedInboundMessagesAsync`/`FlushAsync`
-(chunks of 2,000, `AutoDetectChangesEnabled=false` during the loop).
+(chunks of 2,000, `AutoDetectChangesEnabled=false` during the loop). Each seeded outbound message
+also gets `PduCount` set directly via `PduSegmentCalculator.CalculateSegmentCount(template.Body)`
+(:145) — these rows bypass the real `MessageDispatcher`/`MockGatewayController`/`WebhooksController`
+pipeline entirely (the only place `PduCount` normally gets computed/persisted, P9-09), so without
+this the whole 45,000-row perf-seed volume would sit at `PduCount = null` and undercount
+`MessagesController`'s SMS History "Total PDU" aggregate.
 
 **Test-factory overrides**: `Seed:PerformanceMessageCount` is capped to 50
 (`CustomWebApplicationFactory.cs`) / 100 (`MySqlWebApplicationFactory.cs`) — otherwise every
@@ -595,20 +717,45 @@ rather than deferred — no longer an open item.
 
 ## 6. Frontend structure (`notifyhub-web/src/`)
 
-**Pages** (`src/pages/`): `LoginPage.tsx` (auth entry), `InboxPage.tsx` (thread list + `ConversationPanel`), `TaskBoardPage.tsx` (status-filtered task list + `NewTaskForm`/`TaskDetailPanel`), `TemplatesPage.tsx` (§6b, step 6 — list + create form + inline per-row edit form via a shared `TemplateForm` component defined in the same file), `AuditLogPage.tsx` (§6b, step 6 — role-branches on `user.role`: Admin gets an actor filter + `/api/audit`, Staff gets `/api/audit/mine`; action/date-range filters, paginated table, empty state). Date range: `from`/`to` are `<input type="date">` (day-granularity), defaulting on mount to the last 7 days (`from` = today-7, `to` = today, via `defaultFrom`/`toDateInputValue`). Converted to instants for the query string as UTC midnight for `from` and `T23:59:59.999Z` for `to` (`AuditLogPage.tsx:28-32`) — `to` must mean end-of-day, not start-of-day, otherwise a same-day `from`==`to` range collapses to one instant and matches nothing against `AuditController.QueryAsync`'s `OccurredAt <= to.Value` (:53-54).
+**Pages** (`src/pages/`): `LoginPage.tsx` (auth entry), `InboxPage.tsx` (thread list + `ConversationPanel`), `TaskBoardPage.tsx` (status-filtered task list + `NewTaskForm`/`TaskDetailPanel`), `AuditLogPage.tsx` (§6b, step 6 — role-branches on `user.role`: Admin gets an actor filter + `/api/audit`, Staff gets `/api/audit/mine`; action/date-range filters, paginated table, empty state). Date range: `from`/`to` are `<input type="date">` (day-granularity), defaulting on mount to the last 7 days (`from` = today-7, `to` = today, via `defaultFrom`/`toDateInputValue`). Converted to instants for the query string as UTC midnight for `from` and `T23:59:59.999Z` for `to` (`AuditLogPage.tsx:28-32`) — `to` must mean end-of-day, not start-of-day, otherwise a same-day `from`==`to` range collapses to one instant and matches nothing against `AuditController.QueryAsync`'s `OccurredAt <= to.Value` (:53-54). **`TemplatesPage.tsx` (legacy) deleted this session** — see §6a: retired along with `TriggerType` since it was unreachable dead code and would otherwise have broken on the removed field.
 
 **Components**:
 - `components/layout/AppShell.tsx` — top nav; mounts the single shared `useInboxHub()` connection (:18). `NAV_LINKS` (:8-13) now includes Dashboard/Templates/Audit log alongside Inbox/Task board (Dashboard added increment 13, `end: true` so it only matches the exact `/` path). Header also renders `components/v2/task-nav-widget.tsx`'s `TaskNavWidget` (increment 13, next to the Settings icon) — see §6a.
 - `components/inbox/ConversationPanel.tsx` — merged inbound/outbound view, reply, assign, auto-scroll-if-at-bottom. Messages are paginated server-side (step 6/FR-010): `useThread` only returns page 1 (most recent); local `olderMessages` state (:26) accumulates additional pages fetched directly via `apiClient` (bypassing TanStack Query's cache, since this is an append-only local scrollback) when the "Load earlier messages" button (:146-152, shown while `hasMoreOlder`) is clicked.
-- `components/inbox/CreateTaskForm.tsx` — inline "make task" form; now also collects `TaskType` (Select) and `Description` (Textarea, optional — blank submits fall through to the server's auto-populate-from-last-message default, increment 7). **P9-11**: "Recurring" checkbox reveals Interval (days, required)/End date (optional, `DateTimePicker` `mode="date"`)/Max occurrences (optional) — creation-time only, no edit-after-creation path (matches how `SpawnNextOccurrenceIfDue` already works). Backend (`CreateTaskRequest`/`ThreadsController.CreateTask`) already accepted all four `IsRecurring`/`RecurrenceIntervalDays`/`RecurrenceEndDate`/`RecurrenceMaxOccurrences` fields before this increment — verified (not assumed) by reading `NotifyHub.Api/Tasks/Dtos/CreateTaskRequest.cs`, confirming the plan's own "backend engine already exists, this is frontend-only" framing — no backend changes needed.
-- `components/tasks/NewTaskForm.tsx` — thread-picker + priority + due date, now also `TaskType`/`Description` (same optional-blank behavior as `CreateTaskForm`, increment 7). **P9-11**: same recurring-toggle UI as `CreateTaskForm.tsx` above.
+- `components/inbox/CreateTaskForm.tsx` — **(this session)** now a headed `Dialog` (was an inline
+  bordered `<form>`; props changed from `{threadId, onDone}` to `{threadId, threadAssignedStaffId,
+  open, onOpenChange}`, self-contained visibility instead of the caller wrapping it in a
+  conditional `<div>`), Priority/Task type moved from native `<select>` to shadcn `Select`, and a
+  new `TaskAssignmentFields` block (Assigned from/to) above the existing fields. Still collects
+  `TaskType`, `Description` (Textarea, optional — blank submits fall through to the server's
+  auto-populate-from-last-message default, increment 7). **P9-11**: "Recurring" checkbox reveals
+  Interval (days, required)/End date (optional, `DateTimePicker` `mode="date"`)/Max occurrences
+  (optional) — creation-time only, no edit-after-creation path (matches how
+  `SpawnNextOccurrenceIfDue` already works). Backend (`CreateTaskRequest`/`ThreadsController.CreateTask`)
+  already accepted all four `IsRecurring`/`RecurrenceIntervalDays`/`RecurrenceEndDate`/
+  `RecurrenceMaxOccurrences` fields before P9-11 — verified (not assumed) by reading
+  `NotifyHub.Api/Tasks/Dtos/CreateTaskRequest.cs`. Callers: `components/inbox/ConversationPanel.tsx`
+  (legacy) and `components/v2/conversation-panel.tsx` (v2) both pass `thread.assignedStaffId` and
+  their existing `showTaskForm`/`setShowTaskForm` state straight through as `open`/`onOpenChange`.
+- `components/tasks/NewTaskForm.tsx` — thread-picker + priority + due date, `TaskType`/`Description`
+  (same optional-blank behavior as `CreateTaskForm`, increment 7). **P9-11**: same recurring-toggle
+  UI as `CreateTaskForm.tsx` above. **(this session)** Priority/Task type/thread-picker moved to
+  shadcn `Select`; gained the same `TaskAssignmentFields` block, re-deriving its default whenever
+  the selected thread changes (the thread picker lives inside this form, unlike `CreateTaskForm`
+  where the thread is already fixed). Not itself wrapped in a `Dialog` — v2's `TaskBoardPageV2.tsx`
+  already wraps it in one externally (with a heading); legacy `TaskBoardPage.tsx` still renders it
+  inline, unchanged structurally.
+- `components/tasks/TaskAssignmentFields.tsx` — **(new, this session)** shared "Assigned from"
+  (read-only, `useAuth()`) / "Assigned to" (`Select` over `useAssignableUsers()`) block used by both
+  forms above — see the "Assignee picker + default task provider" note under `ThreadsController` in
+  §4 for the default-resolution priority order.
 - `components/tasks/TaskDetailPanel.tsx` — fetching via `useTask(id)` (:12-19) is what triggers BR-014's server-side revert. Legacy-only, unmodified — the redesign's equivalent is `task-detail-sheet.tsx` below.
 - `components/PriorityBadge.tsx`, `components/TaskStatusBadge.tsx` — color+label badges.
 - `components/ui/*` — shadcn primitives (generated).
 
 **Hooks** (`src/hooks/`):
 - `useThreads.ts`: `useThreads()` :7 (list), `useThread(id)` :14 (detail — `messages` is now `PagedResult<ThreadMessageDto>`, page 1 only, step 6/FR-010; invalidates `["threads"]` since opening resets unread), `useReplyMutation` :30, `useAssignMutation` :41, `useCreateTaskMutation` :53, `useCreateReminderMutation(threadId)` (P9-08 — see §4b; **bug fix this session**: now invalidates `["thread", threadId]` on success, same as `useReplyMutation` — previously had no `onSuccess` at all, so a scheduled reminder never appeared in the open conversation panel).
-- `useTasks.ts`: `useTasks(statusOrFilters?)` — accepts either a bare status shorthand (legacy `TaskBoardPage`) or a full `TaskListFilters` object (`TaskBoardPageV2`'s filter bar, increment 7: description/patientName/dueFrom/dueTo/isActive/assignedStaffId), `useTask(id)` (triggers BR-014 revert), `useUpdateTaskMutation()`, `useForwardTaskMutation()` (increment 7, `POST /api/tasks/{id}/forward`).
+- `useTasks.ts`: `useTasks(statusOrFilters?, options?)` — accepts either a bare status shorthand (legacy `TaskBoardPage`) or a full `TaskListFilters` object (`TaskBoardPageV2`'s filter bar, increment 7: description/patientName/dueFrom/dueTo/isActive/assignedStaffId; **grid redesign, this session**: `priority`/`isRecurring`/`unassigned`/`sortBy`/`sortDir`/`page`/`pageSize` added — `pageSize` defaults to 100 if omitted, matching the Board's original "fetch everything" behavior). `options?.enabled` (TanStack Query passthrough, this session) lets `TaskBoardPageV2` run two independent instances of this hook, one gated per tab (`view === "board"` / `view === "grid"`), so switching tabs doesn't double-fetch. `useTask(id)` (triggers BR-014 revert), `useUpdateTaskMutation()`, `useForwardTaskMutation()` (increment 7, `POST /api/tasks/{id}/forward`).
 - `useInboxHub.ts`: `useInboxHub()` :20 — owns SignalR connection lifecycle + query invalidation.
 - `useAudit.ts` (step 6): `useAuditLog(isAdmin, filters)` — picks `/api/audit` vs `/api/audit/mine` based on `isAdmin`, builds the query string from `actor`/`action`/`from`/`to`/`page`/`pageSize`.
 - `useTemplates.ts` (step 6): `useTemplates(isActive?)` (list, `isActive` filter added increment 9), `useCreateTemplateMutation()`, `useUpdateTemplateMutation()` (PATCH, invalidates `["templates"]`).
@@ -624,7 +771,7 @@ rather than deferred — no longer an open item.
 
 **SignalR wiring**:
 - `lib/signalr.ts:9-14` — `createInboxConnection()`: hub URL `${BASE_URL}/hubs/inbox` (:11), JWT via `accessTokenFactory` (:12), `.withAutomaticReconnect()` (:14).
-- `hooks/useInboxHub.ts` — connection created/started :24/:41, stopped on unmount :46. Listeners: `inboundMessageReceived` :26, `threadAssigned` :31, `outboundMessageSent` :36 — all invalidate `["threads"]`/`["thread", threadId]`.
+- `hooks/useInboxHub.ts` — connection created/started :24/:41, stopped on unmount :46. Listeners: `inboundMessageReceived` :26, `threadAssigned` :31, `outboundMessageSent` :36 — all invalidate `["threads"]`/`["thread", threadId]`. **`taskAssignmentChanged` (this session, new)** — invalidates `["tasks"]`, so `TaskNavWidget`'s badge and the Task Board's list live-update on any task (re)assignment; previously this event was broadcast by some backend paths but had no frontend listener at all, so it was a silent no-op.
 
 **API client**: `lib/apiClient.ts` — JWT attached :46-49; 401 handling :53-68 (de-dupes concurrent refreshes via shared `refreshPromise` :22/:54-58, retries once, else clears token store + dispatches `"auth:logout"` :65-67). Base URL derivation: `lib/apiBaseUrl.ts:9-10` (`${protocol}//${hostname}:5000`, `VITE_API_URL` override available).
 
@@ -642,7 +789,9 @@ legacy file listed in §6 above is unmodified.
   `{version, setVersion, toggleVersion}`). Toggle button lives in `AppShell.tsx` (existing "Legacy
   UI/New UI" button, unchanged).
 - **Route swap**: `src/routes/VersionedRoute.tsx` renders `Legacy` or `Redesign` per route based on
-  `version`; wired into every route in `App.tsx`. Redesign screens live in `src/pages/v2/*PageV2.tsx`
+  `version`; wired into every route in `App.tsx` **except `/templates`**, which was unwired this
+  session and always renders `TemplatesPageV2` directly (see below — legacy `TemplatesPage.tsx`
+  was deleted, not just made unreachable). Redesign screens live in `src/pages/v2/*PageV2.tsx`
   — currently pass-through stubs re-exporting the legacy page, replaced one at a time as each screen
   ships (Step 4 of the redesign process).
 - **CSS scope**: `UIVersionContext.tsx` toggles a `redesign` class on `document.documentElement`
@@ -667,7 +816,8 @@ legacy file listed in §6 above is unmodified.
     (keyed on `ThreadMessageDto.status`), `TASK_STATUS_CONFIG`/`TASK_PRIORITY_CONFIG` (keyed on
     `TaskStatus`/`TaskPriority`), `AUDIT_ACTION_CONFIG` (keyed on the 7 literal `AuditLogDto.action`
     strings emitted by `AuditLogger.Add` call sites — `send`/`receipt`/`opt-out`/`assignment`/
-    `escalation`/`blocked`/`superseded`), `TRIGGER_TYPE_CONFIG` (keyed on `TemplateTriggerType`).
+    `escalation`/`blocked`/`superseded`), `COMMUNICATION_MODE_CONFIG` (keyed on `CommunicationMode`).
+    `TRIGGER_TYPE_CONFIG` removed (this session) along with `TriggerType` itself.
   - `initials-avatar.tsx` — `InitialsAvatar`, deterministic per-name color (simple string hash into
     a fixed tone palette) + initials, no new dependency.
   - `empty-state.tsx` — generic `EmptyState` shell; callers supply their own title/description so
@@ -721,10 +871,26 @@ legacy file listed in §6 above is unmodified.
     palette's thread links now resolve to the actual conversation, not just the Inbox route.
 - **`TaskBoardPageV2.tsx`** — built. Kanban board (`components/v2/task-card.tsx`'s `TaskCard`,
   one column per `TaskStatus`; Completed/Cancelled collapsed by default, toggleable) plus a
-  `Board`/`List` tab toggle (list = same cards, flat, sorted by `dueAt`) — both views over the
-  same `useTasks()` (all statuses, unfiltered — the board draws the status split client-side,
-  unlike legacy's single-status server query) and `useThreads()` (for thread-name
-  cross-referencing on cards, same pattern as the command palette).
+  `Grid`/`Board` tab toggle over the *same* `useTasks()` (all statuses, unfiltered — the board
+  draws the status split client-side, unlike legacy's single-status server query).
+  **Task grid redesign (this session)**: the old "List" tab (same cards, just stacked, sorted
+  by `dueAt`, capped at the Board's own 100-row unfiltered fetch — with ~1,000 seeded tasks this
+  was an unpaginated wall of cards, the actual "hard to find tasks" complaint) is replaced by
+  **`components/v2/task-grid.tsx`'s `TaskGrid`** — modeled on `SmsHistoryPage`'s grid (shadcn
+  `Table`, sticky headers, row hover, mobile stacked-card fallback reusing `TaskCard` directly,
+  `Page X of Y (N total)` footer) but with click-to-sort `TableHead`s (Patient/Priority/Status/
+  Due/Assignee), which SMS History doesn't have. **Grid is now the default view on page load**
+  (`useState<"board" | "grid">("grid")`); Board is unchanged and reachable via its tab. The Grid
+  is driven by a *second*, independent `useTasks()` call (`{ enabled: view === "grid" }`,
+  Board's own call is `{ enabled: view === "board" }` so switching tabs doesn't double-fetch) —
+  real server-side pagination (`page`/`pageSize=25`) and sorting (`sortBy`/`sortDir`, new
+  `TasksController.List` params, see §3) instead of Board's "fetch up to 100, slice/filter
+  client-side" approach, which can't support real pagination. Both fetches share the same
+  FilterBar UI state (Description/Patient/Due/Status/Assignee/Priority/Active/Recurring) —
+  routed server-side for Grid (new `priority`/`isRecurring`/`unassigned` params) vs. client-side
+  for Board (unchanged). `gridPage` resets to 1 on every filter or sort-column change (mirrors
+  `SmsHistoryPage`'s `resetPage()` pattern). Inline "Assign to me"/"Complete" quick actions kept
+  per row (not fully read-only like SMS History), reusing `TaskCard`'s conditional logic.
   - Filters (priority `Select`, assignee `Select`, recurring-only toggle) are client-side over
     the fetched task list. Distribution strip (`DistributionBar`) above the board reflects the
     filtered set.
@@ -762,17 +928,18 @@ legacy file listed in §6 above is unmodified.
     `useAssignableUsers()` (increment 6) instead of the old dedupe-from-tasks hack.
   - "New task" reuses the untouched legacy `NewTaskForm` in a `Dialog` (same reuse pattern as
     the command palette and Inbox's "Make task").
-  - **Same thread-name cross-reference gap as the command palette**: cards/sheet fall back to
-    `Thread #{id}` when the task's thread isn't in the first 100 threads `useThreads()` fetched
-    (`GET /api/threads` sorts newest-first) — only matters for tasks tied to old/inactive
-    threads, not a bug, just the documented degrade path.
+  - **Bug fix (this session, predates the grid redesign)**: `TaskCard`/`TaskDetailSheet` used
+    to fall back to a raw `Thread #{id}`/`Task #{id}` display when the task's thread wasn't
+    among the first 100 threads `useThreads()` fetched. Fixed at the source — `TaskDto` gained
+    `PatientName` (`TasksController.ToDto`, reads `t.Thread.Patient.Name`, all four query sites
+    now `.Include(t => t.Thread).ThenInclude(th => th.Patient)`) — `TaskCard`/`TaskDetailSheet`
+    render `task.patientName` directly; `TaskBoardPageV2` no longer calls `useThreads()` for
+    this cross-reference at all (that gap can't recur regardless of thread count/age).
 - **`TemplatesPageV2.tsx`** — built. List + live-preview split pane (Postmark pattern):
-  left = compact rows (name, `TRIGGER_TYPE_CONFIG` badge, offset-hours), right = selected
+  left = compact rows (name, offset-hours), right = selected
   template's rendered preview or its edit form. Same validation and mutations as legacy
   (`useCreateTemplateMutation`/`useUpdateTemplateMutation`), factored into a reusable
-  `components/v2/template-form.tsx` (`TemplateForm`, presentation-only — legacy's inline
-  `TemplateForm` in `TemplatesPage.tsx` isn't exported, so this is a new component, not a
-  refactor of legacy). `?template={id}` deep-links like the other screens.
+  `components/v2/template-form.tsx` (`TemplateForm`, presentation-only). `?template={id}` deep-links like the other screens.
   - **Increment 9 additions**: an Active/Inactive/All filter `Select` above the list (drives
     `useTemplates(isActive)`), an "Inactive" badge on list rows and the preview header for
     templates with `IsActive=false`. `TemplateForm` gained an "Insert bookmark" dropdown
@@ -780,6 +947,31 @@ legacy file listed in §6 above is unmodified.
     via a ref) and an `Active` checkbox (`TemplateFormValues.isActive`, default `true`);
     since `POST /api/templates` doesn't accept `IsActive`, creating a template as inactive is
     a create-then-PATCH two-step in `TemplatesPageV2.handleCreate`.
+  - **Template form redesign + Communication Mode + included bookmarks**: `template-form.tsx` restructured
+    from a flat field list into `Card`/`CardHeader`/`CardContent` sections ("Details",
+    "Message" — `components/ui/card.tsx` and `components/ui/badge.tsx`,
+    both previously unused anywhere). New "Communication mode" `Select` (Sms/Email/Letter,
+    `TemplateFormValues.communicationMode`, default `Sms`). `insertBookmark`
+    now also appends the bookmark's id to `TemplateFormValues.bookmarkIds` (deduped) alongside
+    its existing cursor-insert of `InsertText` — rendered as removable `Badge` chips, positioned
+    **above** the Body textarea inside the "Message" card (moved there this session; previously a
+    separate card below the textarea). **This session**: removing a chip now also strips the
+    bookmark's text out of the body — `removeIncludedBookmark` looks up the bookmark's *current*
+    `insertText` from `useBookmarks()` and removes its first literal occurrence
+    (`removeFirstOccurrence`, indexOf+slice, no-op if not found); best-effort only — if the body
+    was hand-edited since insertion, or the same bookmark was inserted twice, only the first exact
+    match is removed regardless (previously this deliberately never touched the body at all).
+    Reuses `components/v2/sms-segment-hint.tsx`'s `SmsSegmentHint` (built earlier this session
+    for the composer/Reminder SMS dialog) under the Body textarea, shown **only when
+    `communicationMode === "Sms"`** — irrelevant for Email/Letter. `TemplatesPageV2.tsx`'s list
+    rows and detail header both gained a `COMMUNICATION_MODE_CONFIG` `StatusBadge`
+    (`status-config.ts`); the management view itself is
+    never mode-filtered (still shows every template regardless of channel) — only the two
+    *send-time* pickers are: `conversation-panel.tsx`'s "Insert template" and
+    `reminder-sms-dialog.tsx`'s Template `Select` both changed `useTemplates(true)` →
+    `useTemplates(true, "Sms")` (new second param, threaded through to a `?communicationMode=`
+    querystring + query key in `useTemplates.ts`), so an Email/Letter template — meaningless in
+    an SMS-sending flow — never appears there once one exists.
   - **Merge-field preview** (`components/v2/merge-field-text.tsx`, `MergeFieldText`) — the
     piece the audit flagged as entirely missing. Two modes: "Raw source" highlights every
     `{{field}}` token as a literal chip; "Sample preview" substitutes illustrative values for
@@ -816,13 +1008,34 @@ original redesign plan.
   `NewConversationDialog` (name/phone/message + optional `datetime-local` schedule field, calling the
   new `useCreateConversationMutation()` in `hooks/useThreads.ts` → `POST /api/threads`). On success the
   new thread is selected via the same `onSelect`/`?thread={id}` mechanism `ThreadList` already used.
+  **Country-code phone input (this session)**: the phone field is no longer a plain `Input` requiring
+  staff to type the full `+`-prefixed number themselves — it's `components/v2/phone-input.tsx`'s
+  `PhoneInput`, a flag/calling-code picker (searchable `Popover`+`Command` combobox, all ~250
+  countries from `libphonenumber-js/min`'s `getCountries()`) plus a national-number `Input` that's
+  live-formatted (`AsYouType(country)`) and live-validated (`isValidPhoneNumber`) as the user types —
+  red border/red helper text on an invalid number (same convention as `LoginPageV2.tsx`'s field
+  errors), Send disabled until valid. New shared util `lib/phone.ts` (`COUNTRIES`, `isValidForCountry`,
+  `toE164`) is the single source of truth for both the field's live validation and
+  `new-conversation-dialog.tsx`'s submit-time E.164 normalization, so they can't drift. No backend
+  change — `Patient.Phone`/`CreateConversationRequest.Phone` already accept any string up to 20 chars,
+  which a normalized E.164 number always fits. **Flags render via the `flag-icons` package (bundled
+  SVG sprites, CSS class-based, e.g. `fi fi-us`), not Unicode emoji** — emoji flags (🇺🇸) were tried
+  first but don't reliably render as actual flag glyphs on every platform (confirmed falling back to
+  plain "US" text on Windows/Chromium during manual browser verification this session). The
+  `flag-icons.min.css` import is dynamic (`import("flag-icons/css/...")` inside `PhoneInput`, not a
+  top-level import), so its ~250-country sprite sheet (~420KB) becomes its own lazy-loaded chunk
+  fetched only when this dialog is opened, instead of bloating the app's main CSS bundle (which stays
+  at its pre-existing ~47KB) for every page load.
 - **Settings module rebuilt** (§8, increment 11) — `pages/SettingsPage.tsx` (still unversioned, shared
   by both UI modes per §6) now renders 7 tabs (shadcn `Tabs`) instead of just the legacy/redesign
   toggle it held before: General (thin, read-only — `components/settings/general-tab.tsx`), SMS
   (Quiet Hours + rate-limit forms, **plus a P9-08 "Reminder SMS defaults" card** — `sms-tab.tsx`, backed by `useSettings.ts`), Task (read-only
   `TaskDueDateDefaults` display, **plus a P9-10 "Task forwarding" card (create/list/delete
   self-service `TaskForwardingRule`s, target picker via `useAssignableUsers` filtered to
-  exclude the caller)** — `task-tab.tsx`, backed by `useTaskForwardingRules.ts`. **Bug fix**:
+  exclude the caller), and a "Default task provider" card (this session — Admin-editable,
+  Staff see it disabled; `Select` over `useAssignableUsers()`, backs the new fallback-assignee
+  setting consumed by `ThreadsController.CreateTask`, see §4/§6a for details)** —
+  `task-tab.tsx`, backed by `useTaskForwardingRules.ts`/`useSettings.ts`. **Bug fix**:
   the From/To date picker values (`mode="date"`, local "yyyy-MM-dd") were submitted via
   `new Date(value).toISOString()`, which JS parses as UTC midnight; displaying the
   round-tripped value back with `toLocaleDateString()` then converted through the *local*
@@ -848,6 +1061,16 @@ original redesign plan.
   `GET /api/settings`, User Management lists the 3 seeded users with working status dropdowns, and
   the new-conversation dialog creates a patient+thread+message that immediately appears selected
   in the Inbox with a `Queued` status badge.
+- **Settings search dropdown** (this session) — General tab gained a "Find a setting" card
+  (`components/settings/settings-search.tsx`, a `Popover`+`Command` pairing over the previously-unused
+  shadcn `command.tsx`/`popover.tsx`) that lists/filters every settings Card across all 7 tabs via a
+  static manifest (`components/settings/settings-search-index.ts`, `SETTINGS_SEARCH_INDEX` —
+  admin-only entries like Users/Create user filtered out for non-Admins). `SettingsPage.tsx`'s `Tabs`
+  is now controlled (`activeTab` state, was `defaultValue`-only) so selecting a result switches tabs
+  and, via a `highlight` state + `useEffect`, scrolls the target Card into view and flashes a ring
+  highlight. Every settings Card across all tab files gained a stable `id` (e.g. `sms-quiet-hours`,
+  `task-forwarding`, `template-bookmarks`) matching the manifest, used as the scroll target. Scoped to
+  in-page navigation only — never leaves `/settings`.
 - **`DashboardPage` + top-nav task widget** (§10, increment 13) — `src/pages/DashboardPage.tsx`
   (unversioned, no legacy equivalent — entirely new screen). Stat cards (my open/escalated/
   overdue tasks, unread-thread count) + an Admin-only org-wide task-counts card + quick links to
@@ -862,7 +1085,35 @@ original redesign plan.
   deep-link mechanism to open `TaskDetailSheet` rather than duplicating a second modal renderer.
   Verified end-to-end: landing on `/` after login shows real stat-card numbers and recent-activity
   rows pulled from the live seed data, and the nav widget's badge count and popover list both
-  match the caller's actual assigned tasks.
+  match the caller's actual assigned tasks. **Live badge updates + blink (this session)**: the
+  badge previously only reflected `useTasks`'s own mount-time/refetch-on-focus fetch — a task
+  (re)assigned to the viewer elsewhere never appeared until a manual refresh, since no
+  `taskAssignmentChanged` broadcast reached this component (see `useInboxHub.ts`/`ThreadsController`/
+  `TasksController` notes above — three separate gaps: two backend paths that never broadcast at
+  all, plus the frontend never listening). Now that the event flows end-to-end, `TaskNavWidget`
+  also tracks the previous open-task count via a `useRef` and briefly renders a Tailwind
+  `animate-ping` ring behind the count `Badge` (2s) when the count *increases* — guarded to skip
+  the very first successful fetch so it doesn't blink on every page load, only on a live change
+  while the screen is already open. **Bug fix (this session, undercounted/missing badge)**:
+  now calls `useTasks({ assignedStaffId, isActive: true, statuses: OPEN_STATUSES })` — the new
+  `statuses` filter (`useTasks.ts`, comma-joins into `TasksController.List`'s `status` param, see
+  §3) does the Open/InProgress/Escalated filtering server-side instead of the old
+  fetch-`pageSize=100`-then-filter-client-side approach, and the badge number now reads
+  `data.totalCount` (the true filtered count) instead of `data.items.length` (capped at
+  `pageSize`, which is what silently undercounted/zeroed the badge for high-task-volume users —
+  see §3's root-cause writeup). `items` (still `pageSize`-capped, sorted oldest-`DueAt`-first)
+  is only used for the popover's own `.slice(0, 8)`, which now shows genuinely open tasks
+  (most-overdue-first, a reasonable "needs attention" ordering) instead of being unreachable
+  entirely once terminal-status rows crowded out the page.
+- **`TaskAssignmentFields.tsx`'s default "Assigned to" pre-fill (bug fix, this session)** — the
+  effect that pre-selects an assignee when Create Task opens used to fall back to the
+  lowest-id Active Admin before the creator (`threadAssignedStaffId -> defaultTaskProviderId ->
+  lowestActiveAdmin -> user.id`), diverging from the backend's actual default chain in
+  `ThreadsController.CreateTask` (`thread.AssignedStaffId ?? defaultProviderId ?? callerId` —
+  no Admin-fallback rung at all). In a multi-admin environment with no thread owner/default
+  provider configured, this could silently pre-select a *different* Admin than whoever opened
+  the dialog. Fixed to match the backend exactly: `threadAssignedStaffId -> defaultTaskProviderId
+  -> user.id`.
 
 ---
 
@@ -941,8 +1192,10 @@ regression. Out of scope to fix here (not part of `STEP9_PLAN.md`); flagged in S
   it leaves the stored value untouched). Both list-row and detail-header "offset Xh" displays
   removed. Backend `MessageTemplate.OffsetHours` column is unchanged and still returned by the
   API — just write-only-by-nobody until P9-08's Reminder SMS engine replaces its role for
-  `AppointmentReminder` templates. Legacy `TemplatesPage.tsx` untouched (unreachable dead code
-  per §6a).
+  `AppointmentReminder` templates. Legacy `TemplatesPage.tsx` untouched at the time (unreachable
+  dead code per §6a) — **retired entirely this session** (see below): deleted outright rather
+  than left as unreachable dead code, since removing `TriggerType` from shared types would
+  otherwise have left it in a broken, uncompilable state for a screen nothing routes to.
 - **Flagged, not silently resolved**: `STEP9_PLAN.md`'s own "Superseded/reversed decisions"
   section attributes the `ReminderOffset`/`ReminderExpiryOffset` Settings → SMS fields to
   "P9-10", but P9-10 in the same file is Task forwarding rules — P9-08 (Reminder SMS engine)

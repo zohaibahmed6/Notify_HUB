@@ -25,7 +25,6 @@ public class TemplatesControllerTests(CustomWebApplicationFactory factory) : ICl
         {
             Name = "Edit-test template",
             Body = "Original body",
-            TriggerType = "AppointmentReminder",
             OffsetHours = 48,
         });
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
@@ -43,7 +42,6 @@ public class TemplatesControllerTests(CustomWebApplicationFactory factory) : ICl
         Assert.Equal("Edit-test template", updated!.Name); // untouched field preserved
         Assert.Equal("Updated body", updated.Body);
         Assert.Equal(24, updated.OffsetHours);
-        Assert.Equal("AppointmentReminder", updated.TriggerType);
     }
 
     [Fact]
@@ -65,7 +63,6 @@ public class TemplatesControllerTests(CustomWebApplicationFactory factory) : ICl
         {
             Name = "Default-active template",
             Body = "Body",
-            TriggerType = "MedicationAlert",
             OffsetHours = 1,
         });
         var dto = await created.Content.ReadFromJsonAsync<TemplateDto>();
@@ -82,7 +79,6 @@ public class TemplatesControllerTests(CustomWebApplicationFactory factory) : ICl
         {
             Name = "Deactivate-test template",
             Body = "Body",
-            TriggerType = "MedicationAlert",
             OffsetHours = 1,
         });
         var original = await created.Content.ReadFromJsonAsync<TemplateDto>();
@@ -98,28 +94,6 @@ public class TemplatesControllerTests(CustomWebApplicationFactory factory) : ICl
         Assert.Contains(inactiveOnly!, t => t.Id == original.Id);
     }
 
-    [Fact]
-    public async Task Update_RejectsInvalidTriggerType()
-    {
-        var (client, _) = await _client.AsStaffAsync();
-
-        var created = await client.PostAsJsonAsync("/api/templates", new CreateTemplateRequest
-        {
-            Name = "Invalid-trigger-test template",
-            Body = "Body",
-            TriggerType = "MedicationAlert",
-            OffsetHours = 1,
-        });
-        var original = await created.Content.ReadFromJsonAsync<TemplateDto>();
-
-        var response = await client.PatchAsJsonAsync($"/api/templates/{original!.Id}", new UpdateTemplateRequest
-        {
-            TriggerType = "NotARealType",
-        });
-
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-    }
-
     /// P9-05: dual-safety net #1 — editing a template's body nulls RenderedBody on any
     /// already-Queued message linked to it, forcing a fresh render at dispatch time
     /// (net #2, MessageDispatcher) rather than letting stale content go out.
@@ -132,7 +106,6 @@ public class TemplatesControllerTests(CustomWebApplicationFactory factory) : ICl
         {
             Name = "Propagation-test template",
             Body = "Original body {{patient_name}}",
-            TriggerType = "AppointmentReminder",
             OffsetHours = 48,
         });
         var template = await created.Content.ReadFromJsonAsync<TemplateDto>();
@@ -187,5 +160,113 @@ public class TemplatesControllerTests(CustomWebApplicationFactory factory) : ICl
             var deliveredMessage = await db.OutboundMessages.SingleAsync(m => m.Id == deliveredMessageId);
             Assert.Equal("Already delivered, must not change", deliveredMessage.RenderedBody);
         }
+    }
+
+    [Fact]
+    public async Task Create_DefaultsToSms_WhenCommunicationModeOmitted()
+    {
+        var (client, _) = await _client.AsStaffAsync();
+
+        var created = await client.PostAsJsonAsync("/api/templates", new CreateTemplateRequest
+        {
+            Name = "Default-mode template",
+            Body = "Body",
+            OffsetHours = 1,
+        });
+        var dto = await created.Content.ReadFromJsonAsync<TemplateDto>();
+
+        Assert.Equal("Sms", dto!.CommunicationMode);
+    }
+
+    [Fact]
+    public async Task List_FiltersByCommunicationMode()
+    {
+        var (client, _) = await _client.AsStaffAsync();
+
+        var smsCreated = await client.PostAsJsonAsync("/api/templates", new CreateTemplateRequest
+        {
+            Name = "Sms-mode template",
+            Body = "Body",
+            OffsetHours = 1,
+            CommunicationMode = "Sms",
+        });
+        var smsTemplate = await smsCreated.Content.ReadFromJsonAsync<TemplateDto>();
+
+        var emailCreated = await client.PostAsJsonAsync("/api/templates", new CreateTemplateRequest
+        {
+            Name = "Email-mode template",
+            Body = "Body",
+            OffsetHours = 1,
+            CommunicationMode = "Email",
+        });
+        var emailTemplate = await emailCreated.Content.ReadFromJsonAsync<TemplateDto>();
+
+        var smsOnly = await client.GetFromJsonAsync<List<TemplateDto>>("/api/templates?communicationMode=Sms");
+        Assert.Contains(smsOnly!, t => t.Id == smsTemplate!.Id);
+        Assert.DoesNotContain(smsOnly!, t => t.Id == emailTemplate!.Id);
+
+        var emailOnly = await client.GetFromJsonAsync<List<TemplateDto>>("/api/templates?communicationMode=Email");
+        Assert.Contains(emailOnly!, t => t.Id == emailTemplate!.Id);
+        Assert.DoesNotContain(emailOnly!, t => t.Id == smsTemplate!.Id);
+    }
+
+    [Fact]
+    public async Task Update_RejectsInvalidCommunicationMode()
+    {
+        var (client, _) = await _client.AsStaffAsync();
+
+        var created = await client.PostAsJsonAsync("/api/templates", new CreateTemplateRequest
+        {
+            Name = "Invalid-mode-test template",
+            Body = "Body",
+            OffsetHours = 1,
+        });
+        var original = await created.Content.ReadFromJsonAsync<TemplateDto>();
+
+        var response = await client.PatchAsJsonAsync($"/api/templates/{original!.Id}", new UpdateTemplateRequest
+        {
+            CommunicationMode = "Fax",
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    /// §5 (this session): BookmarkIds round-trips through create/update with full-replace
+    /// semantics (not additive) on PATCH — same convention as TaskForwardingRulesController.
+    [Fact]
+    public async Task BookmarkIds_RoundTripThroughCreateAndUpdate()
+    {
+        var (client, _) = await _client.AsStaffAsync();
+
+        long bookmark1Id, bookmark2Id;
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
+            var bookmark1 = new Bookmark { Label = "Patient Name", Description = "Inserts patient name", InsertText = "{{patient_name}}" };
+            var bookmark2 = new Bookmark { Label = "Appointment Time", Description = "Inserts appointment time", InsertText = "{{appointment_time}}" };
+            db.Bookmarks.AddRange(bookmark1, bookmark2);
+            await db.SaveChangesAsync();
+            bookmark1Id = bookmark1.Id;
+            bookmark2Id = bookmark2.Id;
+        }
+
+        var created = await client.PostAsJsonAsync("/api/templates", new CreateTemplateRequest
+        {
+            Name = "Bookmark-test template",
+            Body = "Hi {{patient_name}}",
+            OffsetHours = 1,
+            BookmarkIds = new[] { bookmark1Id },
+        });
+        var template = await created.Content.ReadFromJsonAsync<TemplateDto>();
+        Assert.Equal(new[] { bookmark1Id }, template!.BookmarkIds);
+
+        var patched = await client.PatchAsJsonAsync($"/api/templates/{template.Id}", new UpdateTemplateRequest
+        {
+            BookmarkIds = new[] { bookmark2Id },
+        });
+        var updated = await patched.Content.ReadFromJsonAsync<TemplateDto>();
+
+        // Full-replace, not additive: bookmark1 is gone, only bookmark2 remains.
+        Assert.Equal(new[] { bookmark2Id }, updated!.BookmarkIds);
     }
 }

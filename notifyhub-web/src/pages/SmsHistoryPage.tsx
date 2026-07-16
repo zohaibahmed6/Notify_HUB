@@ -4,6 +4,7 @@ import { MessageSquareText, ShieldAlert } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useSmsHistory } from "@/hooks/useMessages";
 import { toDateInputValue, defaultFromDaysAgo, toInstantRange } from "@/lib/dateRangeFilter";
+import { formatUtc } from "@/lib/dateUtc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -187,19 +188,6 @@ export default function SmsHistoryPage() {
         </Button>
       </div>
 
-      {!isLoading && data && (
-        <div className="mb-4 flex flex-wrap gap-4">
-          <div className="rounded-lg border bg-muted/40 px-4 py-2">
-            <div className="text-2xs text-muted-foreground">Total SMS</div>
-            <div className="text-lg font-semibold">{data.totalCount}</div>
-          </div>
-          <div className="rounded-lg border bg-muted/40 px-4 py-2">
-            <div className="text-2xs text-muted-foreground">Total PDU</div>
-            <div className="text-lg font-semibold">{data.totalPduCount}</div>
-          </div>
-        </div>
-      )}
-
       {isLoading ? (
         <div className="divide-y rounded-lg border">
           {Array.from({ length: 8 }).map((_, i) => (
@@ -228,9 +216,9 @@ export default function SmsHistoryPage() {
                     <span className="text-muted-foreground">Phone</span>
                     <span className="font-mono">{row.phone}</span>
                     <span className="text-muted-foreground">Scheduled</span>
-                    <span>{row.scheduledTime ? new Date(row.scheduledTime).toLocaleString() : "—"}</span>
+                    <span>{formatUtc(row.scheduledTime)}</span>
                     <span className="text-muted-foreground">Expiry</span>
-                    <span>{row.expiryTime ? new Date(row.expiryTime).toLocaleString() : "—"}</span>
+                    <span>{formatUtc(row.expiryTime)}</span>
                     <span className="text-muted-foreground">PDU</span>
                     <span>{row.pduCount ?? "—"}</span>
                   </div>
@@ -266,10 +254,10 @@ export default function SmsHistoryPage() {
                         <StatusBadge {...config} size="xs" />
                       </TableCell>
                       <TableCell className="font-mono text-xs">
-                        {row.scheduledTime ? new Date(row.scheduledTime).toLocaleString() : "—"}
+                        {formatUtc(row.scheduledTime)}
                       </TableCell>
                       <TableCell className="font-mono text-xs">
-                        {row.expiryTime ? new Date(row.expiryTime).toLocaleString() : "—"}
+                        {formatUtc(row.expiryTime)}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">{row.pduCount ?? "—"}</TableCell>
                     </TableRow>
@@ -280,7 +268,7 @@ export default function SmsHistoryPage() {
           </div>
           <div className="mt-3 flex shrink-0 items-center justify-between text-sm text-muted-foreground">
             <span className="font-mono text-xs">
-              Page {data?.page} of {totalPages} ({data?.totalCount} total)
+              Page {data?.page} of {totalPages} ({data?.totalCount} total/{data?.totalPduCount} pdu(segments))
             </span>
             <div className="flex gap-2">
               <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>

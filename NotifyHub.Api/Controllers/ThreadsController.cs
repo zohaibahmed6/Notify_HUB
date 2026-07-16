@@ -24,14 +24,23 @@ namespace NotifyHub.Api.Controllers;
 public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inboxHub, SettingsService settingsService) : ControllerBase
 {
     [HttpGet]
-    public async Task<ActionResult<PagedResult<ThreadDto>>> List(int page = 1, int pageSize = 25, CancellationToken ct = default)
+    public async Task<ActionResult<PagedResult<ThreadDto>>> List(string? search, int page = 1, int pageSize = 25, CancellationToken ct = default)
     {
         (page, pageSize) = PagedResult<ThreadDto>.Clamp(page, pageSize);
 
         var query = db.Threads
             .Include(t => t.Patient)
             .Include(t => t.AssignedStaff)
-            .OrderByDescending(t => t.Id);
+            .AsQueryable();
+
+        // Server-side search across every thread, not just the currently-paginated page — the
+        // frontend used to only filter whatever page it already had loaded, so a real patient
+        // outside that window was invisible to search even though their thread existed.
+        if (!string.IsNullOrWhiteSpace(search))
+            query = query.Where(t => t.Patient.Name.Contains(search)
+                || (t.AssignedStaff != null && t.AssignedStaff.Username.Contains(search)));
+
+        query = query.OrderByDescending(t => t.Id);
 
         var totalCount = await query.CountAsync(ct);
         var threads = await query
@@ -336,11 +345,28 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
         var now = DateTime.UtcNow;
         var dueAt = request.DueAt ?? TaskDueDateDefaults.DefaultDueAt(priority, now);
 
-        // Default assignee: the thread's current owner if assigned, else the creator
-        // (FR-008 default priority=medium on auto-creation doesn't specify assignee;
-        // this mirrors "whoever is handling this thread owns the follow-up").
         var callerId = long.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-        var naturalAssigneeId = thread.AssignedStaffId ?? callerId;
+
+        // Assignee: an explicit client choice always wins. Otherwise, default to the
+        // thread's current owner if assigned, else the configured Default Task Provider
+        // (Settings > Task), else the creator (FR-008 default priority=medium on
+        // auto-creation doesn't specify assignee; this mirrors "whoever is handling this
+        // thread owns the follow-up" when nothing else is configured).
+        long naturalAssigneeId;
+        if (request.AssignedStaffId is { } chosenId)
+        {
+            var chosen = await db.Users.FindAsync([chosenId], ct);
+            if (chosen is null)
+                return Problem(statusCode: StatusCodes.Status400BadRequest, title: $"User {chosenId} does not exist.");
+            if (chosen.Status != UserStatus.Active)
+                return Problem(statusCode: StatusCodes.Status400BadRequest, title: $"User {chosen.Username} is not Active and cannot be assigned.");
+            naturalAssigneeId = chosenId;
+        }
+        else
+        {
+            var defaultProviderId = (await settingsService.GetTaskAssignmentAsync(ct)).DefaultProviderId;
+            naturalAssigneeId = thread.AssignedStaffId ?? defaultProviderId ?? callerId;
+        }
 
         // P9-10 rule 1: if the natural assignee is Inactive/OnLeave, check their forwarding
         // rule before falling back to Admin (existing behavior, unchanged when no rule
@@ -386,6 +412,12 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
                 detail: $"Task auto-forwarded from {forwardUsernames.GetValueOrDefault(naturalAssigneeId, naturalAssigneeId.ToString())} to {forwardUsernames.GetValueOrDefault(assigneeId, assigneeId.ToString())} (natural assignee inactive)");
             await db.SaveChangesAsync(ct);
         }
+
+        // Live-updates the assignee's top-nav task badge (TaskNavWidget) — unconditional,
+        // since every created task has an assignee, whether explicitly picked, defaulted,
+        // or auto-forwarded above. Same event/payload shape as TasksController's Forward/
+        // Update broadcasts, so a single useInboxHub handler covers all of them.
+        await inboxHub.Clients.All.SendAsync("taskAssignmentChanged", new { taskId = task.Id, assignedStaffId = assigneeId }, ct);
 
         var assignee = await db.Users.FindAsync([assigneeId], ct);
         return Created($"/api/tasks/{task.Id}", ToTaskDto(task, assignee?.Username));

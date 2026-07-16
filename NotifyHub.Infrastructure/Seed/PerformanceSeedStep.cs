@@ -147,6 +147,7 @@ public class PerformanceSeedStep(int targetMessageCount = 50_000) : IDbSeedStep
                 Status = random.NextDouble() < 0.9 ? MessageStatus.Delivered : MessageStatus.Failed,
                 IdempotencyKey = IdempotencyKeyGenerator.Generate(patient.Id, template.Id, triggerReference),
                 AttemptCount = 1,
+                PduCount = PduSegmentCalculator.CalculateSegmentCount(template.Body),
             });
 
             if (batch.Count >= BatchSize)

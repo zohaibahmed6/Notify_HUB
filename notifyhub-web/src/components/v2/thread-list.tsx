@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Inbox, Plus, Search } from "lucide-react";
 
 import { InitialsAvatar } from "@/components/v2/initials-avatar";
@@ -21,26 +21,26 @@ export function ThreadList({
   isLoading,
   selectedThreadId,
   onSelect,
+  onSearchChange,
   className,
 }: {
   threads: ThreadDto[];
   isLoading: boolean;
   selectedThreadId: number | null;
   onSelect: (id: number) => void;
+  onSearchChange: (search: string) => void;
   className?: string;
 }) {
   const [query, setQuery] = useState("");
   const [newConversationOpen, setNewConversationOpen] = useState(false);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return threads;
-    return threads.filter(
-      (t) =>
-        t.patientName.toLowerCase().includes(q) ||
-        (t.assignedStaffUsername?.toLowerCase().includes(q) ?? false),
-    );
-  }, [threads, query]);
+  // Debounced so typing doesn't fire an API request per keystroke — searching is now a real
+  // server-side query (across every thread, not just the currently-loaded page), unlike the
+  // old client-side filter over an already-fetched array.
+  useEffect(() => {
+    const timeout = setTimeout(() => onSearchChange(query.trim()), 300);
+    return () => clearTimeout(timeout);
+  }, [query, onSearchChange]);
 
   return (
     <aside className={cn("flex h-full w-full shrink-0 flex-col border-r md:w-80", className)}>
@@ -79,17 +79,17 @@ export function ThreadList({
               <ListRowSkeleton key={i} />
             ))}
           </div>
-        ) : threads.length === 0 ? (
+        ) : threads.length === 0 && query.trim() === "" ? (
           <EmptyState
             icon={Inbox}
             title="This is your shared inbox"
             description="Patient replies will show up here as they arrive."
           />
-        ) : filtered.length === 0 ? (
+        ) : threads.length === 0 ? (
           <EmptyState icon={Search} title="No matching threads" description="Try a different name." />
         ) : (
           <ul>
-            {filtered.map((thread) => {
+            {threads.map((thread) => {
               const isSelected = thread.id === selectedThreadId;
               const isUnread = thread.unreadCount > 0;
               return (

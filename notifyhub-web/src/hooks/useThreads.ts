@@ -4,10 +4,14 @@ import { apiClient } from "@/lib/apiClient";
 import type { CreateConversationRequest, PagedResult, ThreadDetailDto, ThreadDto } from "@/types/inbox";
 import type { CreateTaskRequest, TaskDto } from "@/types/tasks";
 
-export function useThreads() {
+export function useThreads(search?: string) {
   return useQuery({
-    queryKey: ["threads"],
-    queryFn: () => apiClient.get<PagedResult<ThreadDto>>("/api/threads?pageSize=100"),
+    queryKey: ["threads", search ?? null],
+    queryFn: () => {
+      const params = new URLSearchParams({ pageSize: "100" });
+      if (search) params.set("search", search);
+      return apiClient.get<PagedResult<ThreadDto>>(`/api/threads?${params.toString()}`);
+    },
   });
 }
 

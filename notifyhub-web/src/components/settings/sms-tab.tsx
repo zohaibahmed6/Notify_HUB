@@ -87,7 +87,7 @@ export function SmsTab() {
 
   return (
     <div className="space-y-4">
-      <Card>
+      <Card id="sms-quiet-hours">
         <CardHeader>
           <CardTitle className="text-base">Quiet Hours</CardTitle>
           <CardDescription>
@@ -123,7 +123,7 @@ export function SmsTab() {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card id="sms-rate-limit">
         <CardHeader>
           <CardTitle className="text-base">Per-patient rate limiting</CardTitle>
           <CardDescription>Caps how many outbound messages a single patient can receive within the window.</CardDescription>
@@ -156,7 +156,7 @@ export function SmsTab() {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card id="sms-reminder-defaults">
         <CardHeader>
           <CardTitle className="text-base">Reminder SMS defaults</CardTitle>
           <CardDescription>

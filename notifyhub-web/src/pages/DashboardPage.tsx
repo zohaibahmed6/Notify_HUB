@@ -3,6 +3,7 @@ import { AlertTriangle, ArrowUp, Clock, Inbox as InboxIcon, MailWarning } from "
 
 import { useAuth } from "@/context/AuthContext";
 import { useDashboardSummary } from "@/hooks/useDashboard";
+import { formatUtcDateTime } from "@/lib/dateUtc";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -34,7 +35,7 @@ export default function DashboardPage() {
 
   return (
     <div className="h-full overflow-y-auto p-6">
-      <h1 className="mb-1 text-lg font-semibold">Welcome back, {user?.username}</h1>
+      <h1 className="mb-1 text-lg font-semibold">Welcome back, {user?.fullName ?? user?.username}</h1>
       <p className="mb-6 text-sm text-muted-foreground">Here's what's happening in NotifyHub.</p>
 
       {isLoading || !summary ? (
@@ -107,7 +108,7 @@ export default function DashboardPage() {
                         <span className="font-medium">{entry.actor}</span>
                         <span className="truncate text-muted-foreground">{entry.detail ?? "—"}</span>
                       </div>
-                      <span className="shrink-0 text-xs text-muted-foreground">{new Date(entry.occurredAt).toLocaleString()}</span>
+                      <span className="shrink-0 text-xs text-muted-foreground">{formatUtcDateTime(entry.occurredAt)}</span>
                     </li>
                   ))}
                 </ul>

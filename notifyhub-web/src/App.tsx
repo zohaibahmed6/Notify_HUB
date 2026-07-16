@@ -6,7 +6,6 @@ import AppShell from "@/components/layout/AppShell";
 import LoginPage from "@/pages/LoginPage";
 import InboxPage from "@/pages/InboxPage";
 import TaskBoardPage from "@/pages/TaskBoardPage";
-import TemplatesPage from "@/pages/TemplatesPage";
 import AuditLogPage from "@/pages/AuditLogPage";
 import SettingsPage from "@/pages/SettingsPage";
 import DashboardPage from "@/pages/DashboardPage";
@@ -31,7 +30,9 @@ export default function App() {
           <Route path="/" element={<DashboardPage />} />
           <Route path="/inbox" element={<VersionedRoute Legacy={InboxPage} Redesign={InboxPageV2} />} />
           <Route path="/tasks" element={<VersionedRoute Legacy={TaskBoardPage} Redesign={TaskBoardPageV2} />} />
-          <Route path="/templates" element={<VersionedRoute Legacy={TemplatesPage} Redesign={TemplatesPageV2} />} />
+          {/* Not versioned — legacy TemplatesPage.tsx retired (dead code, unreachable
+              since the manual UI-version toggle was removed from Settings). */}
+          <Route path="/templates" element={<TemplatesPageV2 />} />
           <Route path="/audit" element={<VersionedRoute Legacy={AuditLogPage} Redesign={AuditLogPageV2} />} />
           {/* Not versioned — entirely new screen, same "no legacy variant" precedent as
               Dashboard/Settings (P9-06). */}

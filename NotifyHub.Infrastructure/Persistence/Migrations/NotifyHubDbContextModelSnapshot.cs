@@ -22,6 +22,21 @@ namespace NotifyHub.Infrastructure.Persistence.Migrations
 
             MySqlModelBuilderExtensions.AutoIncrementColumns(modelBuilder);
 
+            modelBuilder.Entity("BookmarkMessageTemplate", b =>
+                {
+                    b.Property<long>("BookmarksId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("TemplatesId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("BookmarksId", "TemplatesId");
+
+                    b.HasIndex("TemplatesId");
+
+                    b.ToTable("message_template_bookmarks", (string)null);
+                });
+
             modelBuilder.Entity("NotifyHub.Domain.Entities.Appointment", b =>
                 {
                     b.Property<long>("Id")
@@ -209,6 +224,11 @@ namespace NotifyHub.Infrastructure.Persistence.Migrations
                         .HasMaxLength(1000)
                         .HasColumnType("varchar(1000)");
 
+                    b.Property<string>("CommunicationMode")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)");
+
                     b.Property<bool>("IsActive")
                         .HasColumnType("tinyint(1)");
 
@@ -219,11 +239,6 @@ namespace NotifyHub.Infrastructure.Persistence.Migrations
 
                     b.Property<int>("OffsetHours")
                         .HasColumnType("int");
-
-                    b.Property<string>("TriggerType")
-                        .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("varchar(30)");
 
                     b.HasKey("Id");
 
@@ -558,6 +573,21 @@ namespace NotifyHub.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("users", (string)null);
+                });
+
+            modelBuilder.Entity("BookmarkMessageTemplate", b =>
+                {
+                    b.HasOne("NotifyHub.Domain.Entities.Bookmark", null)
+                        .WithMany()
+                        .HasForeignKey("BookmarksId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("NotifyHub.Domain.Entities.MessageTemplate", null)
+                        .WithMany()
+                        .HasForeignKey("TemplatesId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("NotifyHub.Domain.Entities.Appointment", b =>

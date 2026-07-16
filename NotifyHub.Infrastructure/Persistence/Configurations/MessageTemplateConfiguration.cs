@@ -20,13 +20,20 @@ public class MessageTemplateConfiguration : IEntityTypeConfiguration<MessageTemp
             .HasMaxLength(1000)
             .IsRequired();
 
-        builder.Property(t => t.TriggerType)
-            .HasConversion<string>()
-            .HasMaxLength(30)
-            .IsRequired();
-
         builder.Property(t => t.OffsetHours).IsRequired();
 
         builder.Property(t => t.IsActive).IsRequired();
+
+        builder.Property(t => t.CommunicationMode)
+            .HasConversion<string>()
+            .HasMaxLength(20)
+            .IsRequired();
+
+        // No existing many-to-many precedent in this codebase — EF Core's implicit
+        // skip-navigation join (no custom join entity class) is the simplest fit for
+        // "which bookmarks does this template include."
+        builder.HasMany(t => t.Bookmarks)
+            .WithMany(b => b.Templates)
+            .UsingEntity(j => j.ToTable("message_template_bookmarks"));
     }
 }

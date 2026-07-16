@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using NotifyHub.Api.Settings.Dtos;
+using NotifyHub.Domain.Enums;
 using NotifyHub.Infrastructure.Persistence;
 using NotifyHub.Infrastructure.Settings;
 
@@ -20,6 +21,7 @@ public class SettingsController(SettingsService settingsService, NotifyHubDbCont
         var quietHours = await settingsService.GetQuietHoursAsync(ct);
         var rateLimit = await settingsService.GetRateLimitAsync(ct);
         var reminder = await settingsService.GetReminderAsync(ct);
+        var taskAssignment = await settingsService.GetTaskAssignmentAsync(ct);
 
         return Ok(new SettingsDto
         {
@@ -32,6 +34,7 @@ public class SettingsController(SettingsService settingsService, NotifyHubDbCont
             ReminderOffsetMinutes = reminder.OffsetMinutes,
             ReminderExpiryOffsetMinutes = reminder.ExpiryOffsetMinutes,
             DefaultReminderTemplateId = reminder.DefaultTemplateId,
+            DefaultTaskProviderId = taskAssignment.DefaultProviderId,
         });
     }
 
@@ -60,6 +63,9 @@ public class SettingsController(SettingsService settingsService, NotifyHubDbCont
         if (request.DefaultReminderTemplateId is { } templateId && templateId > 0 && !await db.MessageTemplates.AnyAsync(t => t.Id == templateId, ct))
             return Problem(statusCode: StatusCodes.Status400BadRequest, title: "DefaultReminderTemplateId does not reference an existing template.");
 
+        if (request.DefaultTaskProviderId is { } providerId && providerId > 0 && !await db.Users.AnyAsync(u => u.Id == providerId && u.Status == UserStatus.Active, ct))
+            return Problem(statusCode: StatusCodes.Status400BadRequest, title: "DefaultTaskProviderId does not reference an existing active user.");
+
         var updates = new Dictionary<string, string>();
 
         if (request.QuietHoursEnabled is not null)
@@ -80,6 +86,8 @@ public class SettingsController(SettingsService settingsService, NotifyHubDbCont
             updates[SettingsService.ReminderExpiryOffsetMinutesKey] = request.ReminderExpiryOffsetMinutes.Value.ToString();
         if (request.DefaultReminderTemplateId is not null)
             updates[SettingsService.DefaultReminderTemplateIdKey] = request.DefaultReminderTemplateId.Value.ToString();
+        if (request.DefaultTaskProviderId is not null)
+            updates[SettingsService.DefaultTaskProviderIdKey] = request.DefaultTaskProviderId.Value.ToString();
 
         if (updates.Count > 0)
             await settingsService.SetAsync(updates, ct);

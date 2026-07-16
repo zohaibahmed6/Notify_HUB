@@ -30,6 +30,8 @@ public class MessagesControllerTests(CustomWebApplicationFactory factory) : ICla
     public async Task List_AsAdmin_ReturnsSystemFallback_AndFilters()
     {
         long patientId;
+        var staffCreatedAt = DateTime.UtcNow;
+        var systemCreatedAt = DateTime.UtcNow;
         using (var scope = factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
@@ -46,7 +48,7 @@ public class MessagesControllerTests(CustomWebApplicationFactory factory) : ICla
                     SentByUsername = CustomWebApplicationFactory.StaffUsername,
                     RenderedBody = "P9-06 staff-sent message",
                     Status = MessageStatus.Delivered,
-                    CreatedAt = DateTime.UtcNow,
+                    CreatedAt = staffCreatedAt,
                     AttemptCount = 0,
                     PduCount = 3, // P9-09: receipt already landed
                 },
@@ -57,7 +59,7 @@ public class MessagesControllerTests(CustomWebApplicationFactory factory) : ICla
                     SentByUsername = null,
                     RenderedBody = "P9-06 system-sent message",
                     Status = MessageStatus.Queued,
-                    CreatedAt = DateTime.UtcNow,
+                    CreatedAt = systemCreatedAt,
                     AttemptCount = 0,
                     PduCount = null, // P9-09: no receipt yet, contributes 0 to the total
                 });
@@ -75,6 +77,12 @@ public class MessagesControllerTests(CustomWebApplicationFactory factory) : ICla
         Assert.Equal(3, all.TotalPduCount);
         Assert.Equal(3, all.Items.Single(i => i.Status == "Delivered").PduCount);
         Assert.Null(all.Items.Single(i => i.Status == "Queued").PduCount);
+
+        // Neither seeded row sets ScheduledAt (a direct/immediate send) — ScheduledTime
+        // now falls back to CreatedAt instead of leaving the report's "Scheduled" column
+        // blank for these rows.
+        Assert.Equal(staffCreatedAt, all.Items.Single(i => i.Status == "Delivered").ScheduledTime, TimeSpan.FromSeconds(1));
+        Assert.Equal(systemCreatedAt, all.Items.Single(i => i.Status == "Queued").ScheduledTime, TimeSpan.FromSeconds(1));
 
         var systemOnly = await client.GetFromJsonAsync<SmsHistoryPagedResult>("/api/messages?phone=%2B19990000401&username=System");
         Assert.Equal(1, systemOnly!.TotalCount);

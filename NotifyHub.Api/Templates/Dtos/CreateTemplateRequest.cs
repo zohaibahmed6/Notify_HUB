@@ -12,9 +12,12 @@ public class CreateTemplateRequest
     [MaxLength(1000)]
     public string Body { get; set; } = default!;
 
-    [Required]
-    public string TriggerType { get; set; } = default!;
-
     [Range(1, int.MaxValue)]
     public int OffsetHours { get; set; }
+
+    /// Optional so existing callers that predate this field keep working — defaults to
+    /// Sms server-side when omitted (TemplatesController.Create).
+    public string? CommunicationMode { get; set; }
+
+    public IReadOnlyList<long>? BookmarkIds { get; set; }
 }

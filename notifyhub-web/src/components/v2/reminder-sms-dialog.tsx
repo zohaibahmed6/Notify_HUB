@@ -13,6 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DateTimePicker } from "@/components/v2/date-time-picker";
+import { SmsSegmentHint } from "@/components/v2/sms-segment-hint";
 
 /// P9-08: "Reminder SMS" action — same discoverability tier as "Insert template" in the
 /// composer, opens a modal rather than an inline composer change.
@@ -32,7 +33,7 @@ export function ReminderSmsDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const { data: templates } = useTemplates(true);
+  const { data: templates } = useTemplates(true, "Sms");
   const { data: settings } = useSettings();
   const createReminder = useCreateReminderMutation(threadId);
 
@@ -217,6 +218,7 @@ export function ReminderSmsDialog({
               placeholder={bodyLoading ? "Loading..." : "Select a template above, or type a message..."}
               onChange={(e) => setBody(e.target.value)}
             />
+            <SmsSegmentHint text={body} />
           </div>
 
           <div className="space-y-1.5">

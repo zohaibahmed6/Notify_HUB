@@ -50,7 +50,7 @@ export function TemplateTab() {
 
   return (
     <div className="space-y-4">
-      <Card>
+      <Card id="template-bookmarks">
         <CardHeader>
           <CardTitle className="text-base">Bookmarks</CardTitle>
           <CardDescription>Reusable snippets/merge-field shortcuts, insertable into any template's body.</CardDescription>
@@ -92,7 +92,7 @@ export function TemplateTab() {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card id="template-add-bookmark">
         <CardHeader>
           <CardTitle className="text-base">Add bookmark</CardTitle>
         </CardHeader>

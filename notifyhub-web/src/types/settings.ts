@@ -8,6 +8,7 @@ export interface SettingsDto {
   reminderOffsetMinutes: number;
   reminderExpiryOffsetMinutes: number;
   defaultReminderTemplateId: number | null;
+  defaultTaskProviderId: number | null;
 }
 
 export interface UpdateSettingsRequest {
@@ -20,6 +21,7 @@ export interface UpdateSettingsRequest {
   reminderOffsetMinutes?: number;
   reminderExpiryOffsetMinutes?: number;
   defaultReminderTemplateId?: number;
+  defaultTaskProviderId?: number;
 }
 
 export interface SystemInfoDto {

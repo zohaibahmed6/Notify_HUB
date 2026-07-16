@@ -14,4 +14,7 @@ public class UpdateSettingsRequest
 
     /// 0 clears the default (real template ids are never 0).
     public long? DefaultReminderTemplateId { get; set; }
+
+    /// 0 clears the default (real user ids are never 0).
+    public long? DefaultTaskProviderId { get; set; }
 }

@@ -93,7 +93,7 @@ export function UserManagementTab() {
 
   return (
     <div className="space-y-4">
-      <Card>
+      <Card id="users-list">
         <CardHeader>
           <CardTitle className="text-base">Users</CardTitle>
           <CardDescription>
@@ -152,7 +152,7 @@ export function UserManagementTab() {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card id="users-create">
         <CardHeader>
           <CardTitle className="text-base">Create user</CardTitle>
         </CardHeader>

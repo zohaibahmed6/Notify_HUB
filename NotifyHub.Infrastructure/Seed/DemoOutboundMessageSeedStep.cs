@@ -22,9 +22,9 @@ public class DemoOutboundMessageSeedStep : IDbSeedStep
         if (patients.Count == 0 || templates.Count == 0)
             return;
 
-        var appointmentReminder = templates.First(t => t.TriggerType == TriggerType.AppointmentReminder && t.OffsetHours == 48);
-        var medicationAlert = templates.First(t => t.TriggerType == TriggerType.MedicationAlert);
-        var prescriptionAlert = templates.First(t => t.TriggerType == TriggerType.PrescriptionAlert);
+        var appointmentReminder = templates.First(t => t.Name == "Appointment Reminder (48h)");
+        var medicationAlert = templates.First(t => t.Name == "Medication Alert");
+        var prescriptionAlert = templates.First(t => t.Name == "Prescription Alert");
 
         var now = DateTime.UtcNow;
         var messages = new List<OutboundMessage>();

@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { useAssignMutation, useReplyMutation, useThread } from "@/hooks/useThreads";
 import { apiClient } from "@/lib/apiClient";
 import { errorMessage } from "@/lib/errorMessage";
+import { formatUtc } from "@/lib/dateUtc";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -129,11 +130,12 @@ export function ConversationPanel({ threadId }: { threadId: number }) {
         </div>
       )}
 
-      {showTaskForm && (
-        <div className="shrink-0 border-b p-3">
-          <CreateTaskForm threadId={threadId} onDone={() => setShowTaskForm(false)} />
-        </div>
-      )}
+      <CreateTaskForm
+        threadId={threadId}
+        threadAssignedStaffId={thread.assignedStaffId}
+        open={showTaskForm}
+        onOpenChange={setShowTaskForm}
+      />
 
       <div ref={scrollRef} onScroll={handleScroll} className="flex-1 space-y-3 overflow-y-auto p-4">
         {allMessages.length === 0 ? (
@@ -172,7 +174,7 @@ export function ConversationPanel({ threadId }: { threadId: number }) {
                   >
                     {message.direction === "outbound" && message.senderType === "Staff" ? "You" : message.senderType ?? "Patient"}
                     {" · "}
-                    {new Date(message.timestamp).toLocaleString()}
+                    {formatUtc(message.timestamp)}
                   </p>
                 </div>
               </div>

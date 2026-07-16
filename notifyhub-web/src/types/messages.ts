@@ -7,7 +7,7 @@ export interface SmsHistoryDto {
   phone: string;
   text: string | null;
   status: MessageStatus;
-  scheduledTime: string | null;
+  scheduledTime: string;
   expiryTime: string | null;
   pduCount: number | null;
 }

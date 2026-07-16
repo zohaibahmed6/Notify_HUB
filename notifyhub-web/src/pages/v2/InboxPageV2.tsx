@@ -10,7 +10,8 @@ import { cn } from "@/lib/utils";
 import { decodeThreadId, encodeThreadId } from "@/lib/threadIdCodec";
 
 export default function InboxPageV2() {
-  const { data, isLoading } = useThreads();
+  const [search, setSearch] = useState("");
+  const { data, isLoading } = useThreads(search);
   const threads = data?.items ?? [];
 
   // ?thread= lets the command palette (and any future deep link) jump straight to a
@@ -59,6 +60,7 @@ export default function InboxPageV2() {
         isLoading={isLoading}
         selectedThreadId={selectedThreadId}
         onSelect={handleSelect}
+        onSearchChange={setSearch}
         className={cn(selectedThreadId !== null && "hidden md:flex")}
       />
       <section className={cn("min-w-0 flex-1", selectedThreadId === null && "hidden md:block")}>

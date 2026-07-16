@@ -12,7 +12,10 @@ public class SmsHistoryDto
     /// RenderedBody — null while still Queued/Sending and not yet rendered.
     public string? Text { get; set; }
     public string Status { get; set; } = default!;
-    public DateTime? ScheduledTime { get; set; }
+
+    /// Falls back to CreatedAt for a direct (immediate) send — same `scheduledAt ??
+    /// createdAt` anchor MessageExpiryCalculator already uses, so this is never null.
+    public DateTime ScheduledTime { get; set; }
 
     /// Populated once P9-07 adds OutboundMessage.ExpiresAt.
     public DateTime? ExpiryTime { get; set; }

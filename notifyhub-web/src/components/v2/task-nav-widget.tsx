@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ClipboardList } from "lucide-react";
 
@@ -21,11 +21,34 @@ export function TaskNavWidget() {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
 
-  const { data } = useTasks({ assignedStaffId: user?.id, isActive: true });
-  const myOpenTasks = useMemo(
-    () => (data?.items ?? []).filter((t) => OPEN_STATUSES.includes(t.status)),
-    [data],
-  );
+  // Filtered server-side (`statuses`, comma-joined into the `status` query param) rather
+  // than fetched-then-filtered client-side: a user with more "isActive" tasks than
+  // `pageSize` (e.g. lots of historical Completed/Cancelled rows, since completing a task
+  // never clears IsActive) used to have real Open tasks silently pushed off the fetched
+  // page by older, already-terminal ones sorted first by DueAt — the badge would then
+  // undercount or show nothing even though the assignment was correct. `totalCount` (not
+  // `items.length`, which is still capped at `pageSize`) is the true count for the badge
+  // number; `items` (already status-filtered) is only used for the popover's own slice(0, 8).
+  const { data } = useTasks({ assignedStaffId: user?.id, isActive: true, statuses: OPEN_STATUSES });
+  const myOpenTasks = data?.items ?? [];
+  const myOpenTaskCount = data?.totalCount ?? 0;
+
+  // Brief pulse when a live task-board update (see useInboxHub's taskAssignmentChanged
+  // handler) raises this count while the user is already looking at the app — not on
+  // the initial page load, which would otherwise blink on every mount.
+  const prevCountRef = useRef<number | null>(null);
+  const [justUpdated, setJustUpdated] = useState(false);
+
+  useEffect(() => {
+    if (!data) return;
+    if (prevCountRef.current !== null && myOpenTaskCount > prevCountRef.current) {
+      setJustUpdated(true);
+      const timer = setTimeout(() => setJustUpdated(false), 2000);
+      prevCountRef.current = myOpenTaskCount;
+      return () => clearTimeout(timer);
+    }
+    prevCountRef.current = myOpenTaskCount;
+  }, [data, myOpenTaskCount]);
 
   const handleSelect = (taskId: number) => {
     setOpen(false);
@@ -37,10 +60,15 @@ export function TaskNavWidget() {
       <PopoverTrigger asChild>
         <Button variant="outline" size="icon" className="relative">
           <ClipboardList className="size-4" />
-          {myOpenTasks.length > 0 && (
-            <Badge className="absolute -right-1.5 -top-1.5 h-4 min-w-4 rounded-full px-1 text-2xs">
-              {myOpenTasks.length}
-            </Badge>
+          {myOpenTaskCount > 0 && (
+            <>
+              {justUpdated && (
+                <span className="absolute -right-1.5 -top-1.5 h-4 min-w-4 animate-ping rounded-full bg-primary opacity-75" />
+              )}
+              <Badge className="absolute -right-1.5 -top-1.5 h-4 min-w-4 rounded-full px-1 text-2xs">
+                {myOpenTaskCount}
+              </Badge>
+            </>
           )}
         </Button>
       </PopoverTrigger>

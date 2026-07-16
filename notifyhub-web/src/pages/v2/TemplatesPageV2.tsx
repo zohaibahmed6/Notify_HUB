@@ -15,7 +15,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { StatusBadge } from "@/components/v2/status-badge";
-import { TRIGGER_TYPE_CONFIG } from "@/components/v2/status-config";
+import { COMMUNICATION_MODE_CONFIG } from "@/components/v2/status-config";
 import { MergeFieldText } from "@/components/v2/merge-field-text";
 import { EmptyState } from "@/components/v2/empty-state";
 import { EMPTY_TEMPLATE_FORM, TemplateForm, type TemplateFormValues } from "@/components/v2/template-form";
@@ -88,11 +88,12 @@ export default function TemplatesPageV2() {
       const created = await createTemplate.mutateAsync({
         name: values.name,
         body: values.body,
-        triggerType: values.triggerType,
         // OffsetHours is no longer a UI-editable field (P9-01e — dead once P9-08's
         // Reminder SMS engine ships) but the backend column/request field is still
         // required (avoids a breaking migration), so a fixed placeholder is sent.
         offsetHours: LEGACY_OFFSET_HOURS_PLACEHOLDER,
+        communicationMode: values.communicationMode,
+        bookmarkIds: values.bookmarkIds,
       });
       if (!values.isActive) {
         await updateTemplate.mutateAsync({ id: created.id, isActive: false });
@@ -110,8 +111,9 @@ export default function TemplatesPageV2() {
         id,
         name: values.name,
         body: values.body,
-        triggerType: values.triggerType,
         isActive: values.isActive,
+        communicationMode: values.communicationMode,
+        bookmarkIds: values.bookmarkIds,
       });
       toast.success("Template updated");
       setIsEditing(false);
@@ -168,7 +170,6 @@ export default function TemplatesPageV2() {
           ) : (
             <ul>
               {templates.map((template) => {
-                const trigger = TRIGGER_TYPE_CONFIG[template.triggerType];
                 const isSelected = selected === template.id;
                 return (
                   <li key={template.id}>
@@ -184,7 +185,7 @@ export default function TemplatesPageV2() {
                         {template.name}
                       </span>
                       <span className="flex items-center gap-1.5">
-                        <StatusBadge {...trigger} size="xs" />
+                        <StatusBadge {...COMMUNICATION_MODE_CONFIG[template.communicationMode]} size="xs" />
                         {!template.isActive && (
                           <span className="rounded-full border border-dashed px-1.5 text-2xs text-muted-foreground">Inactive</span>
                         )}
@@ -230,8 +231,9 @@ export default function TemplatesPageV2() {
               initial={{
                 name: selectedTemplate.name,
                 body: selectedTemplate.body,
-                triggerType: selectedTemplate.triggerType,
                 isActive: selectedTemplate.isActive,
+                communicationMode: selectedTemplate.communicationMode,
+                bookmarkIds: selectedTemplate.bookmarkIds,
               }}
               submitLabel="Save"
               isSubmitting={updateTemplate.isPending}
@@ -245,7 +247,7 @@ export default function TemplatesPageV2() {
               <div>
                 <h2 className="text-lg font-semibold">{selectedTemplate.name}</h2>
                 <div className="mt-1 flex items-center gap-2">
-                  <StatusBadge {...TRIGGER_TYPE_CONFIG[selectedTemplate.triggerType]} />
+                  <StatusBadge {...COMMUNICATION_MODE_CONFIG[selectedTemplate.communicationMode]} />
                   {!selectedTemplate.isActive && (
                     <span className="rounded-full border border-dashed px-2 py-0.5 text-2xs text-muted-foreground">Inactive</span>
                   )}

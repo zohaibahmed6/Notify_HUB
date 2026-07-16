@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using NotifyHub.Api.Common;
 using NotifyHub.Api.Threads.Dtos;
 using NotifyHub.Domain.Entities;
 using NotifyHub.Domain.Enums;
@@ -372,7 +373,6 @@ public class ThreadsControllerTests(CustomWebApplicationFactory factory) : IClas
             {
                 Name = "Preview test template",
                 Body = "Hi {{patient_name}}, see you at {{appointment_time}}.",
-                TriggerType = TriggerType.AppointmentReminder,
                 OffsetHours = 48,
             };
             db.MessageTemplates.Add(template);
@@ -404,7 +404,6 @@ public class ThreadsControllerTests(CustomWebApplicationFactory factory) : IClas
             {
                 Name = "Preview test template 2",
                 Body = "See you at {{appointment_time}}.",
-                TriggerType = TriggerType.AppointmentReminder,
                 OffsetHours = 48,
             };
             db.MessageTemplates.Add(template);
@@ -438,7 +437,6 @@ public class ThreadsControllerTests(CustomWebApplicationFactory factory) : IClas
             {
                 Name = "Preview test template 3",
                 Body = "Hi {{patient_name}}, see you at {{appointment_time}}.",
-                TriggerType = TriggerType.AppointmentReminder,
                 OffsetHours = 48,
             };
             db.MessageTemplates.Add(template);
@@ -456,14 +454,46 @@ public class ThreadsControllerTests(CustomWebApplicationFactory factory) : IClas
         Assert.DoesNotContain(scheduledAt.ToString("u"), body.RenderedBody);
     }
 
-    private async Task<ConversationThread> CreateThreadAsync(string phone, bool patientOptedOut = false, int initialUnreadCount = 0)
+    [Fact]
+    public async Task List_SearchFiltersByPatientName_AcrossAllThreads_NotJustTheLoadedPage()
+    {
+        var target = await CreateThreadAsync("+19990000301", patientName: "Zzyzx Quorlax");
+        await CreateThreadAsync("+19990000302", patientName: "Completely Different Person");
+
+        var (client, _) = await _client.AsStaffAsync();
+        var response = await client.GetAsync("/api/threads?search=Zzyzx");
+        response.EnsureSuccessStatusCode();
+
+        var result = await response.Content.ReadFromJsonAsync<PagedResult<ThreadDto>>();
+
+        Assert.NotNull(result);
+        Assert.Contains(result!.Items, t => t.Id == target.Id);
+        Assert.DoesNotContain(result.Items, t => t.PatientName == "Completely Different Person");
+    }
+
+    [Fact]
+    public async Task List_SearchMatchesAssignedStaffUsername()
+    {
+        var thread = await CreateThreadAsync("+19990000303", patientName: "Unrelated Patient Name");
+        var (staffClient, staffId) = await _client.AsStaffAsync();
+        await staffClient.PostAsync($"/api/threads/{thread.Id}/assign", JsonContent.Create(new { }));
+
+        var response = await staffClient.GetAsync($"/api/threads?search={CustomWebApplicationFactory.StaffUsername}");
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<PagedResult<ThreadDto>>();
+
+        Assert.NotNull(result);
+        Assert.Contains(result!.Items, t => t.Id == thread.Id && t.AssignedStaffId == staffId);
+    }
+
+    private async Task<ConversationThread> CreateThreadAsync(string phone, bool patientOptedOut = false, int initialUnreadCount = 0, string? patientName = null)
     {
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
 
         var patient = new Patient
         {
-            Name = $"Test Patient {phone}",
+            Name = patientName ?? $"Test Patient {phone}",
             Phone = phone,
             OptOutAt = patientOptedOut ? DateTime.UtcNow : null,
         };
