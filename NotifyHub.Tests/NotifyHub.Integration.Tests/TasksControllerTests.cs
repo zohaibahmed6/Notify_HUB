@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Net;
 using System.Net.Http.Json;
 using Microsoft.EntityFrameworkCore;
@@ -22,7 +23,8 @@ public class TasksControllerTests(CustomWebApplicationFactory factory) : IClassF
     {
         var (client, staffId) = await _client.AsStaffAsync();
         var dueAt = new DateTime(2026, 1, 1, 9, 0, 0, DateTimeKind.Utc);
-        var task = await CreateTaskAsync("+19990001001", staffId, dueAt, isRecurring: true, recurrenceIntervalDays: 7);
+        var task = await CreateTaskAsync(
+            "+19990001001", staffId, dueAt, isRecurring: true, recurrenceIntervalDays: 7, description: "Refill prescription");
 
         var response = await client.PatchAsJsonAsync($"/api/tasks/{task.Id}", new { status = "Completed" });
 
@@ -39,7 +41,13 @@ public class TasksControllerTests(CustomWebApplicationFactory factory) : IClassF
         Assert.Equal(2, next.OccurrenceCount);
         Assert.Equal(staffId, next.OriginalOwnerId);
         Assert.Equal(staffId, next.AssignedStaffId);
+        Assert.NotNull(next.AssignedAt);
+        Assert.True(next.AssignedAt > DateTime.UtcNow.AddMinutes(-1));
         Assert.Equal(NotifyHubTaskStatus.Open, next.Status);
+        // Description carries over (this session's fix) so description-filtered views
+        // keep tracking the series across recurrences instead of losing it after the
+        // first completion.
+        Assert.Equal("Refill prescription", next.Description);
     }
 
     [Fact]
@@ -126,6 +134,8 @@ public class TasksControllerTests(CustomWebApplicationFactory factory) : IClassF
 
         var updated = await db.Tasks.SingleAsync(t => t.Id == task.Id);
         Assert.Equal(adminId, updated.AssignedStaffId);
+        Assert.NotNull(updated.AssignedAt);
+        Assert.True(updated.AssignedAt > DateTime.UtcNow.AddMinutes(-1));
         Assert.Equal(NotifyHubTaskStatus.Open, updated.Status); // untouched by forwarding
 
         var audit = await db.AuditLogs.SingleAsync(a => a.EntityType == "TaskItem" && a.EntityId == task.Id && a.Action == "forward");
@@ -290,11 +300,74 @@ public class TasksControllerTests(CustomWebApplicationFactory factory) : IClassF
         listResponse.EnsureSuccessStatusCode();
         var listResult = await listResponse.Content.ReadFromJsonAsync<PagedResult<TaskDto>>();
         Assert.Contains(listResult!.Items, t => t.Id == task.Id && t.PatientName == "Test Patient +19990001013");
+        var listed = listResult.Items.Single(t => t.Id == task.Id);
+        Assert.Equal("Staff", listed.AssignedStaffRole);
+        Assert.Equal("Staff", listed.OriginalOwnerRole);
 
         var detailResponse = await client.GetAsync($"/api/tasks/{task.Id}");
         detailResponse.EnsureSuccessStatusCode();
         var detail = await detailResponse.Content.ReadFromJsonAsync<TaskDto>();
         Assert.Equal("Test Patient +19990001013", detail!.PatientName);
+        Assert.Equal("Staff", detail.AssignedStaffRole);
+        Assert.Equal("Staff", detail.OriginalOwnerRole);
+    }
+
+    [Fact]
+    public async Task Update_ChangingAssignedStaffId_StampsAssignedAt()
+    {
+        var (client, staffId) = await _client.AsStaffAsync();
+        var seededAssignedAt = DateTime.UtcNow.AddDays(-3);
+        var task = await CreateTaskAsync("+19990001021", staffId, DateTime.UtcNow.AddDays(1), assignedAt: seededAssignedAt);
+
+        var (_, adminId) = await factory.CreateClient().AsAdminAsync();
+        var response = await client.PatchAsJsonAsync($"/api/tasks/{task.Id}", new { assignedStaffId = adminId });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
+        var updated = await db.Tasks.SingleAsync(t => t.Id == task.Id);
+
+        Assert.Equal(adminId, updated.AssignedStaffId);
+        Assert.True(updated.AssignedAt > DateTime.UtcNow.AddMinutes(-1));
+    }
+
+    [Fact]
+    public async Task Update_ResendingSameAssignedStaffId_DoesNotBumpAssignedAt()
+    {
+        var (client, staffId) = await _client.AsStaffAsync();
+        var seededAssignedAt = DateTime.UtcNow.AddDays(-3);
+        var task = await CreateTaskAsync("+19990001022", staffId, DateTime.UtcNow.AddDays(1), assignedAt: seededAssignedAt);
+
+        // Same assignedStaffId the task already has — a no-op re-send, not a real reassignment.
+        var response = await client.PatchAsJsonAsync($"/api/tasks/{task.Id}", new { assignedStaffId = staffId });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
+        var updated = await db.Tasks.SingleAsync(t => t.Id == task.Id);
+
+        Assert.Equal(seededAssignedAt, updated.AssignedAt);
+    }
+
+    [Fact]
+    public async Task List_SortByAssignedAtDesc_OrdersByMostRecentlyAssignedFirst()
+    {
+        var (client, staffId) = await _client.AsStaffAsync();
+        var due = DateTime.UtcNow.AddDays(1);
+        var older = await CreateTaskAsync("+19990001023", staffId, due, assignedAt: DateTime.UtcNow.AddDays(-2));
+        var newer = await CreateTaskAsync("+19990001024", staffId, due, assignedAt: DateTime.UtcNow.AddDays(-1));
+        var neverAssigned = await CreateTaskAsync("+19990001025", staffId, due, assignedAt: null);
+
+        var response = await client.GetAsync("/api/tasks?sortBy=assignedAt&sortDir=desc&pageSize=100");
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<PagedResult<TaskDto>>();
+
+        var ids = result!.Items.Select(t => t.Id).ToList();
+        Assert.True(ids.IndexOf(newer.Id) < ids.IndexOf(older.Id));
+        // Null AssignedAt (never stamped) sorts last — nothing is known about when it was assigned.
+        Assert.True(ids.IndexOf(older.Id) < ids.IndexOf(neverAssigned.Id));
     }
 
     [Fact]
@@ -371,7 +444,9 @@ public class TasksControllerTests(CustomWebApplicationFactory factory) : IClassF
         int? recurrenceMaxOccurrences = null,
         NotifyHubTaskStatus status = NotifyHubTaskStatus.Open,
         TaskPriority priority = TaskPriority.Medium,
-        long? assignedStaffId = -1)
+        long? assignedStaffId = -1,
+        string? description = null,
+        DateTime? assignedAt = null)
     {
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
@@ -393,11 +468,13 @@ public class TasksControllerTests(CustomWebApplicationFactory factory) : IClassF
             DueAt = dueAt,
             Status = status,
             AssignedStaffId = assignedStaffId == -1 ? ownerId : assignedStaffId,
+            AssignedAt = assignedAt,
             OriginalOwnerId = ownerId,
             IsRecurring = isRecurring,
             RecurrenceIntervalDays = recurrenceIntervalDays,
             RecurrenceMaxOccurrences = recurrenceMaxOccurrences,
             OccurrenceCount = 1,
+            Description = description,
         };
         db.Tasks.Add(task);
         await db.SaveChangesAsync();

@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { useTask } from "@/hooks/useTasks";
+import { formatUserLabel } from "@/lib/userDisplay";
 import { PriorityBadge } from "@/components/PriorityBadge";
 import { TaskStatusBadge } from "@/components/TaskStatusBadge";
 
@@ -31,7 +32,9 @@ export function TaskDetailPanel({ taskId }: { taskId: number }) {
       </div>
       <div>Due {new Date(task.dueAt).toLocaleString()}</div>
       <div className="text-muted-foreground">
-        {task.assignedStaffUsername ? `Assigned to ${task.assignedStaffUsername}` : "Unassigned"}
+        {task.assignedStaffUsername
+          ? `Assigned to ${formatUserLabel({ fullName: task.assignedStaffFullName, username: task.assignedStaffUsername, role: task.assignedStaffRole })}`
+          : "Unassigned"}
       </div>
       {task.isRecurring && (
         <div className="text-muted-foreground">

@@ -4,6 +4,7 @@ import { ClipboardList } from "lucide-react";
 
 import { useAuth } from "@/context/AuthContext";
 import { useTasks } from "@/hooks/useTasks";
+import { parseUtc } from "@/lib/dateUtc";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -28,8 +29,15 @@ export function TaskNavWidget() {
   // page by older, already-terminal ones sorted first by DueAt — the badge would then
   // undercount or show nothing even though the assignment was correct. `totalCount` (not
   // `items.length`, which is still capped at `pageSize`) is the true count for the badge
-  // number; `items` (already status-filtered) is only used for the popover's own slice(0, 8).
-  const { data } = useTasks({ assignedStaffId: user?.id, isActive: true, statuses: OPEN_STATUSES });
+  // number; `items` (already status-filtered) is rendered in full in the popover's own
+  // scrollable list below (max-h-80 overflow-y-auto), not truncated to a handful of rows.
+  const { data } = useTasks({
+    assignedStaffId: user?.id,
+    isActive: true,
+    statuses: OPEN_STATUSES,
+    sortBy: "assignedAt",
+    sortDir: "desc",
+  });
   const myOpenTasks = data?.items ?? [];
   const myOpenTaskCount = data?.totalCount ?? 0;
 
@@ -78,18 +86,21 @@ export function TaskNavWidget() {
           <p className="p-3 text-sm text-muted-foreground">Nothing assigned to you right now.</p>
         ) : (
           <ul className="max-h-80 overflow-y-auto">
-            {myOpenTasks.slice(0, 8).map((task) => (
+            {myOpenTasks.map((task) => (
               <li key={task.id}>
                 <button
                   type="button"
                   onClick={() => handleSelect(task.id)}
                   className="flex w-full flex-col items-start gap-1 border-b px-3 py-2 text-left text-sm last:border-b-0 hover:bg-accent"
                 >
-                  <span className="flex items-center gap-1.5">
+                  <span className="flex w-full items-center gap-1.5">
                     <StatusBadge {...TASK_PRIORITY_CONFIG[task.priority]} size="xs" />
-                    <span className="truncate font-medium">{task.description ?? `Task #${task.id}`}</span>
+                    <span className="truncate font-medium">{task.patientName}</span>
                   </span>
-                  <span className="text-xs text-muted-foreground">Due {new Date(task.dueAt).toLocaleString()}</span>
+                  {task.description && (
+                    <span className="w-full truncate text-xs text-muted-foreground">{task.description}</span>
+                  )}
+                  <span className="text-xs text-muted-foreground">Due {parseUtc(task.dueAt)?.toLocaleString()}</span>
                 </button>
               </li>
             ))}

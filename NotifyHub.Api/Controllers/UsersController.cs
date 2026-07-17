@@ -129,6 +129,13 @@ public class UsersController(NotifyHubDbContext db, IPasswordHasher<User> passwo
                 title: $"Invalid status '{request.Status}'. Valid values: {string.Join(", ", Enum.GetNames<UserStatus>())}.");
         }
 
+        if (user.Role == UserRole.Admin && newStatus != UserStatus.Active)
+        {
+            return Problem(
+                statusCode: StatusCodes.Status400BadRequest,
+                title: "Admin users cannot be transitioned to Inactive or OnLeave.");
+        }
+
         // P9-12: both required together when marking OnLeave.
         if (newStatus == UserStatus.OnLeave && (request.LeaveFrom is null || request.LeaveTo is null))
         {
@@ -169,6 +176,7 @@ public class UsersController(NotifyHubDbContext db, IPasswordHasher<User> passwo
                 foreach (var task in openTasks)
                 {
                     task.AssignedStaffId = forwardedToAdminId;
+                    task.AssignedAt = DateTime.UtcNow;
                     AuditLogger.Add(db, actor: "system", action: "forward", entityType: "TaskItem", entityId: task.Id,
                         detail: $"Task auto-forwarded from {user.Username} to {forwardedToAdmin!.Username} ({user.Username} marked {newStatus})");
                     forwardedTaskIds.Add(task.Id);

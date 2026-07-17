@@ -227,7 +227,7 @@ public class RemindersTests(CustomWebApplicationFactory factory) : IClassFixture
         var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
 
         var gatewayClient = factory.Services.GetRequiredService<IHttpClientFactory>().CreateClient("self");
-        var dispatcher = new MessageDispatcher(db, gatewayClient, NullLogger<MessageDispatcher>.Instance, new SettingsService(db));
+        var dispatcher = new MessageDispatcher(db, gatewayClient, NullLogger<MessageDispatcher>.Instance, new SettingsService(db), new MessageBodyRenderer(db));
 
         // Drain the factory's seeded performance-test backlog first (Seed:PerformanceMessageCount
         // in CustomWebApplicationFactory) — otherwise those older-CreatedAt rows fill the

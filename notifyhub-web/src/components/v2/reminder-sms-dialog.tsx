@@ -47,6 +47,13 @@ export function ReminderSmsDialog({
   // handleEventTimeCommit below.
   const lastEventTimeTextRef = useRef<string | null>(null);
 
+  // Rule 9/10: minimum selectable Event Time = Current Time + Reminder Offset. Enforced
+  // for real server-side (rule 8/31 — this is a UX aid, not the source of truth); the
+  // DateTimePicker's minDate/floor logic mirrors this same value for both its day-level
+  // block and its clock-face time-of-day floor.
+  const reminderOffsetMinutes = settings?.reminderOffsetMinutes ?? 1440;
+  const minEventTime = new Date(Date.now() + reminderOffsetMinutes * 60_000);
+
   useEffect(() => {
     if (!open) {
       setTemplateId("");
@@ -140,14 +147,6 @@ export function ReminderSmsDialog({
     lastEventTimeTextRef.current = formatted;
   };
 
-  // Rule 9/10: minimum selectable Event Time = Current Time + Reminder Offset. Enforced
-  // for real server-side (rule 8/31 — this is a UX aid, not the source of truth); the
-  // DateTimePicker's minDate only disables whole days before this instant (P9-03's
-  // documented day-granularity simplification), so the submit-time check below is what
-  // actually blocks a same-day-but-too-early pick.
-  const reminderOffsetMinutes = settings?.reminderOffsetMinutes ?? 1440;
-  const minEventTime = new Date(Date.now() + reminderOffsetMinutes * 60_000);
-
   const handleSubmit = async () => {
     if (!templateId) {
       toast.error("Pick a template");
@@ -232,6 +231,7 @@ export function ReminderSmsDialog({
               onChange={setEventTime}
               onCommit={handleEventTimeCommit}
               minDate={minEventTime}
+              enforceMinTime
             />
             <p className="text-xs text-muted-foreground">
               Replaces {"{{appointment_time}}"} (or a previously-picked time) in the message

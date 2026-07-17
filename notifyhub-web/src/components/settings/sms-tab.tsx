@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { useSettings, useUpdateSettingsMutation } from "@/hooks/useSettings";
 import { useTemplates } from "@/hooks/useTemplates";
 import { errorMessage } from "@/lib/errorMessage";
+import { localTimeToUtc, utcTimeToLocal } from "@/lib/dateUtc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -31,8 +32,8 @@ export function SmsTab() {
   useEffect(() => {
     if (!settings) return;
     setQuietHoursEnabled(settings.quietHoursEnabled);
-    setQuietHoursStart(settings.quietHoursStart);
-    setQuietHoursEnd(settings.quietHoursEnd);
+    setQuietHoursStart(utcTimeToLocal(settings.quietHoursStart));
+    setQuietHoursEnd(utcTimeToLocal(settings.quietHoursEnd));
     setRateLimitEnabled(settings.rateLimitEnabled);
     setRateLimitMaxMessages(String(settings.rateLimitMaxMessages));
     setRateLimitWindowHours(String(settings.rateLimitWindowHours));
@@ -43,7 +44,11 @@ export function SmsTab() {
 
   const handleSaveQuietHours = async () => {
     try {
-      await updateSettings.mutateAsync({ quietHoursEnabled, quietHoursStart, quietHoursEnd });
+      await updateSettings.mutateAsync({
+        quietHoursEnabled,
+        quietHoursStart: localTimeToUtc(quietHoursStart),
+        quietHoursEnd: localTimeToUtc(quietHoursEnd),
+      });
       toast.success("Quiet hours saved");
     } catch (error) {
       toast.error(errorMessage(error, "Save failed"));
@@ -91,7 +96,7 @@ export function SmsTab() {
         <CardHeader>
           <CardTitle className="text-base">Quiet Hours</CardTitle>
           <CardDescription>
-            While enabled, the dispatcher pauses sending during this UTC window. Messages stay
+            While enabled, the dispatcher pauses sending during this window. Messages stay
             queued and go out once the window ends.
           </CardDescription>
         </CardHeader>
@@ -107,11 +112,11 @@ export function SmsTab() {
           </label>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label htmlFor="quiet-start">Start (UTC)</Label>
+              <Label htmlFor="quiet-start">Start</Label>
               <Input id="quiet-start" type="time" value={quietHoursStart} onChange={(e) => setQuietHoursStart(e.target.value)} />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="quiet-end">End (UTC)</Label>
+              <Label htmlFor="quiet-end">End</Label>
               <Input id="quiet-end" type="time" value={quietHoursEnd} onChange={(e) => setQuietHoursEnd(e.target.value)} />
             </div>
           </div>

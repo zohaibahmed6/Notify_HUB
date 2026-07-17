@@ -10,7 +10,13 @@ public class TaskDto
     public string Status { get; set; } = default!;
     public long? AssignedStaffId { get; set; }
     public string? AssignedStaffUsername { get; set; }
+    public string? AssignedStaffFullName { get; set; }
+    public string? AssignedStaffRole { get; set; }
+    public DateTime? AssignedAt { get; set; }
     public long OriginalOwnerId { get; set; }
+    public string OriginalOwnerUsername { get; set; } = default!;
+    public string? OriginalOwnerFullName { get; set; }
+    public string OriginalOwnerRole { get; set; } = default!;
     public bool IsRecurring { get; set; }
     public int? RecurrenceIntervalDays { get; set; }
     public DateTime? RecurrenceEndDate { get; set; }

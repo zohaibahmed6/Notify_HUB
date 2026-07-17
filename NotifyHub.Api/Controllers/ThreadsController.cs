@@ -80,6 +80,8 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
             PatientOptedOut = dto.PatientOptedOut,
             AssignedStaffId = dto.AssignedStaffId,
             AssignedStaffUsername = dto.AssignedStaffUsername,
+            AssignedStaffFullName = dto.AssignedStaffFullName,
+            AssignedStaffRole = dto.AssignedStaffRole,
             UnreadCount = dto.UnreadCount,
             Messages = messages,
         });
@@ -368,11 +370,13 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
             naturalAssigneeId = thread.AssignedStaffId ?? defaultProviderId ?? callerId;
         }
 
-        // P9-10 rule 1: if the natural assignee is Inactive/OnLeave, check their forwarding
-        // rule before falling back to Admin (existing behavior, unchanged when no rule
-        // applies). OriginalOwnerId always stays the natural assignee — only
-        // AssignedStaffId diverges when forwarding kicks in, same convention as the
-        // existing auto-forward-on-deactivation path (UsersController).
+        // P9-10, rule 1 semantics changed in a later session (see docs/DECISIONS.md): a
+        // matching forwarding rule now applies unconditionally, not just while the natural
+        // assignee is Inactive/OnLeave — falls back to Admin only when neither a rule nor
+        // the natural assignee's own Active status applies. OriginalOwnerId always stays
+        // the natural assignee — only AssignedStaffId diverges when forwarding kicks in,
+        // same convention as the existing auto-forward-on-deactivation path
+        // (UsersController).
         var assigneeId = await FallbackUserResolver.ResolveNewTaskAssigneeAsync(db, naturalAssigneeId, ct);
 
         // §1: auto-populate Description from the thread's most recent message (inbound or
@@ -388,6 +392,7 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
             DueAt = dueAt,
             Status = NotifyHubTaskStatus.Open,
             AssignedStaffId = assigneeId,
+            AssignedAt = now,
             OriginalOwnerId = naturalAssigneeId,
             IsRecurring = request.IsRecurring,
             RecurrenceIntervalDays = request.RecurrenceIntervalDays,
@@ -409,7 +414,7 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
                 .Where(u => u.Id == naturalAssigneeId || u.Id == assigneeId)
                 .ToDictionaryAsync(u => u.Id, u => u.Username, ct);
             AuditLogger.Add(db, actor: "system", action: "forward", entityType: "TaskItem", entityId: task.Id,
-                detail: $"Task auto-forwarded from {forwardUsernames.GetValueOrDefault(naturalAssigneeId, naturalAssigneeId.ToString())} to {forwardUsernames.GetValueOrDefault(assigneeId, assigneeId.ToString())} (natural assignee inactive)");
+                detail: $"Task auto-forwarded from {forwardUsernames.GetValueOrDefault(naturalAssigneeId, naturalAssigneeId.ToString())} to {forwardUsernames.GetValueOrDefault(assigneeId, assigneeId.ToString())} (forwarding rule applied)");
             await db.SaveChangesAsync(ct);
         }
 
@@ -420,7 +425,8 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
         await inboxHub.Clients.All.SendAsync("taskAssignmentChanged", new { taskId = task.Id, assignedStaffId = assigneeId }, ct);
 
         var assignee = await db.Users.FindAsync([assigneeId], ct);
-        return Created($"/api/tasks/{task.Id}", ToTaskDto(task, assignee?.Username));
+        var originalOwner = naturalAssigneeId == assigneeId ? assignee : await db.Users.FindAsync([naturalAssigneeId], ct);
+        return Created($"/api/tasks/{task.Id}", ToTaskDto(task, assignee, originalOwner));
     }
 
     /// P9-08: Reminder SMS creation. Generic event-based reminder, no Appointment coupling
@@ -597,10 +603,12 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
         PatientOptedOut = t.Patient.OptOutAt is not null,
         AssignedStaffId = t.AssignedStaffId,
         AssignedStaffUsername = t.AssignedStaff?.Username,
+        AssignedStaffFullName = t.AssignedStaff?.FullName,
+        AssignedStaffRole = t.AssignedStaff?.Role.ToString(),
         UnreadCount = t.UnreadCount,
     };
 
-    private static TaskDto ToTaskDto(TaskItem t, string? assigneeUsername) => new()
+    private static TaskDto ToTaskDto(TaskItem t, User? assignee, User? originalOwner) => new()
     {
         Id = t.Id,
         ThreadId = t.ThreadId,
@@ -608,8 +616,13 @@ public class ThreadsController(NotifyHubDbContext db, IHubContext<InboxHub> inbo
         DueAt = t.DueAt,
         Status = t.Status.ToString(),
         AssignedStaffId = t.AssignedStaffId,
-        AssignedStaffUsername = assigneeUsername,
+        AssignedStaffUsername = assignee?.Username,
+        AssignedStaffFullName = assignee?.FullName,
+        AssignedStaffRole = assignee?.Role.ToString(),
         OriginalOwnerId = t.OriginalOwnerId,
+        OriginalOwnerUsername = originalOwner?.Username ?? string.Empty,
+        OriginalOwnerFullName = originalOwner?.FullName,
+        OriginalOwnerRole = originalOwner?.Role.ToString() ?? string.Empty,
         IsRecurring = t.IsRecurring,
         RecurrenceIntervalDays = t.RecurrenceIntervalDays,
         RecurrenceEndDate = t.RecurrenceEndDate,

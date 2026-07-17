@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TaskAssignmentFields } from "@/components/tasks/TaskAssignmentFields";
 import { DateTimePicker } from "@/components/v2/date-time-picker";
+import { defaultDueAt, formatDateTimeLocal } from "@/lib/taskDueDateDefaults";
 import { TASK_TYPES, type TaskPriority, type TaskType } from "@/types/tasks";
 
 const PRIORITIES: TaskPriority[] = ["Low", "Medium", "High", "Urgent"];
@@ -18,19 +19,24 @@ const PRIORITIES: TaskPriority[] = ["Low", "Medium", "High", "Urgent"];
 export function CreateTaskForm({
   threadId,
   threadAssignedStaffId,
+  lastInboundMessageBody,
   open,
   onOpenChange,
 }: {
   threadId: number;
   threadAssignedStaffId: number | null | undefined;
+  lastInboundMessageBody?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
   const [assignedStaffId, setAssignedStaffId] = useState<number | "">("");
   const [priority, setPriority] = useState<TaskPriority>("Medium");
   // Date required, time optional (defaults 00:00) — P9-01d, via the shared
-  // DateTimePicker (P9-03).
-  const [dueAt, setDueAt] = useState("");
+  // DateTimePicker (P9-03). FR-008: pre-filled with the priority-based suggestion,
+  // recomputed as Priority changes until the user edits Due Date themselves
+  // (dueAtTouched) — see docs/DECISIONS.md.
+  const [dueAt, setDueAt] = useState(() => formatDateTimeLocal(defaultDueAt("Medium")));
+  const [dueAtTouched, setDueAtTouched] = useState(false);
   const [taskType, setTaskType] = useState<TaskType>("General");
   const [description, setDescription] = useState("");
 
@@ -45,9 +51,28 @@ export function CreateTaskForm({
 
   // Reset the assignee pick each time the dialog is reopened so it re-derives from the
   // thread's current assignee/default provider rather than sticking to a stale choice.
+  // Same reasoning for Due Date/Priority: this component stays mounted across dialog
+  // open/closes, so without this a reopened dialog would show a stale suggestion left
+  // over from whenever it was last opened rather than a current one.
   useEffect(() => {
-    if (open) setAssignedStaffId("");
+    if (open) {
+      setAssignedStaffId("");
+      setPriority("Medium");
+      setDueAt(formatDateTimeLocal(defaultDueAt("Medium")));
+      setDueAtTouched(false);
+      setDescription(lastInboundMessageBody ?? "");
+    }
   }, [open]);
+
+  const handlePriorityChange = (value: TaskPriority) => {
+    setPriority(value);
+    if (!dueAtTouched) setDueAt(formatDateTimeLocal(defaultDueAt(value)));
+  };
+
+  const handleDueAtChange = (value: string) => {
+    setDueAt(value);
+    setDueAtTouched(true);
+  };
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -99,7 +124,7 @@ export function CreateTaskForm({
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div className="space-y-1.5">
               <Label htmlFor="task-priority">Priority</Label>
-              <Select value={priority} onValueChange={(v) => setPriority(v as TaskPriority)}>
+              <Select value={priority} onValueChange={(v) => handlePriorityChange(v as TaskPriority)}>
                 <SelectTrigger id="task-priority">
                   <SelectValue />
                 </SelectTrigger>
@@ -114,7 +139,7 @@ export function CreateTaskForm({
             </div>
             <div className="space-y-1.5 sm:col-span-2">
               <Label htmlFor="task-due">Due date (time optional, defaults 00:00)</Label>
-              <DateTimePicker id="task-due" value={dueAt} onChange={setDueAt} timeRequired={false} />
+              <DateTimePicker id="task-due" value={dueAt} onChange={handleDueAtChange} timeRequired={false} />
             </div>
           </div>
           <div className="space-y-1.5">
@@ -133,7 +158,7 @@ export function CreateTaskForm({
             </Select>
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="task-description">Description (optional — defaults to this thread's last message)</Label>
+            <Label htmlFor="task-description">Description (prefilled from the patient's last reply — edit as needed)</Label>
             <Textarea id="task-description" rows={2} value={description} onChange={(event) => setDescription(event.target.value)} />
           </div>
           <div className="space-y-2 rounded-md border p-3">

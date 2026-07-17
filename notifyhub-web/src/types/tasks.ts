@@ -1,3 +1,5 @@
+import type { UserRole } from "@/types/users";
+
 export type TaskPriority = "Low" | "Medium" | "High" | "Urgent";
 export type TaskStatus = "Open" | "InProgress" | "Completed" | "Escalated" | "Cancelled";
 export type TaskType =
@@ -32,7 +34,13 @@ export interface TaskDto {
   status: TaskStatus;
   assignedStaffId: number | null;
   assignedStaffUsername: string | null;
+  assignedStaffFullName: string | null;
+  assignedStaffRole: UserRole | null;
+  assignedAt: string | null;
   originalOwnerId: number;
+  originalOwnerUsername: string;
+  originalOwnerFullName: string | null;
+  originalOwnerRole: UserRole;
   isRecurring: boolean;
   recurrenceIntervalDays: number | null;
   recurrenceEndDate: string | null;
@@ -70,7 +78,7 @@ export interface ForwardTaskRequest {
   note?: string;
 }
 
-export type TaskSortBy = "dueAt" | "priority" | "status" | "patientName" | "assignedStaffUsername";
+export type TaskSortBy = "dueAt" | "priority" | "status" | "patientName" | "assignedStaffUsername" | "assignedAt";
 export type TaskSortDir = "asc" | "desc";
 
 export interface TaskListFilters {

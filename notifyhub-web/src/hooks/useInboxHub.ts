@@ -37,6 +37,7 @@ export function useInboxHub() {
     connection.on("inboundMessageReceived", (event: InboundMessageEvent) => {
       queryClient.invalidateQueries({ queryKey: ["threads"] });
       queryClient.invalidateQueries({ queryKey: ["thread", event.threadId] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard", "summary"] });
     });
 
     connection.on("threadAssigned", (event: ThreadAssignedEvent) => {

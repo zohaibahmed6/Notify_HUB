@@ -40,7 +40,7 @@ public class MessageExpiryDispatchTests(CustomWebApplicationFactory factory) : I
         await db.SaveChangesAsync();
 
         var gatewayClient = factory.Services.GetRequiredService<IHttpClientFactory>().CreateClient("self");
-        var dispatcher = new MessageDispatcher(db, gatewayClient, NullLogger<MessageDispatcher>.Instance, new SettingsService(db));
+        var dispatcher = new MessageDispatcher(db, gatewayClient, NullLogger<MessageDispatcher>.Instance, new SettingsService(db), new MessageBodyRenderer(db));
 
         await dispatcher.DispatchDueMessagesAsync(CancellationToken.None);
 
@@ -94,7 +94,7 @@ public class MessageExpiryDispatchTests(CustomWebApplicationFactory factory) : I
             await db.SaveChangesAsync();
 
             var gatewayClient = factory.Services.GetRequiredService<IHttpClientFactory>().CreateClient("self");
-            var dispatcher = new MessageDispatcher(db, gatewayClient, NullLogger<MessageDispatcher>.Instance, settingsService);
+            var dispatcher = new MessageDispatcher(db, gatewayClient, NullLogger<MessageDispatcher>.Instance, settingsService, new MessageBodyRenderer(db));
 
             // Batch itself is suppressed by Quiet Hours (0 dispatched)...
             var dispatchedCount = await dispatcher.DispatchDueMessagesAsync(CancellationToken.None);

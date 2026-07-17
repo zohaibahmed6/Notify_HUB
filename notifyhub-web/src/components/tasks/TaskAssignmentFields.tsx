@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useAssignableUsers } from "@/hooks/useUsers";
 import { useSettings } from "@/hooks/useSettings";
+import { formatUserLabel } from "@/lib/userDisplay";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
@@ -46,7 +47,7 @@ export function TaskAssignmentFields({
       <div className="space-y-1.5">
         <Label>Assigned from</Label>
         <div className="flex h-10 items-center rounded-md border border-input bg-muted px-3 text-sm text-muted-foreground">
-          {user?.username} ({user?.role})
+          {user && formatUserLabel(user)}
         </div>
       </div>
       <div className="space-y-1.5">
@@ -58,7 +59,7 @@ export function TaskAssignmentFields({
           <SelectContent>
             {(assignableUsers ?? []).map((u) => (
               <SelectItem key={u.id} value={String(u.id)}>
-                {u.fullName ?? u.username}
+                {formatUserLabel(u)}
               </SelectItem>
             ))}
           </SelectContent>

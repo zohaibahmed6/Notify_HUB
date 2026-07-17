@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TaskAssignmentFields } from "@/components/tasks/TaskAssignmentFields";
 import { DateTimePicker } from "@/components/v2/date-time-picker";
+import { defaultDueAt, formatDateTimeLocal } from "@/lib/taskDueDateDefaults";
 import { TASK_TYPES, type TaskPriority, type TaskType } from "@/types/tasks";
 
 const PRIORITIES: TaskPriority[] = ["Low", "Medium", "High", "Urgent"];
@@ -27,8 +28,11 @@ export function NewTaskForm({ onDone }: { onDone: () => void }) {
   const [assignedStaffId, setAssignedStaffId] = useState<number | "">("");
   const [priority, setPriority] = useState<TaskPriority>("Medium");
   // Date required, time optional (defaults 00:00) — P9-01d, now via the shared
-  // DateTimePicker (P9-03) instead of two native inputs.
-  const [dueAt, setDueAt] = useState("");
+  // DateTimePicker (P9-03) instead of two native inputs. FR-008: pre-filled with the
+  // priority-based suggestion, recomputed as Priority changes until the user edits Due
+  // Date themselves (dueAtTouched) — see docs/DECISIONS.md.
+  const [dueAt, setDueAt] = useState(() => formatDateTimeLocal(defaultDueAt("Medium")));
+  const [dueAtTouched, setDueAtTouched] = useState(false);
   const [taskType, setTaskType] = useState<TaskType>("General");
   const [description, setDescription] = useState("");
 
@@ -43,10 +47,21 @@ export function NewTaskForm({ onDone }: { onDone: () => void }) {
   const createTask = useCreateTaskMutation(threadId === "" ? -1 : threadId);
   const selectedThread = threads.find((t) => t.id === threadId);
 
+  // Deliberately doesn't touch assignedStaffId: it should stay whatever it currently is
+  // (the initial default, or a manual pick) across thread changes, not get re-derived from
+  // the newly-selected thread's owner — see docs/DECISIONS.md.
   const handleThreadChange = (id: number) => {
     setThreadId(id);
-    // Re-derive the assignee default from the newly-selected thread's current owner.
-    setAssignedStaffId("");
+  };
+
+  const handlePriorityChange = (value: TaskPriority) => {
+    setPriority(value);
+    if (!dueAtTouched) setDueAt(formatDateTimeLocal(defaultDueAt(value)));
+  };
+
+  const handleDueAtChange = (value: string) => {
+    setDueAt(value);
+    setDueAtTouched(true);
   };
 
   const handleSubmit = async (event: FormEvent) => {
@@ -116,7 +131,7 @@ export function NewTaskForm({ onDone }: { onDone: () => void }) {
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div className="space-y-1.5">
           <Label htmlFor="new-task-priority">Priority</Label>
-          <Select value={priority} onValueChange={(v) => setPriority(v as TaskPriority)}>
+          <Select value={priority} onValueChange={(v) => handlePriorityChange(v as TaskPriority)}>
             <SelectTrigger id="new-task-priority">
               <SelectValue />
             </SelectTrigger>
@@ -131,7 +146,7 @@ export function NewTaskForm({ onDone }: { onDone: () => void }) {
         </div>
         <div className="space-y-1.5 sm:col-span-2">
           <Label htmlFor="new-task-due">Due date (time optional, defaults 00:00)</Label>
-          <DateTimePicker id="new-task-due" value={dueAt} onChange={setDueAt} timeRequired={false} />
+          <DateTimePicker id="new-task-due" value={dueAt} onChange={handleDueAtChange} timeRequired={false} />
         </div>
       </div>
       <div className="space-y-1.5">

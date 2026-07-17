@@ -3,7 +3,7 @@ import { AlertTriangle, ArrowUp, Clock, Inbox as InboxIcon, MailWarning } from "
 
 import { useAuth } from "@/context/AuthContext";
 import { useDashboardSummary } from "@/hooks/useDashboard";
-import { formatUtcDateTime } from "@/lib/dateUtc";
+import { formatUtcDateTime, formatEmbeddedDates } from "@/lib/dateUtc";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -106,7 +106,7 @@ export default function DashboardPage() {
                       <div className="flex min-w-0 items-center gap-2">
                         <StatusBadge {...(AUDIT_ACTION_CONFIG[entry.action] ?? UNKNOWN_STATUS_CONFIG)} size="xs" />
                         <span className="font-medium">{entry.actor}</span>
-                        <span className="truncate text-muted-foreground">{entry.detail ?? "—"}</span>
+                        <span className="truncate text-muted-foreground">{formatEmbeddedDates(entry.detail)}</span>
                       </div>
                       <span className="shrink-0 text-xs text-muted-foreground">{formatUtcDateTime(entry.occurredAt)}</span>
                     </li>

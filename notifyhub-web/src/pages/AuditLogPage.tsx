@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useAuditLog } from "@/hooks/useAudit";
 import { toDateInputValue, defaultFromDaysAgo, toInstantRange } from "@/lib/dateRangeFilter";
-import { formatUtcDateTime } from "@/lib/dateUtc";
+import { formatUtcDateTime, formatEmbeddedDates } from "@/lib/dateUtc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -144,7 +144,7 @@ export default function AuditLogPage() {
                     <td className="p-2">{log.actor}</td>
                     <td className="p-2">{log.action}</td>
                     <td className="p-2">{formatUtcDateTime(log.occurredAt)}</td>
-                    <td className="p-2 text-xs text-muted-foreground">{log.detail ?? "—"}</td>
+                    <td className="p-2 text-xs text-muted-foreground">{formatEmbeddedDates(log.detail)}</td>
                   </tr>
                 ))}
               </tbody>

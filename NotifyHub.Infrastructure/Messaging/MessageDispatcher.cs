@@ -13,7 +13,12 @@ namespace NotifyHub.Infrastructure.Messaging;
 /// FR-001/FR-003: the core claim → render → dispatch step. A thin BackgroundService
 /// (Worker's DispatcherWorker) just calls this in a loop; kept separate from the loop
 /// itself so it's directly unit/integration-testable without hosting the Worker process.
-public class MessageDispatcher(NotifyHubDbContext db, HttpClient gatewayClient, ILogger<MessageDispatcher> logger, SettingsService settingsService)
+public class MessageDispatcher(
+    NotifyHubDbContext db,
+    HttpClient gatewayClient,
+    ILogger<MessageDispatcher> logger,
+    SettingsService settingsService,
+    MessageBodyRenderer bodyRenderer)
 {
     private const int BatchSize = 10;
 
@@ -113,8 +118,11 @@ public class MessageDispatcher(NotifyHubDbContext db, HttpClient gatewayClient, 
         if (message.TemplateId is not null && message.RenderedBody is null)
         {
             // Rendered here, at send time (not at creation), so history reflects the
-            // template as it stood at the moment of send (BR-013).
-            message.RenderedBody = await RenderAsync(message, ct);
+            // template as it stood at the moment of send (BR-013). In practice this now
+            // mostly only fires for a Reminder SMS created with no committed body (rule 31) —
+            // TemplatesController.Update (P9-05 net #1) eagerly re-renders on a template edit,
+            // this remains the defensive backstop for any row that still reaches dispatch null.
+            message.RenderedBody = await bodyRenderer.RenderAsync(message, message.Template!.Body, ct);
         }
 
         message.Status = MessageStatus.Sending;
@@ -146,34 +154,5 @@ public class MessageDispatcher(NotifyHubDbContext db, HttpClient gatewayClient, 
 
             await db.SaveChangesAsync(ct);
         }
-    }
-
-    private async Task<string> RenderAsync(OutboundMessage message, CancellationToken ct)
-    {
-        var fields = new Dictionary<string, string>
-        {
-            ["patient_name"] = message.Patient.Name,
-        };
-
-        // trigger_reference encodes the business event (BR-009), e.g. "appointment:{id}:created" —
-        // parsed here to resolve {{appointment_time}} for appointment-reminder templates.
-        // Reminder SMS (P9-08, rule 34) carries EventTime instead and never sets TriggerReference,
-        // so the two branches are mutually exclusive on any given OutboundMessage.
-        if (message.TriggerReference is { } reference && reference.StartsWith("appointment:", StringComparison.Ordinal))
-        {
-            var parts = reference.Split(':');
-            if (parts.Length >= 2 && long.TryParse(parts[1], out var appointmentId))
-            {
-                var appointment = await db.Appointments.FindAsync([appointmentId], ct);
-                if (appointment is not null)
-                    fields["appointment_time"] = appointment.ScheduledAt.ToString("u");
-            }
-        }
-        else if (message.EventTime is { } eventTime)
-        {
-            fields["appointment_time"] = eventTime.ToString("u");
-        }
-
-        return TemplateRenderer.Render(message.Template!.Body, fields);
     }
 }

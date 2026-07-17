@@ -1,4 +1,5 @@
 import { useAuth } from "@/context/AuthContext";
+import { formatUserLabel } from "@/lib/userDisplay";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { SettingsSearch } from "@/components/settings/settings-search";
 import type { SettingsTabValue } from "@/components/settings/settings-search-index";
@@ -33,7 +34,7 @@ export function GeneralTab({ onNavigateToSetting }: GeneralTabProps) {
         <CardContent className="space-y-2 text-sm">
           <div className="flex justify-between">
             <span className="text-muted-foreground">Signed in as</span>
-            <span>{user?.username} ({user?.role})</span>
+            <span>{user && formatUserLabel(user)}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-muted-foreground">Application</span>

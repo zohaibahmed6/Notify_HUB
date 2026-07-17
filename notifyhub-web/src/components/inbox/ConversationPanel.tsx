@@ -5,6 +5,7 @@ import { useAssignMutation, useReplyMutation, useThread } from "@/hooks/useThrea
 import { apiClient } from "@/lib/apiClient";
 import { errorMessage } from "@/lib/errorMessage";
 import { formatUtc } from "@/lib/dateUtc";
+import { formatUserLabel } from "@/lib/userDisplay";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -109,7 +110,14 @@ export function ConversationPanel({ threadId }: { threadId: number }) {
         <div>
           <div className="font-medium">{thread.patientName}</div>
           {thread.assignedStaffUsername && (
-            <div className="text-xs text-muted-foreground">Assigned to {thread.assignedStaffUsername}</div>
+            <div className="text-xs text-muted-foreground">
+              Assigned to{" "}
+              {formatUserLabel({
+                fullName: thread.assignedStaffFullName,
+                username: thread.assignedStaffUsername,
+                role: thread.assignedStaffRole,
+              })}
+            </div>
           )}
         </div>
         <div className="flex items-center gap-2">

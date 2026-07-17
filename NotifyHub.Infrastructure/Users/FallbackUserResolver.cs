@@ -28,26 +28,25 @@ public static class FallbackUserResolver
         return query.OrderBy(u => u.Id).Select(u => (long?)u.Id).FirstOrDefaultAsync(ct);
     }
 
-    /// P9-10: new-task-creation assignment only (rule 1) — deliberately a separate method
-    /// from ResolveFallbackAdminIdAsync above rather than modifying it, since that method
-    /// is also called by EscalationJob and UsersController's deactivation mass-reassignment,
-    /// neither of which rule 1/2 says should become forwarding-rule-aware (rule 2 is
-    /// explicit that the deactivation mass-reassignment stays unchanged). Not a centralized
-    /// "Assignment Engine" refactor — per the plan's own explicit scoping-down.
+    /// P9-10: new-task-creation assignment only — deliberately a separate method from
+    /// ResolveFallbackAdminIdAsync above rather than modifying it, since that method is
+    /// also called by EscalationJob and UsersController's deactivation mass-reassignment,
+    /// neither of which becomes forwarding-rule-aware (the deactivation mass-reassignment
+    /// stays unchanged). Not a centralized "Assignment Engine" refactor — per the plan's
+    /// own explicit scoping-down.
     ///
-    /// Resolution order: if <paramref name="naturalAssigneeId"/> is currently Active, use
-    /// them as-is (no forwarding lookup at all — forwarding only applies "while the
-    /// original assignee is Inactive", rule 1). Otherwise, look for a
-    /// currently-in-window forwarding rule for that user (rules 4/8/9 guarantee at most one
-    /// can match "now"); if found and its target is itself Active, use the target (rule 3;
-    /// one level only, rule 5 — the target's own rules, if any, are never followed). If no
-    /// rule matches, or the matched rule's target isn't Active (rule 6), fall through to
-    /// the existing plain Admin fallback unchanged.
+    /// Resolution order (changed in a later session — see docs/DECISIONS.md; originally
+    /// STEP9_PLAN.md rule 1 gated this on the natural assignee being Inactive): look for a
+    /// currently-in-window forwarding rule for <paramref name="naturalAssigneeId"/> first,
+    /// unconditionally (rules 4/8/9 guarantee at most one can match "now"), regardless of
+    /// whether the natural assignee is currently Active. If found and its target is itself
+    /// Active, use the target (rule 3; one level only, rule 5 — the target's own rules, if
+    /// any, are never followed). Otherwise (no rule matched, or the matched rule's target
+    /// isn't Active — rule 6), use the natural assignee directly if they're Active. If
+    /// neither applies, fall through to the existing plain Admin fallback.
     public static async Task<long> ResolveNewTaskAssigneeAsync(NotifyHubDbContext db, long naturalAssigneeId, CancellationToken ct)
     {
         var naturalAssignee = await db.Users.FindAsync([naturalAssigneeId], ct);
-        if (naturalAssignee is not null && naturalAssignee.Status == UserStatus.Active)
-            return naturalAssigneeId;
 
         var now = DateTime.UtcNow;
         var rule = await db.TaskForwardingRules
@@ -60,6 +59,9 @@ public static class FallbackUserResolver
             if (target is not null && target.Status == UserStatus.Active)
                 return target.Id;
         }
+
+        if (naturalAssignee is not null && naturalAssignee.Status == UserStatus.Active)
+            return naturalAssigneeId;
 
         var fallbackAdminId = await ResolveFallbackAdminIdAsync(db, ct);
         return fallbackAdminId ?? naturalAssigneeId; // no Active Admin exists at all — degrade to the natural assignee rather than an invalid FK

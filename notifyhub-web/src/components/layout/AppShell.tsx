@@ -5,6 +5,7 @@ import { Bell, Menu } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useUIVersion } from "@/context/UIVersionContext";
 import { useInboxHub } from "@/hooks/useInboxHub";
+import { formatUserLabel } from "@/lib/userDisplay";
 import { Button } from "@/components/ui/button";
 import { TaskNavWidget } from "@/components/v2/task-nav-widget";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -109,7 +110,7 @@ export default function AppShell() {
               isRedesign ? "text-primary-foreground/70" : "text-muted-foreground",
             )}
           >
-            {user?.username} ({user?.role})
+            {user && formatUserLabel(user)}
           </span>
           <Button variant="outline" size="sm" onClick={() => void logout()}>
             Sign out
@@ -146,7 +147,7 @@ export default function AppShell() {
             ))}
           </nav>
           <div className="mt-auto border-t pt-4 text-sm text-muted-foreground">
-            {user?.username} ({user?.role})
+            {user && formatUserLabel(user)}
           </div>
         </SheetContent>
       </Sheet>

@@ -94,11 +94,12 @@ public class TemplatesControllerTests(CustomWebApplicationFactory factory) : ICl
         Assert.Contains(inactiveOnly!, t => t.Id == original.Id);
     }
 
-    /// P9-05: dual-safety net #1 — editing a template's body nulls RenderedBody on any
-    /// already-Queued message linked to it, forcing a fresh render at dispatch time
-    /// (net #2, MessageDispatcher) rather than letting stale content go out.
+    /// P9-05: dual-safety net #1 — editing a template's body eagerly re-renders RenderedBody
+    /// on any already-Queued message linked to it, right away in the same request, instead of
+    /// nulling it and deferring the render to dispatch time (net #2, MessageDispatcher, which
+    /// remains a defensive backstop only). ScheduledAt is untouched — only content changes.
     [Fact]
-    public async Task Update_Body_ClearsRenderedBody_OnQueuedMessagesLinkedToTemplate()
+    public async Task Update_Body_ReRendersRenderedBody_OnQueuedMessagesLinkedToTemplate()
     {
         var (client, _) = await _client.AsStaffAsync();
 
@@ -111,6 +112,7 @@ public class TemplatesControllerTests(CustomWebApplicationFactory factory) : ICl
         var template = await created.Content.ReadFromJsonAsync<TemplateDto>();
 
         long queuedMessageId, deliveredMessageId;
+        var scheduledAt = DateTime.UtcNow.AddHours(5);
         using (var scope = factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
@@ -126,6 +128,7 @@ public class TemplatesControllerTests(CustomWebApplicationFactory factory) : ICl
                 Status = MessageStatus.Queued,
                 RenderedBody = "Stale pre-rendered text",
                 CreatedAt = DateTime.UtcNow,
+                ScheduledAt = scheduledAt,
                 AttemptCount = 0,
             };
             // Also seed a non-Queued message to prove the sweep is Queued-only.
@@ -155,7 +158,9 @@ public class TemplatesControllerTests(CustomWebApplicationFactory factory) : ICl
         {
             var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
             var queuedMessage = await db.OutboundMessages.SingleAsync(m => m.Id == queuedMessageId);
-            Assert.Null(queuedMessage.RenderedBody);
+            Assert.Equal("Updated body P9-05 Test Patient", queuedMessage.RenderedBody);
+            // Content refreshed immediately; send timing is untouched.
+            Assert.Equal(scheduledAt, queuedMessage.ScheduledAt);
 
             var deliveredMessage = await db.OutboundMessages.SingleAsync(m => m.Id == deliveredMessageId);
             Assert.Equal("Already delivered, must not change", deliveredMessage.RenderedBody);

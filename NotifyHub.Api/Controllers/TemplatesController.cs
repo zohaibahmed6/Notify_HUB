@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using NotifyHub.Api.Templates.Dtos;
 using NotifyHub.Domain.Entities;
 using NotifyHub.Domain.Enums;
+using NotifyHub.Infrastructure.Messaging;
 using NotifyHub.Infrastructure.Persistence;
 
 namespace NotifyHub.Api.Controllers;
@@ -12,7 +13,7 @@ namespace NotifyHub.Api.Controllers;
 /// can manage templates, not Admin-only).
 [ApiController]
 [Route("api/templates")]
-public class TemplatesController(NotifyHubDbContext db) : ControllerBase
+public class TemplatesController(NotifyHubDbContext db, MessageBodyRenderer bodyRenderer) : ControllerBase
 {
     /// §5: `isActive` filter — omit to see everything (unlike Tasks, there's no
     /// "defaults to Active" requirement for Templates, just a filter control on the screen).
@@ -127,33 +128,25 @@ public class TemplatesController(NotifyHubDbContext db) : ControllerBase
 
         await db.SaveChangesAsync(ct);
 
-        // P9-05: dual-safety net #1 — explicit sweep of already-queued messages when the
-        // body changes, so no stale-content SMS can go out. Net #2 is
-        // MessageDispatcher.DispatchOneAsync, which already unconditionally re-renders
-        // from the live template on every dispatch attempt for any TemplateId-linked
-        // message (verified: RenderedBody is left null at creation by every current
-        // production creation path — see ReminderScheduler — and dispatch always
-        // overwrites it fresh before sending, retries included). Nulling it here is
-        // currently redundant with that net for the happy path, but is kept per the
-        // explicit dual-safety request and is the only net that would matter if a future
-        // creation path ever pre-rendered RenderedBody instead of leaving it null.
+        // P9-05: dual-safety net #1 — when the body changes, eagerly re-render every
+        // already-Queued message linked to this template right now, using the fresh
+        // template.Body, instead of nulling RenderedBody and leaving it for the dispatcher
+        // to render lazily at actual send time. ScheduledAt/ExpiresAt/Status are untouched —
+        // only content is refreshed, so send timing is unaffected. Net #2
+        // (MessageDispatcher.DispatchOneAsync's `RenderedBody is null` guard) remains as a
+        // defensive backstop for any row that still reaches dispatch without a rendered body
+        // (e.g. a Reminder SMS created with no committed body, rule 31).
         if (request.Body is not null)
         {
-            if (db.Database.ProviderName == "Microsoft.EntityFrameworkCore.InMemory")
-            {
-                var queuedMessages = await db.OutboundMessages
-                    .Where(m => m.Status == MessageStatus.Queued && m.TemplateId == id)
-                    .ToListAsync(ct);
-                foreach (var message in queuedMessages)
-                    message.RenderedBody = null;
-                await db.SaveChangesAsync(ct);
-            }
-            else
-            {
-                await db.OutboundMessages
-                    .Where(m => m.Status == MessageStatus.Queued && m.TemplateId == id)
-                    .ExecuteUpdateAsync(s => s.SetProperty(m => m.RenderedBody, (string?)null), ct);
-            }
+            var queuedMessages = await db.OutboundMessages
+                .Include(m => m.Patient)
+                .Where(m => m.Status == MessageStatus.Queued && m.TemplateId == id)
+                .ToListAsync(ct);
+
+            foreach (var message in queuedMessages)
+                message.RenderedBody = await bodyRenderer.RenderAsync(message, template.Body, ct);
+
+            await db.SaveChangesAsync(ct);
         }
 
         return Ok(ToDto(template));

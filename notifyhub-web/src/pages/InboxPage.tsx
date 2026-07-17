@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { useThreads } from "@/hooks/useThreads";
+import { formatUserLabel } from "@/lib/userDisplay";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { ConversationPanel } from "@/components/inbox/ConversationPanel";
@@ -36,7 +37,9 @@ export default function InboxPage() {
                   <div className="min-w-0">
                     <div className="truncate font-medium">{thread.patientName}</div>
                     <div className="truncate text-xs text-muted-foreground">
-                      {thread.assignedStaffUsername ? `Assigned to ${thread.assignedStaffUsername}` : "Unassigned"}
+                      {thread.assignedStaffUsername
+                        ? `Assigned to ${formatUserLabel({ fullName: thread.assignedStaffFullName, username: thread.assignedStaffUsername, role: thread.assignedStaffRole })}`
+                        : "Unassigned"}
                       {thread.patientOptedOut && " · Opted out"}
                     </div>
                   </div>

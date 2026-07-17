@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { useForwardTaskMutation, useTask, useUpdateTaskMutation } from "@/hooks/useTasks";
 import { useAssignableUsers } from "@/hooks/useUsers";
 import { errorMessage } from "@/lib/errorMessage";
+import { formatUserLabel, formatUserName } from "@/lib/userDisplay";
 import { InitialsAvatar } from "@/components/v2/initials-avatar";
 import { StatusBadge } from "@/components/v2/status-badge";
 import { TASK_PRIORITY_CONFIG, TASK_STATUS_CONFIG } from "@/components/v2/status-config";
@@ -140,16 +141,59 @@ export function TaskDetailSheet({
                 {formatUtc(task.dueAt)}
               </div>
 
-              <div className="flex items-center gap-2 text-muted-foreground">
-                {task.assignedStaffUsername ? (
-                  <>
-                    <InitialsAvatar name={task.assignedStaffUsername} size="sm" />
-                    Assigned to {task.assignedStaffUsername}
-                  </>
-                ) : (
-                  "Unassigned"
-                )}
-              </div>
+              {task.originalOwnerId !== task.assignedStaffId ? (
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <InitialsAvatar
+                      name={formatUserName({ fullName: task.originalOwnerFullName, username: task.originalOwnerUsername })}
+                      size="sm"
+                    />
+                    Originally assigned to{" "}
+                    {formatUserLabel({
+                      fullName: task.originalOwnerFullName,
+                      username: task.originalOwnerUsername,
+                      role: task.originalOwnerRole,
+                    })}
+                  </div>
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    {task.assignedStaffUsername ? (
+                      <>
+                        <InitialsAvatar
+                          name={formatUserName({ fullName: task.assignedStaffFullName, username: task.assignedStaffUsername })}
+                          size="sm"
+                        />
+                        Now assigned to{" "}
+                        {formatUserLabel({
+                          fullName: task.assignedStaffFullName,
+                          username: task.assignedStaffUsername,
+                          role: task.assignedStaffRole,
+                        })}
+                      </>
+                    ) : (
+                      "Currently unassigned"
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  {task.assignedStaffUsername ? (
+                    <>
+                      <InitialsAvatar
+                        name={formatUserName({ fullName: task.assignedStaffFullName, username: task.assignedStaffUsername })}
+                        size="sm"
+                      />
+                      Assigned to{" "}
+                      {formatUserLabel({
+                        fullName: task.assignedStaffFullName,
+                        username: task.assignedStaffUsername,
+                        role: task.assignedStaffRole,
+                      })}
+                    </>
+                  ) : (
+                    "Unassigned"
+                  )}
+                </div>
+              )}
 
               {task.isRecurring && (
                 <div className="flex items-center gap-1.5 text-muted-foreground">
@@ -213,7 +257,7 @@ export function TaskDetailSheet({
                     .filter((u) => u.id !== task?.assignedStaffId)
                     .map((u) => (
                       <SelectItem key={u.id} value={String(u.id)}>
-                        {u.fullName ?? u.username}
+                        {formatUserLabel(u)}
                       </SelectItem>
                     ))}
                 </SelectContent>

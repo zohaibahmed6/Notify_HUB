@@ -7,6 +7,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useTasks, useUpdateTaskMutation } from "@/hooks/useTasks";
 import { useAssignableUsers } from "@/hooks/useUsers";
 import { errorMessage } from "@/lib/errorMessage";
+import { formatUserLabel } from "@/lib/userDisplay";
 import { cn } from "@/lib/utils";
 import { defaultFromDaysAgo, toDateInputValue, toInstantRange } from "@/lib/dateRangeFilter";
 import { Button } from "@/components/ui/button";
@@ -340,7 +341,7 @@ export default function TaskBoardPageV2() {
               <SelectItem value="unassigned">Unassigned</SelectItem>
               {assigneeOptions.map((u) => (
                 <SelectItem key={u.id} value={String(u.id)}>
-                  {u.fullName ?? u.username}
+                  {formatUserLabel(u)}
                 </SelectItem>
               ))}
             </SelectContent>

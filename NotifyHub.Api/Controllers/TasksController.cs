@@ -43,7 +43,7 @@ public class TasksController(NotifyHubDbContext db, IHubContext<InboxHub> inboxH
         // filter below doesn't need this Include itself (EF Core auto-joins through a
         // navigation-property access in a Where predicate), but ToDto runs against the
         // materialized entity afterward and needs the nav property actually loaded.
-        var query = db.Tasks.Include(t => t.AssignedStaff).Include(t => t.Thread).ThenInclude(th => th.Patient).AsQueryable();
+        var query = db.Tasks.Include(t => t.AssignedStaff).Include(t => t.OriginalOwner).Include(t => t.Thread).ThenInclude(th => th.Patient).AsQueryable();
 
         if (status is not null)
         {
@@ -113,7 +113,7 @@ public class TasksController(NotifyHubDbContext db, IHubContext<InboxHub> inboxH
     [HttpGet("{id}")]
     public async Task<ActionResult<TaskDto>> Detail(long id, CancellationToken ct)
     {
-        var task = await db.Tasks.Include(t => t.AssignedStaff).Include(t => t.Thread).ThenInclude(th => th.Patient).SingleOrDefaultAsync(t => t.Id == id, ct);
+        var task = await db.Tasks.Include(t => t.AssignedStaff).Include(t => t.OriginalOwner).Include(t => t.Thread).ThenInclude(th => th.Patient).SingleOrDefaultAsync(t => t.Id == id, ct);
         if (task is null)
             return NotFound();
 
@@ -131,7 +131,7 @@ public class TasksController(NotifyHubDbContext db, IHubContext<InboxHub> inboxH
     [HttpPatch("{id}")]
     public async Task<ActionResult<TaskDto>> Update(long id, UpdateTaskRequest request, CancellationToken ct)
     {
-        var task = await db.Tasks.Include(t => t.AssignedStaff).Include(t => t.Thread).ThenInclude(th => th.Patient).SingleOrDefaultAsync(t => t.Id == id, ct);
+        var task = await db.Tasks.Include(t => t.AssignedStaff).Include(t => t.OriginalOwner).Include(t => t.Thread).ThenInclude(th => th.Patient).SingleOrDefaultAsync(t => t.Id == id, ct);
         if (task is null)
             return NotFound();
 
@@ -183,6 +183,9 @@ public class TasksController(NotifyHubDbContext db, IHubContext<InboxHub> inboxH
             if (targetUser.Status != UserStatus.Active)
                 return Problem(statusCode: StatusCodes.Status400BadRequest, title: $"User {targetUser.Username} is not Active and cannot be assigned.");
 
+            if (request.AssignedStaffId != previousAssignedStaffId)
+                task.AssignedAt = DateTime.UtcNow;
+
             task.AssignedStaffId = request.AssignedStaffId;
         }
 
@@ -228,7 +231,7 @@ public class TasksController(NotifyHubDbContext db, IHubContext<InboxHub> inboxH
     [HttpPost("{id}/forward")]
     public async Task<ActionResult<TaskDto>> Forward(long id, ForwardTaskRequest request, CancellationToken ct)
     {
-        var task = await db.Tasks.Include(t => t.AssignedStaff).Include(t => t.Thread).ThenInclude(th => th.Patient).SingleOrDefaultAsync(t => t.Id == id, ct);
+        var task = await db.Tasks.Include(t => t.AssignedStaff).Include(t => t.OriginalOwner).Include(t => t.Thread).ThenInclude(th => th.Patient).SingleOrDefaultAsync(t => t.Id == id, ct);
         if (task is null)
             return NotFound();
 
@@ -242,6 +245,7 @@ public class TasksController(NotifyHubDbContext db, IHubContext<InboxHub> inboxH
         var previousAssignee = task.AssignedStaff?.Username ?? "unassigned";
         task.AssignedStaffId = targetUser.Id;
         task.AssignedStaff = targetUser; // keep the loaded nav in sync so ToDto below isn't stale
+        task.AssignedAt = DateTime.UtcNow;
 
         var callerUsername = User.FindFirstValue(ClaimTypes.Name)!;
         var detail = $"Task forwarded from {previousAssignee} to {targetUser.Username}" + (string.IsNullOrWhiteSpace(request.Note) ? "" : $": {request.Note}");
@@ -275,8 +279,10 @@ public class TasksController(NotifyHubDbContext db, IHubContext<InboxHub> inboxH
             DueAt = next.Value.DueAt,
             Status = NotifyHubTaskStatus.Open,
             AssignedStaffId = completed.OriginalOwnerId,
+            AssignedAt = DateTime.UtcNow,
             OriginalOwnerId = completed.OriginalOwnerId,
-            TaskType = completed.TaskType, // category carries over; Description doesn't (it was tied to the message that prompted the completed occurrence, would go stale)
+            TaskType = completed.TaskType,
+            Description = completed.Description, // carries over so description-filtered views keep tracking the series across recurrences
             IsRecurring = true,
             RecurrenceIntervalDays = completed.RecurrenceIntervalDays,
             RecurrenceEndDate = completed.RecurrenceEndDate,
@@ -315,6 +321,8 @@ public class TasksController(NotifyHubDbContext db, IHubContext<InboxHub> inboxH
             ("patientname", false) => query.OrderBy(t => t.Thread.Patient.Name),
             ("assignedstaffusername", true) => query.OrderByDescending(t => t.AssignedStaff != null ? t.AssignedStaff.Username : ""),
             ("assignedstaffusername", false) => query.OrderBy(t => t.AssignedStaff != null ? t.AssignedStaff.Username : ""),
+            ("assignedat", true) => query.OrderByDescending(t => t.AssignedAt),
+            ("assignedat", false) => query.OrderBy(t => t.AssignedAt),
             (_, true) => query.OrderByDescending(t => t.DueAt),
             _ => query.OrderBy(t => t.DueAt),
         };
@@ -330,7 +338,13 @@ public class TasksController(NotifyHubDbContext db, IHubContext<InboxHub> inboxH
         Status = t.Status.ToString(),
         AssignedStaffId = t.AssignedStaffId,
         AssignedStaffUsername = t.AssignedStaff?.Username,
+        AssignedStaffFullName = t.AssignedStaff?.FullName,
+        AssignedStaffRole = t.AssignedStaff?.Role.ToString(),
+        AssignedAt = t.AssignedAt,
         OriginalOwnerId = t.OriginalOwnerId,
+        OriginalOwnerUsername = t.OriginalOwner.Username,
+        OriginalOwnerFullName = t.OriginalOwner.FullName,
+        OriginalOwnerRole = t.OriginalOwner.Role.ToString(),
         IsRecurring = t.IsRecurring,
         RecurrenceIntervalDays = t.RecurrenceIntervalDays,
         RecurrenceEndDate = t.RecurrenceEndDate,

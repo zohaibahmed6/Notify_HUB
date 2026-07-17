@@ -8,5 +8,7 @@ public class ThreadDto
     public bool PatientOptedOut { get; set; }
     public long? AssignedStaffId { get; set; }
     public string? AssignedStaffUsername { get; set; }
+    public string? AssignedStaffFullName { get; set; }
+    public string? AssignedStaffRole { get; set; }
     public int UnreadCount { get; set; }
 }

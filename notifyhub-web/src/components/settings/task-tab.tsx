@@ -11,6 +11,7 @@ import {
   useTaskForwardingRules,
 } from "@/hooks/useTaskForwardingRules";
 import { errorMessage } from "@/lib/errorMessage";
+import { formatUserLabel } from "@/lib/userDisplay";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -35,10 +36,11 @@ const DEFAULT_DUE_DATES = [
   { priority: "Low", offset: "+7 days" },
 ];
 
-/// P9-10: "forward my tasks to X" — self-service, scoped to the caller's own UserId
-/// server-side. Checked (only for new task creation while the natural assignee is
-/// Inactive/OnLeave) before the existing always-fallback-to-Admin logic, not a
-/// replacement for it.
+/// Originally P9-10's "forward my tasks to X" — self-service, scoped to the caller's own
+/// UserId server-side. Opened up in a later session so any user can configure a rule for
+/// any From/To pair, not just themselves (see CODEBASE_MAP.md/DECISIONS.md). Checked (only
+/// for new task creation while the natural assignee is Inactive/OnLeave) before the existing
+/// always-fallback-to-Admin logic, not a replacement for it.
 function TaskForwardingRulesCard() {
   const { user } = useAuth();
   const { data: rules, isLoading } = useTaskForwardingRules();
@@ -46,27 +48,52 @@ function TaskForwardingRulesCard() {
   const createRule = useCreateTaskForwardingRuleMutation();
   const deleteRule = useDeleteTaskForwardingRuleMutation();
 
+  const [fromUserId, setFromUserId] = useState("");
   const [targetUserId, setTargetUserId] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [reason, setReason] = useState("");
 
-  // Rule 7: a user cannot set themselves as their own forwarding target.
-  const targetOptions = (assignableUsers ?? []).filter((u) => u.id !== user?.id);
+  // Default "Forward from" to the current user once the assignable-users list has loaded —
+  // still fully changeable, just a convenience for the common self-forward case.
+  useEffect(() => {
+    if (!fromUserId && user?.id) setFromUserId(String(user.id));
+  }, [user?.id, fromUserId]);
+
+  // The same user can't appear on both sides of a rule: picking one excludes it from the
+  // other list, so an already-invalid pair can't even be selected.
+  const fromOptions = (assignableUsers ?? []).filter((u) => String(u.id) !== targetUserId);
+  const targetOptions = (assignableUsers ?? []).filter((u) => String(u.id) !== fromUserId);
+
+  const handleFromChange = (value: string) => {
+    setFromUserId(value);
+    if (value === targetUserId) setTargetUserId("");
+  };
+
+  const handleTargetChange = (value: string) => {
+    setTargetUserId(value);
+    if (value === fromUserId) setFromUserId("");
+  };
 
   const handleCreate = async () => {
+    if (!fromUserId) {
+      toast.error("Pick who to forward from");
+      return;
+    }
     if (!targetUserId) {
       toast.error("Pick who to forward to");
       return;
     }
     try {
       await createRule.mutateAsync({
+        userId: Number(fromUserId),
         targetUserId: Number(targetUserId),
         from: from ? toLocalMidnightIso(from) : undefined,
         to: to ? toLocalMidnightIso(to) : undefined,
         reason: reason || undefined,
       });
       toast.success("Forwarding rule created");
+      setFromUserId(user?.id ? String(user.id) : "");
       setTargetUserId("");
       setFrom("");
       setTo("");
@@ -90,10 +117,10 @@ function TaskForwardingRulesCard() {
       <CardHeader>
         <CardTitle className="text-base">Task forwarding</CardTitle>
         <CardDescription>
-          While you're Inactive or On Leave, new tasks that would go to you are forwarded to
-          whoever you set here instead of falling straight to an Admin. Only applies to new tasks
-          — tasks already assigned to you at the moment you go Inactive/On Leave still forward to
-          an Admin as before.
+          When the "From" user below is Inactive or On Leave, new tasks that would go to them are
+          forwarded to the "To" user instead of falling straight to an Admin. Only applies to new
+          tasks — tasks already assigned to the From user at the moment they go Inactive/On Leave
+          still forward to an Admin as before.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -106,7 +133,10 @@ function TaskForwardingRulesCard() {
             {rules.map((rule) => (
               <li key={rule.id} className="flex items-center justify-between gap-3 rounded-md border p-2 text-sm">
                 <div className="min-w-0">
-                  <div className="font-medium">Forward to {rule.targetUsername}</div>
+                  <div className="font-medium">
+                    {formatUserLabel({ fullName: rule.fullName, username: rule.username, role: rule.role })} →{" "}
+                    {formatUserLabel({ fullName: rule.targetFullName, username: rule.targetUsername, role: rule.targetRole })}
+                  </div>
                   <div className="text-xs text-muted-foreground">
                     {rule.from || rule.to
                       ? `${rule.from ? new Date(rule.from).toLocaleDateString() : "always"} – ${
@@ -127,31 +157,46 @@ function TaskForwardingRulesCard() {
 
         <div className="grid grid-cols-1 gap-3 border-t pt-4 sm:grid-cols-2">
           <div className="space-y-1.5">
-            <Label htmlFor="forward-target">Forward to</Label>
-            <Select value={targetUserId} onValueChange={setTargetUserId}>
-              <SelectTrigger id="forward-target">
+            <Label htmlFor="forward-from-user">Forward from</Label>
+            <Select value={fromUserId} onValueChange={handleFromChange}>
+              <SelectTrigger id="forward-from-user">
                 <SelectValue placeholder="Select a user..." />
               </SelectTrigger>
               <SelectContent>
-                {targetOptions.map((u) => (
+                {fromOptions.map((u) => (
                   <SelectItem key={u.id} value={String(u.id)}>
-                    {u.fullName ?? u.username}
+                    {formatUserLabel(u)}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="forward-reason">Reason (optional)</Label>
-            <Input id="forward-reason" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. annual leave" />
+            <Label htmlFor="forward-target">Forward to</Label>
+            <Select value={targetUserId} onValueChange={handleTargetChange}>
+              <SelectTrigger id="forward-target">
+                <SelectValue placeholder="Select a user..." />
+              </SelectTrigger>
+              <SelectContent>
+                {targetOptions.map((u) => (
+                  <SelectItem key={u.id} value={String(u.id)}>
+                    {formatUserLabel(u)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="forward-from">From (optional)</Label>
+            <Label htmlFor="forward-from">Starts (optional)</Label>
             <DateTimePicker id="forward-from" mode="date" value={from} onChange={setFrom} placeholder="Always" />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="forward-to">To (optional)</Label>
+            <Label htmlFor="forward-to">Ends (optional)</Label>
             <DateTimePicker id="forward-to" mode="date" value={to} onChange={setTo} placeholder="Always" />
+          </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label htmlFor="forward-reason">Reason (optional)</Label>
+            <Input id="forward-reason" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. annual leave" />
           </div>
         </div>
         <div className="flex justify-end">
@@ -213,7 +258,7 @@ function DefaultTaskProviderCard() {
               <SelectItem value="none">No default</SelectItem>
               {(assignableUsers ?? []).map((u) => (
                 <SelectItem key={u.id} value={String(u.id)}>
-                  {u.fullName ?? u.username}
+                  {formatUserLabel(u)}
                 </SelectItem>
               ))}
             </SelectContent>

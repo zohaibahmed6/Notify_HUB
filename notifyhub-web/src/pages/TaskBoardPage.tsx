@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import { useTasks, useUpdateTaskMutation } from "@/hooks/useTasks";
 import { errorMessage } from "@/lib/errorMessage";
+import { formatUserLabel } from "@/lib/userDisplay";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { PriorityBadge } from "@/components/PriorityBadge";
@@ -103,7 +104,9 @@ export default function TaskBoardPage() {
                         {task.isRecurring && ` · recurring (#${task.occurrenceCount})`}
                       </div>
                       <div className="text-xs text-muted-foreground">
-                        {task.assignedStaffUsername ? `Assigned to ${task.assignedStaffUsername}` : "Unassigned"}
+                        {task.assignedStaffUsername
+                          ? `Assigned to ${formatUserLabel({ fullName: task.assignedStaffFullName, username: task.assignedStaffUsername, role: task.assignedStaffRole })}`
+                          : "Unassigned"}
                       </div>
                     </div>
                   </div>

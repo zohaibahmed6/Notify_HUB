@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Net;
 using System.Net.Http.Json;
 using Microsoft.EntityFrameworkCore;
@@ -244,6 +245,9 @@ public class ThreadsControllerTests(CustomWebApplicationFactory factory) : IClas
         var response = await client.PostAsJsonAsync($"/api/threads/{thread.Id}/tasks", new { });
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var created = await response.Content.ReadFromJsonAsync<NotifyHub.Api.Tasks.Dtos.TaskDto>();
+        Assert.Equal("Staff", created!.AssignedStaffRole);
+        Assert.Equal("Staff", created.OriginalOwnerRole);
 
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
@@ -251,6 +255,10 @@ public class ThreadsControllerTests(CustomWebApplicationFactory factory) : IClas
 
         Assert.Equal(Domain.Enums.TaskPriority.Medium, task.Priority);
         Assert.True(task.DueAt > DateTime.UtcNow.AddDays(2) && task.DueAt < DateTime.UtcNow.AddDays(4));
+        // AssignedAt is stamped at creation so a newly created (always-assigned) task
+        // immediately surfaces first under the top-nav badge's "most recently assigned" sort.
+        Assert.NotNull(task.AssignedAt);
+        Assert.True(task.AssignedAt > DateTime.UtcNow.AddMinutes(-1));
     }
 
     [Fact]
@@ -484,6 +492,13 @@ public class ThreadsControllerTests(CustomWebApplicationFactory factory) : IClas
 
         Assert.NotNull(result);
         Assert.Contains(result!.Items, t => t.Id == thread.Id && t.AssignedStaffId == staffId);
+        var listed = result.Items.Single(t => t.Id == thread.Id);
+        Assert.Equal("Staff", listed.AssignedStaffRole);
+
+        var detailResponse = await staffClient.GetAsync($"/api/threads/{thread.Id}");
+        detailResponse.EnsureSuccessStatusCode();
+        var detail = await detailResponse.Content.ReadFromJsonAsync<ThreadDetailDto>();
+        Assert.Equal("Staff", detail!.AssignedStaffRole);
     }
 
     private async Task<ConversationThread> CreateThreadAsync(string phone, bool patientOptedOut = false, int initialUnreadCount = 0, string? patientName = null)

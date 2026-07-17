@@ -42,6 +42,7 @@ builder.Services.AddSwaggerGen(options =>
             Array.Empty<string>()
         },
     });
+    options.OperationFilter<NotifyHub.Api.Webhooks.SharedSecretSwaggerOperationFilter>();
 });
 builder.Services.AddProblemDetails();
 
@@ -72,6 +73,7 @@ builder.Services.AddScoped<IDbSeedStep>(sp =>
     new TaskSeedStep(builder.Configuration.GetValue("Seed:TaskCount", 1_000)));
 builder.Services.AddScoped<DbSeedRunner>();
 builder.Services.AddScoped<NotifyHub.Infrastructure.Settings.SettingsService>();
+builder.Services.AddScoped<NotifyHub.Infrastructure.Messaging.MessageBodyRenderer>();
 
 builder.Services.AddNotifyHubJwtAuth(builder.Configuration);
 builder.Services.AddSignalR();

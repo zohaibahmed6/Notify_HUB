@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { formatUserLabel } from "@/lib/userDisplay";
 import type { ThreadDto } from "@/types/inbox";
 
 // Deliberately no last-message preview/timestamp here: ThreadDto (GET /api/threads) carries
@@ -108,7 +109,9 @@ export function ThreadList({
                         {thread.patientName}
                       </div>
                       <div className="truncate text-xs text-muted-foreground">
-                        {thread.assignedStaffUsername ? `Assigned to ${thread.assignedStaffUsername}` : "Unassigned"}
+                        {thread.assignedStaffUsername
+                          ? `Assigned to ${formatUserLabel({ fullName: thread.assignedStaffFullName, username: thread.assignedStaffUsername, role: thread.assignedStaffRole })}`
+                          : "Unassigned"}
                         {thread.patientOptedOut && " · Opted out"}
                       </div>
                     </div>

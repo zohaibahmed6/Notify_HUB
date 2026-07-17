@@ -4,7 +4,7 @@ import { ArrowDown, ArrowUp, ArrowUpDown, ScrollText, ShieldAlert } from "lucide
 import { useAuth } from "@/context/AuthContext";
 import { useAuditLog } from "@/hooks/useAudit";
 import { toDateInputValue, defaultFromDaysAgo, toInstantRange } from "@/lib/dateRangeFilter";
-import { formatUtcDateTime } from "@/lib/dateUtc";
+import { formatUtcDateTime, formatEmbeddedDates } from "@/lib/dateUtc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -235,7 +235,7 @@ export default function AuditLogPageV2() {
                     <span className="text-muted-foreground">Occurred at</span>
                     <span className="font-mono">{formatUtcDateTime(log.occurredAt)}</span>
                     <span className="text-muted-foreground">Detail</span>
-                    <span>{log.detail ?? "—"}</span>
+                    <span>{formatEmbeddedDates(log.detail)}</span>
                   </div>
                 </div>
               );
@@ -277,7 +277,7 @@ export default function AuditLogPageV2() {
                         <StatusBadge {...config} />
                       </TableCell>
                       <TableCell className="font-mono text-xs">{formatUtcDateTime(log.occurredAt)}</TableCell>
-                      <TableCell className="text-xs text-muted-foreground">{log.detail ?? "—"}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{formatEmbeddedDates(log.detail)}</TableCell>
                     </TableRow>
                   );
                 })}

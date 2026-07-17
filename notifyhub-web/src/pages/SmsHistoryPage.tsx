@@ -249,7 +249,7 @@ export default function SmsHistoryPage() {
                       <TableCell className="text-sm">{row.patientName}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">{row.senderUsername}</TableCell>
                       <TableCell className="font-mono text-xs">{row.phone}</TableCell>
-                      <TableCell className="max-w-xs truncate text-xs text-muted-foreground">{row.text ?? "—"}</TableCell>
+                      <TableCell className="max-w-xs whitespace-normal break-words text-xs text-muted-foreground">{row.text ?? "—"}</TableCell>
                       <TableCell>
                         <StatusBadge {...config} size="xs" />
                       </TableCell>

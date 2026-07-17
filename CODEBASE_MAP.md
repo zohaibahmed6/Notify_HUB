@@ -75,6 +75,20 @@ as UTC would introduce the same class of bug in reverse.
 (reuses `parseUtc`, then manually zero-pads to `yyyy-MM-dd HH:mm:ss` in local time) and switched
 all four `AuditLogDto.occurredAt` render sites to it.
 
+That prior fix only covered the `occurredAt` column — `AuditLogDto.detail` (free text written
+server-side, e.g. `EscalationJob.cs`'s `"overdue since {task.DueAt:o}"`,
+`WebhooksController.cs`'s retry-scheduled message, `MessagesController.cs`/`ThreadsController.cs`'s
+reminder-reschedule messages) still rendered its raw embedded C# `:o` round-trip timestamp
+verbatim (e.g. `overdue since 2026-07-16T18:00:00.0000000Z`). Added `formatFriendly`
+(`yyyy-MM-dd h:mm am/pm` in local time) and `formatEmbeddedDates` (regex-finds and replaces any
+ISO-8601 UTC timestamp inside a larger string, via `formatFriendly`) to `dateUtc.ts`, and
+switched every `detail` render site to `formatEmbeddedDates(...)`: both Audit Log pages
+(`AuditLogPage.tsx`, and `AuditLogPageV2.tsx`'s mobile card + desktop table cell) and
+`DashboardPage.tsx`'s recent-activity feed (`entry.detail`, easy to miss since it's a separate
+`AuditLogDto[]` render path, not one of the two Audit Log pages). Backend `detail` strings are
+unchanged — the ISO timestamp is still generated server-side, just reformatted client-side
+before display.
+
 | Entity → table | Entity file | Config file | Key fields | Relationships / indexes |
 |---|---|---|---|---|
 | `User` → `users` | `NotifyHub.Domain/Entities/User.cs:5` | `UserConfiguration.cs:7` | Id, Username, PasswordHash, Role, **FullName?, Status** (added, see below), **LeaveFrom?, LeaveTo?** (added P9-12, both required together when `Status` is set to `OnLeave`) | Unique index `Username` (:18) |
@@ -115,6 +129,22 @@ default `Active`). Migration `20260713171136_AddTaskAndUserFields` — note the 
 `AddColumn` defaults were hand-corrected post-generation (`IsActive` → `true`, `Status`/`TaskType`
 → `"Active"`/`"General"` instead of EF's generated `false`/`""`, since `""` isn't a valid enum
 member and would fail to deserialize on read for pre-existing rows).
+
+**`TaskItem.AssignedAt`** (`DateTime?`, this session) — stamped with `DateTime.UtcNow` every
+place `AssignedStaffId` is actually set to a new value: `ThreadsController.CreateTask` (always,
+a new task is always assigned someone), `TasksController.Update`'s `AssignedStaffId` branch
+(only when it differs from the previous value — a PATCH re-sending the same id is a no-op, not
+a reassignment), `TasksController.Forward` (always), `TasksController.SpawnNextOccurrenceIfDue`
+(always — a fresh recurrence is a fresh assignment to `OriginalOwnerId`), `EscalationJob`'s
+fallback-admin reassignment, and `UsersController`'s auto-forward-on-deactivation/leave sweep.
+Null on legacy rows/never-(re)assigned tasks, which sort last under a most-recently-assigned
+order (nothing is known about when they were assigned). Migration
+`20260717122228_AddTaskAssignedAt` (plain nullable column, no default-value gotcha). Exposed on
+`TaskDto.AssignedAt`; new `TasksController.ApplySort` case `sortBy=assignedAt` (`OrderBy`/
+`OrderByDescending(t => t.AssignedAt)`). Consumed by `TaskNavWidget`'s top-nav badge popover
+(`notifyhub-web/src/components/v2/task-nav-widget.tsx`), which now passes
+`sortBy: "assignedAt", sortDir: "desc"` so the dropdown lists the most recently assigned/
+forwarded task first instead of soonest-`DueAt`-first.
 
 Enums: `UserRole` (`Enums/UserRole.cs:3`), **`UserStatus`** (`Enums/UserStatus.cs:3`,
 Active/Inactive/OnLeave), **`TaskType`** (`Enums/TaskType.cs:3`, RepeatRx/Recall/
@@ -170,7 +200,7 @@ Refresh-token cookie name `notifyhub_refresh` (:26); set/clear in `SetRefreshCoo
 | Verb + route | Method:line | Auth | Notes |
 |---|---|---|---|
 | GET `api/threads` | `List` :23-41 | default authenticated | paginated; optional `search` param (bug fix, this session) — matches `Patient.Name.Contains(search) \|\| AssignedStaff.Username.Contains(search)`, applied *before* pagination/sort so it covers every thread, not just the requested page. Root cause fixed: the Inbox search box (`thread-list.tsx`) used to filter only the client's already-fetched `pageSize=100` array (`useThreads()`, sorted `OrderByDescending(Id)` — newest-created first), so a real patient whose thread wasn't among the 100 most recently created was silently unsearchable even though it existed and opened fine via direct `GET api/threads/{id}` (discovered via `TaskSeedStep`'s low-thread-id seeded tasks). Frontend now debounces the input (`thread-list.tsx`, 300ms, no shared debounce utility existed so a local `useEffect`/`setTimeout` was used) and calls `useThreads(search)`, which appends `&search=...`; `InboxPageV2` owns the search state and passes it through. `TaskBoardPageV2`/`NewTaskForm`/`InboxPage` (v1) call `useThreads()` with no search term — unaffected. Deliberately out of scope: the *default* (no search typed) view is still capped at the 100 most-recently-created threads, unpaginated beyond that — a separate, smaller browsing limitation not addressed here. |
-| GET `api/threads/{id}` | `Detail` :43-74 | default authenticated | resets `UnreadCount = 0` on open (:58-60); messages paginated via `GetMessagesPageAsync` (:89-132, step 6/FR-010 — see §5) instead of the old unpaginated `.Include(InboundMessages).Include(OutboundMessages)`. **Bug fix (this session)**: `ThreadMessageDto`'s outbound projection now also carries `EventTime`/`ScheduledAt` (straight from the `OutboundMessage` columns, no query restructuring) so a Queued message's actual pending send time reaches the frontend — previously only `CreatedAt`/`Status` were exposed, so a Reminder SMS or a plain scheduled reply showed only a generic "Queued" chip with no indication of when it would actually go out. `EventTime` is populated only for Reminder SMS (§4b); the frontend's "Will send at" bubble line (§6d) originally used its presence to scope the line to reminders only, but was broadened in a later session to key off `ScheduledAt` alone, so it now also covers plain scheduled replies (both share the same `ScheduledAt`/`Queued` mechanism). |
+| GET `api/threads/{id}` | `Detail` :43-74 | default authenticated | resets `UnreadCount = 0` on open (:58-60); messages paginated via `GetMessagesPageAsync` (:89-132, step 6/FR-010 — see §5) instead of the old unpaginated `.Include(InboundMessages).Include(OutboundMessages)`. `ThreadDto` gained `AssignedStaffFullName`/`AssignedStaffRole` (this session) — `ThreadDetailDto : ThreadDto` inherits the fields, but `Detail`'s manual field-by-field copy into a `new ThreadDetailDto {...}` needed both added explicitly too, or they'd silently stay null on the Inbox detail view despite `ThreadDto` itself having them. **Bug fix (this session)**: `ThreadMessageDto`'s outbound projection now also carries `EventTime`/`ScheduledAt` (straight from the `OutboundMessage` columns, no query restructuring) so a Queued message's actual pending send time reaches the frontend — previously only `CreatedAt`/`Status` were exposed, so a Reminder SMS or a plain scheduled reply showed only a generic "Queued" chip with no indication of when it would actually go out. `EventTime` is populated only for Reminder SMS (§4b); the frontend's "Will send at" bubble line (§6d) originally used its presence to scope the line to reminders only, but was broadened in a later session to key off `ScheduledAt` alone, so it now also covers plain scheduled replies (both share the same `ScheduledAt`/`Queued` mechanism). |
 | POST `api/threads` | `CreateConversation` (added increment 10) | default authenticated | §6: staff-initiated conversation with a brand-new patient — body `{name, phone, message, scheduledAt?}`; creates `Patient`+`ConversationThread`+first `OutboundMessage` in one call; 409 on duplicate phone (pre-check + `catch (DbUpdateException)` fallback, same pattern as `WebhooksController.FindOrCreateThreadAsync`); 400 if `scheduledAt` isn't in the future |
 | POST `api/threads/{id}/messages` | `Reply` :139 | default authenticated | BR-001b opt-out check (:145-148); broadcasts `outboundMessageSent` (:169); **increment 10**: accepts optional `scheduledAt` (400 if not future), enforces the per-patient rate limit via `RateLimitExceededAsync` (429 if exceeded, no-op when `RateLimit:Enabled=false`) |
 | POST `api/threads/{id}/assign` | `Assign` :177 | default authenticated | self-assign OK; assigning others requires caller role Admin, else 403 (:190-191); broadcasts `threadAssigned` (:203) |
@@ -183,7 +213,7 @@ Refresh-token cookie name `notifyhub_refresh` (:26); set/clear in `SetRefreshCoo
 | GET `api/users` | `[Authorize(Roles="Admin")]` | filters `role`/`status`, paginated |
 | GET `api/users/assignable` | default authenticated | returns `Status == Active` users only — the source every assignee-picker in the app should use (replaces the frontend's earlier dedupe-from-already-fetched-lists workaround) |
 | POST `api/users` | `[Authorize(Roles="Admin")]` | creates a user (`PasswordPolicy`/`IPasswordHasher<User>`, same as `UserSeedStep`); 409 on duplicate username |
-| PATCH `api/users/{id}/status` | `[Authorize(Roles="Admin")]` | sets `User.Status`; transitioning **to** Inactive/OnLeave auto-forwards that user's non-terminal tasks (`Status` not in `{Completed,Cancelled}`) to a fallback Active Admin in the **same `SaveChangesAsync`**, audits each (`action:"forward"`, actor `"system"`), broadcasts `taskAssignmentChanged` per forwarded task. **P9-12**: transitioning to `OnLeave` now requires `LeaveFrom`+`LeaveTo` both provided (400 if either is missing, or if `LeaveFrom > LeaveTo`) — stored on the `User` row; not cleared when transitioning away from `OnLeave`, left as a historical record and simply overwritten the next time this user goes `OnLeave` again. |
+| PATCH `api/users/{id}/status` | `[Authorize(Roles="Admin")]` | sets `User.Status`; transitioning **to** Inactive/OnLeave auto-forwards that user's non-terminal tasks (`Status` not in `{Completed,Cancelled}`) to a fallback Active Admin in the **same `SaveChangesAsync`**, audits each (`action:"forward"`, actor `"system"`), broadcasts `taskAssignmentChanged` per forwarded task. **P9-12**: transitioning to `OnLeave` now requires `LeaveFrom`+`LeaveTo` both provided (400 if either is missing, or if `LeaveFrom > LeaveTo`) — stored on the `User` row; not cleared when transitioning away from `OnLeave`, left as a historical record and simply overwritten the next time this user goes `OnLeave` again. **Admin-target guard**: if the target user's `Role == Admin` and the requested status isn't `Active`, returns 400 without mutating anything — Admin users can only ever be `Active` via this endpoint (they're also always created `Active` by `Create`); frontend (`user-management-tab.tsx`) mirrors this by disabling the Inactive/OnLeave options for Admin rows in the status `Select`. |
 
 `FallbackUserResolver.ResolveFallbackAdminIdAsync` (`NotifyHub.Infrastructure/Users/FallbackUserResolver.cs`)
 — extracted from `EscalationJob`'s previously-inline "lowest-id Admin" lookup, now also excludes
@@ -195,21 +225,27 @@ now calls this shared resolver instead of its own inline query — same behavior
 **P9-10**: `FallbackUserResolver` gained `ResolveNewTaskAssigneeAsync(db, naturalAssigneeId, ct)` —
 a *separate* method, not a modification of `ResolveFallbackAdminIdAsync` above, since that
 method is also called by `EscalationJob` and the status-PATCH mass-reassignment, neither of
-which becomes forwarding-rule-aware (rule 2 is explicit the deactivation mass-reassignment
-stays unchanged; escalation isn't "new task creation" either). Not a centralized "Assignment
-Engine" refactor, per the plan's own explicit scoping-down. Resolution: if the natural
-assignee is Active, use them directly (no forwarding lookup at all). Otherwise look up a
-currently-in-window `TaskForwardingRule` for that user (`(From==null||From<=now) &&
-(To==null||To>=now)` — rules 4/8/9 guarantee at most one match); if found and its target is
-itself Active, use the target (rule 3, one level only — rule 5, the target's own rules are
-never followed); otherwise fall through to the unchanged `ResolveFallbackAdminIdAsync`
-Admin fallback (rule 6 covers a target that's gone Inactive since the rule was created).
-Called from `ThreadsController.CreateTask` only — `naturalAssigneeId` (the thread's
-`AssignedStaffId ?? callerId`) becomes `TaskItem.OriginalOwnerId` unconditionally, while the
-*resolved* id becomes `AssignedStaffId`; a "forward" audit entry (`actor:"system"`) is
-written whenever they differ, same convention as the existing auto-forward-on-deactivation
-entries. `TaskForwardingRulesController` (`api/task-forwarding-rules`, self-service, scoped
-server-side to the caller's own `UserId` — see below) is where rules are actually
+which becomes forwarding-rule-aware (the deactivation mass-reassignment stays unchanged;
+escalation isn't "new task creation" either). Not a centralized "Assignment Engine" refactor,
+per the plan's own explicit scoping-down.
+
+**Resolution order changed in a later session** (bug report: a forwarding rule from an
+*Active* user was silently ignored — see `docs/DECISIONS.md`). Originally, an Active natural
+assignee short-circuited the method entirely ("no forwarding lookup at all"), matching
+`STEP9_PLAN.md`'s original rule 1 ("...while the original assignee is Inactive..."). Now: a
+currently-in-window `TaskForwardingRule` for that user is looked up *unconditionally*
+(`(From==null||From<=now) && (To==null||To>=now)` — rules 4/8/9 guarantee at most one match);
+if found and its target is itself Active, use the target (rule 3, one level only — rule 5,
+the target's own rules are never followed) — **regardless of whether the natural assignee is
+Active**. Only if no rule matches (or its matched target isn't Active) does the method fall
+back to using the natural assignee directly (if they're Active), then finally the unchanged
+`ResolveFallbackAdminIdAsync` Admin fallback. Called from `ThreadsController.CreateTask`
+only — `naturalAssigneeId` (the thread's `AssignedStaffId ?? callerId`) becomes
+`TaskItem.OriginalOwnerId` unconditionally, while the *resolved* id becomes `AssignedStaffId`;
+a "forward" audit entry (`actor:"system"`) is written whenever they differ, same convention
+as the existing auto-forward-on-deactivation entries. `TaskForwardingRulesController`
+(`api/task-forwarding-rules`, open to every authenticated user for any From/To pair since a
+later session — see that controller's own section below) is where rules are actually
 created/edited/deleted.
 
 **Assignee picker + default task provider (this session)** — `ThreadsController.CreateTask`'s
@@ -221,28 +257,46 @@ same message convention as `Assign`) and used directly as `naturalAssigneeId`. O
 ?? defaultProviderId ?? callerId`, where `defaultProviderId` comes from a fourth `SettingsService`
 key, `TaskAssignmentSettings.DefaultProviderId` (`Task:DefaultProviderId`, same `0`/absent = "not
 configured" convention as `DefaultReminderTemplateId` below). Either way, the result still passes
-through the unchanged `ResolveNewTaskAssigneeAsync` (Inactive/OnLeave → `TaskForwardingRule` →
-Admin fallback), so a client-picked or default-provider assignee who's gone inactive since is still
-caught. Frontend: `components/tasks/TaskAssignmentFields.tsx` (new, shared by `CreateTaskForm.tsx`
+through `ResolveNewTaskAssigneeAsync` (`TaskForwardingRule` lookup → natural assignee if Active
+→ Admin fallback, see above), so a client-picked or default-provider assignee with an active
+forwarding rule — or one who's gone inactive since — is still caught. Frontend:
+`components/tasks/TaskAssignmentFields.tsx` (new, shared by `CreateTaskForm.tsx`
 and `NewTaskForm.tsx`) renders a read-only "Assigned from" (`useAuth()`'s current user) and an
 editable "Assigned to" `Select` (`useAssignableUsers()`), pre-filled once per form-open via the
 same priority order as the backend fallback (thread's current assignee → `useSettings()`'s
 `defaultTaskProviderId` → lowest-id Active Admin in the assignable list → the creator) so the
 visible default always matches what an omitted override would resolve to server-side.
 
-### `TaskForwardingRulesController` — `NotifyHub.Api/Controllers/TaskForwardingRulesController.cs` (`[Route("api/task-forwarding-rules")]`, added P9-10)
+### `TaskForwardingRulesController` — `NotifyHub.Api/Controllers/TaskForwardingRulesController.cs` (`[Route("api/task-forwarding-rules")]`, added P9-10, self-service scoping removed in a later session — see below)
 | Verb + route | Auth | Notes |
 |---|---|---|
-| GET `api/task-forwarding-rules` | default authenticated | Lists only the caller's own rules |
-| POST `api/task-forwarding-rules` | default authenticated | Body `{targetUserId, from?, to?, reason?}`. 400 if `targetUserId == caller` (rule 7) or target isn't `Status == Active` (rule 3); 409 if the (From,To) window overlaps an existing rule for the caller (rules 4/9, checked in-app — MySQL has no exclusion-constraint equivalent for date-range overlap) |
-| PATCH `api/task-forwarding-rules/{id}` | default authenticated | 404 unless the rule belongs to the caller (self-service only — Admins can't edit others' rules through this endpoint). Full-replace semantics (target/window/reason together), not a sparse PATCH — From/To are themselves nullable, and a sparse-PATCH "did the caller mean to clear this?" ambiguity wasn't worth the complexity for an infrequently-edited config object |
-| DELETE `api/task-forwarding-rules/{id}` | default authenticated | 404 unless the rule belongs to the caller. Rule 15 (forward/audit *history* permanently retained) refers to the per-task `AuditLog` "forward" entries already written at resolution time, not this row — deleting a rule only affects *future* resolutions (rule 10) |
+| GET `api/task-forwarding-rules` | default authenticated | Lists **every** rule (org-wide) — no longer scoped to the caller |
+| POST `api/task-forwarding-rules` | default authenticated | Body `{userId, targetUserId, from?, to?, reason?}`. 400 if `userId == targetUserId` (same user can't appear on both sides — rule 7, no longer specifically "caller as target") or `userId`/`targetUserId` don't reference existing users, or target isn't `Status == Active` (rule 3); 409 if the (From,To) window overlaps an existing rule for that same `userId` (rules 4/9, checked in-app — MySQL has no exclusion-constraint equivalent for date-range overlap) |
+| PATCH `api/task-forwarding-rules/{id}` | default authenticated | 404 only if the id doesn't exist — no ownership check, any authenticated user may edit any rule. Full-replace semantics (from-user/target/window/reason together, `userId` included), not a sparse PATCH — From/To (the date window) are themselves nullable, and a sparse-PATCH "did the caller mean to clear this?" ambiguity wasn't worth the complexity for an infrequently-edited config object |
+| DELETE `api/task-forwarding-rules/{id}` | default authenticated | 404 only if the id doesn't exist — no ownership check, any authenticated user may delete any rule. Rule 15 (forward/audit *history* permanently retained) refers to the per-task `AuditLog` "forward" entries already written at resolution time, not this row — deleting a rule only affects *future* resolutions (rule 10) |
 
-Self-service scoping (every action limited to the caller's own `UserId`, no Admin-manages-
-others-rules capability) is an inference: rule 7's "a user cannot set themselves as their own
-forwarding target" reads first-person, and Settings → Task tab (where this is configured)
-isn't Admin-gated like User Management is — flagged as a reasonable reading, not an explicit
-requirement either way.
+**Self-service scoping removed (this session)**: originally every action was limited to the
+caller's own `UserId` — flagged at the time in this file as an inference from rule 7's
+first-person reading, not an explicit requirement. Zohaib asked for an explicit "From" user
+field in the UI (previously the From side was implicit/hardcoded to the caller) plus
+same-user exclusion between From/To, and confirmed this should open the feature to
+**everyone** — any authenticated user can now create/edit/delete a rule for any From/To user
+pair, not just their own. `TaskForwardingRuleRequest`/`TaskForwardingRuleDto` both gained
+`UserId`/`Username` (the "From" user) alongside the existing `TargetUserId`/`TargetUsername`;
+`CallerId()` and its ownership checks were removed from `List`/`Update`/`Delete`;
+`HasOverlapAsync`'s per-user scoping now keys off `request.UserId` instead of the caller.
+Logged in `docs/DECISIONS.md` since it reverses a previously-flagged inference. Frontend:
+`components/settings/task-tab.tsx`'s `TaskForwardingRulesCard` gained a "Forward from"
+`Select` (defaults to the current user on mount, fully changeable) next to the existing
+"Forward to"; both option lists cross-exclude whichever user is picked in the other field
+(`fromOptions`/`targetOptions`, recomputed from `useAssignableUsers()`), and picking a value
+that matches the other field clears that other field. The date-window fields were relabeled
+"Starts"/"Ends" to disambiguate from the new user fields (both previously "From"/"To").
+
+`TaskForwardingRuleDto` also gained `FullName`/`Role`/`TargetFullName`/`TargetRole` (this
+session) — `ToDto` already `.Include()`s both `User`/`TargetUser`, so no query change. Used
+by `task-tab.tsx`'s rule list and pickers via the new `lib/userDisplay.ts` helper (see
+`TasksController` section above).
 
 ### `TasksController` — `NotifyHub.Api/Controllers/TasksController.cs` (`[Route("api/tasks")]` :17)
 `TaskDto` gained `PatientName` (bug fix, this session) — `ToDto` now reads `t.Thread.Patient.Name`,
@@ -258,11 +312,38 @@ though the thread/patient existed. `TaskCard`/`TaskDetailSheet` now render `task
 directly from the API response instead of a `threadName` prop threaded down from that lookup map,
 which `TaskBoardPageV2.tsx` no longer builds at all (`useThreads()` call removed from that page —
 `NewTaskForm`'s separate `useThreads()` for its thread-picker dropdown is unrelated and untouched).
+
+`TaskDto` also gained `OriginalOwnerUsername` (this session) — same pattern as
+`AssignedStaffUsername`/`PatientName` above: `ToDto` reads `t.OriginalOwner.Username`, so
+`List`/`Detail`/`Update`/`Forward` all added `.Include(t => t.OriginalOwner)` alongside the
+existing `.Include(t => t.AssignedStaff)`. `ThreadsController.CreateTask`'s own `ToTaskDto`
+(it builds a `TaskDto` from an in-memory `TaskItem` + separately-fetched usernames rather
+than an EF `Include`) fetches the original owner's username the same way, reusing the
+already-fetched assignee when `naturalAssigneeId == assigneeId` (unforwarded) to avoid an
+extra query. Frontend: `task-detail-sheet.tsx` now renders two lines ("Originally assigned
+to X" / "Now assigned to Y") instead of the single "Assigned to X" line whenever
+`task.originalOwnerId !== task.assignedStaffId` — i.e. only for a task that's actually been
+forwarded away from its original owner; unforwarded tasks are unaffected. `OriginalOwnerId`
+never changes on a later re-forward (`TasksController.Forward`/`Update`'s `AssignedStaffId`
+branch both only ever touch `AssignedStaffId`), so this correctly stays pinned to whoever the
+task was first assigned to even through multiple forwards. Task Card
+(`components/v2/task-card.tsx`) deliberately still shows only the current assignee — kept
+compact, per an explicit scoping call.
+
+`TaskDto` also gained `AssignedStaffFullName`/`AssignedStaffRole`/`OriginalOwnerFullName`/
+`OriginalOwnerRole` (this session, standardizing user display app-wide to "FullName (Role)")
+— no new `.Include()`s needed, `AssignedStaff`/`OriginalOwner` were already eager-loaded on
+every path that builds a `TaskDto`. Same treatment applied to `ThreadDto` (see `ThreadsController`
+below) and `TaskForwardingRuleDto` (see that controller's section below). Frontend: new shared
+helper `notifyhub-web/src/lib/userDisplay.ts` (`formatUserLabel`/`formatUserName`) replaces every
+call site's previously-duplicated `fullName ?? username` / `` `${username} (${role})` `` inline
+logic — used by every assignee/owner-facing dropdown, "signed in as" header, and task/thread
+list/card/detail label across Tasks, Inbox, and Settings.
 | Verb + route | Method:line | Auth | Notes |
 |---|---|---|---|
-| GET `api/tasks` | `List` :19 | default authenticated | filters (added increment 5): `status`, `assignedStaffId`, `description` (substring), `patientName` (substring, joins `Thread.Patient.Name` — no `Include`, EF auto-joins for a `Where` predicate), `dueFrom`/`dueTo` (range on `DueAt`), `isActive` (**defaults to `true` when omitted** — matches the Task screen's own "Active selected by default" filter). **Task grid redesign**: added `priority` (enum, 400 on invalid, same pattern as `status`), `isRecurring` (bool), `unassigned` (bool, filters `AssignedStaffId == null` — wins over `assignedStaffId` if both sent; previously there was no way to express "IS NULL" server-side), and `sortBy`/`sortDir` (replacing the hardcoded `OrderBy(DueAt)` — `sortBy` one of `dueAt`/`priority`/`status`/`patientName`/`assignedStaffUsername`, `sortDir` `asc`/`desc`; omitting both reproduces the exact previous behavior). `Priority`/`Status` are stored via `HasConversion<string>()`, so a raw `OrderBy(t => t.Priority)` would sort alphabetically ("High, Low, Medium, Urgent") — `ApplySort` (:below `ToDto`) instead orders by explicit `PriorityRank`/`StatusRank` `Expression<Func<TaskItem,int>>`s (EF translates the conditional to SQL `CASE WHEN`); `StatusRank` matches the Task board's own Kanban column order (Open/InProgress/Escalated/Completed/Cancelled), not `TASK_STATUS_CONFIG`'s differently-ordered object keys. These new params exist for the Grid view below — the Kanban Board's own fetch still applies `priority`/`status`/`assignedStaffId`(unassigned)/`isRecurring` **client-side** post-fetch (unchanged), since it needs every status simultaneously to populate its columns. **Bug fix (this session)**: `status` now also accepts a comma-separated list (e.g. `Open,InProgress,Escalated`) — parsed into `NotifyHubTaskStatus[]` and matched via `.Contains()` (EF translates to SQL `IN`); a single value still behaves exactly as before via a one-element list, fully backward compatible. Root cause this fixes: `TaskNavWidget`'s top-nav badge (`useTasks({ assignedStaffId, isActive: true })`, no `status`) fetched only `pageSize=100` sorted oldest-`DueAt`-first, then filtered to Open/InProgress/Escalated **client-side** — for any user with more than 100 `isActive` tasks (completing/cancelling a task never clears `IsActive`, so historical terminal-status rows accumulate indefinitely), the oldest 100 returned could be 100% Completed/Cancelled, silently pushing every real open task off the page. Reproduced live: the seeded Admin account had 423 `isActive` rows, the fetched page was 100% Completed/Cancelled, and a freshly self-assigned Open task never appeared in the badge even after a full reload — while Staff accounts (fewer historical tasks, under the 100 cap at the time) appeared to work fine, though the same bug would eventually hit any user once their total crossed `pageSize`. Not a role-based bug despite the symptom looking Admin-specific. |
+| GET `api/tasks` | `List` :19 | default authenticated | filters (added increment 5): `status`, `assignedStaffId`, `description` (substring), `patientName` (substring, joins `Thread.Patient.Name` — no `Include`, EF auto-joins for a `Where` predicate), `dueFrom`/`dueTo` (range on `DueAt`), `isActive` (**defaults to `true` when omitted** — matches the Task screen's own "Active selected by default" filter). **Task grid redesign**: added `priority` (enum, 400 on invalid, same pattern as `status`), `isRecurring` (bool), `unassigned` (bool, filters `AssignedStaffId == null` — wins over `assignedStaffId` if both sent; previously there was no way to express "IS NULL" server-side), and `sortBy`/`sortDir` (replacing the hardcoded `OrderBy(DueAt)` — `sortBy` one of `dueAt`/`priority`/`status`/`patientName`/`assignedStaffUsername`/`assignedAt` (this session), `sortDir` `asc`/`desc`; omitting both reproduces the exact previous behavior). `Priority`/`Status` are stored via `HasConversion<string>()`, so a raw `OrderBy(t => t.Priority)` would sort alphabetically ("High, Low, Medium, Urgent") — `ApplySort` (:below `ToDto`) instead orders by explicit `PriorityRank`/`StatusRank` `Expression<Func<TaskItem,int>>`s (EF translates the conditional to SQL `CASE WHEN`); `StatusRank` matches the Task board's own Kanban column order (Open/InProgress/Escalated/Completed/Cancelled), not `TASK_STATUS_CONFIG`'s differently-ordered object keys. These new params exist for the Grid view below — the Kanban Board's own fetch still applies `priority`/`status`/`assignedStaffId`(unassigned)/`isRecurring` **client-side** post-fetch (unchanged), since it needs every status simultaneously to populate its columns. **Bug fix (this session)**: `status` now also accepts a comma-separated list (e.g. `Open,InProgress,Escalated`) — parsed into `NotifyHubTaskStatus[]` and matched via `.Contains()` (EF translates to SQL `IN`); a single value still behaves exactly as before via a one-element list, fully backward compatible. Root cause this fixes: `TaskNavWidget`'s top-nav badge (`useTasks({ assignedStaffId, isActive: true })`, no `status`) fetched only `pageSize=100` sorted oldest-`DueAt`-first, then filtered to Open/InProgress/Escalated **client-side** — for any user with more than 100 `isActive` tasks (completing/cancelling a task never clears `IsActive`, so historical terminal-status rows accumulate indefinitely), the oldest 100 returned could be 100% Completed/Cancelled, silently pushing every real open task off the page. Reproduced live: the seeded Admin account had 423 `isActive` rows, the fetched page was 100% Completed/Cancelled, and a freshly self-assigned Open task never appeared in the badge even after a full reload — while Staff accounts (fewer historical tasks, under the 100 cap at the time) appeared to work fine, though the same bug would eventually hit any user once their total crossed `pageSize`. Not a role-based bug despite the symptom looking Admin-specific. |
 | GET `api/tasks/{id}` | `Detail` :51 | default authenticated | BR-014 auto-revert if opened by assignee (:58-64) |
-| PATCH `api/tasks/{id}` | `Update` :69 | default authenticated | BR-014 auto-revert on assignee action (:119-124); recurrence spawn via `SpawnNextOccurrenceIfDue` (:133-159, now also carries `TaskType` to the next occurrence — `Description` deliberately doesn't, it was tied to whatever prompted the completed occurrence); `AssignedStaffId` branch now rejects (400) a non-Active target (§7, increment 3) — but still never audited, a pre-existing gap increment 4's `Forward` action doesn't retroactively fix; now also applies `Description`/`TaskType`(validated)/`IsActive` (increment 5) |
+| PATCH `api/tasks/{id}` | `Update` :69 | default authenticated | BR-014 auto-revert on assignee action (:119-124); recurrence spawn via `SpawnNextOccurrenceIfDue` (:133-159, carries `TaskType` and, **as of this session, `Description`** to the next occurrence — reversed from the original "Description deliberately doesn't carry over" call, see `docs/DECISIONS.md` 2026-07-17: a description-filtered Task Board/Grid view silently lost the series after the first completion since the spawned row's `Description` was null, which read as "recurrence isn't creating a new task"); `AssignedStaffId` branch now rejects (400) a non-Active target (§7, increment 3) — but still never audited, a pre-existing gap increment 4's `Forward` action doesn't retroactively fix; now also applies `Description`/`TaskType`(validated)/`IsActive` (increment 5) |
 | POST `api/tasks/{id}/forward` | `Forward` (added increment 4) | default authenticated | manual task forwarding (§1) — body `{targetUserId, note?}`; rejects (400) a non-Active target; always audits (`action:"forward"`, detail includes the note if given) unlike the plain `PATCH` reassignment path above; broadcasts `taskAssignmentChanged`; deliberately leaves workflow `Status` untouched (forwarding an Escalated task keeps it Escalated for the new assignee — BR-014's auto-revert is about the current assignee acting on their own task, not who forwarded it to them) |
 
 ### `TemplatesController` — `NotifyHub.Api/Controllers/TemplatesController.cs` (`[Route("api/templates")]` :14)
@@ -270,7 +351,7 @@ which `TaskBoardPageV2.tsx` no longer builds at all (`useThreads()` call removed
 |---|---|---|---|
 | GET `api/templates` | `List` :17 | default authenticated | optional `isActive` filter (increment 8) — omit to see everything, unlike Tasks' "defaults to Active". **New (this session)**: optional `communicationMode` filter (`Sms`/`Email`/`Letter`, 400 on invalid, same validate-or-400 pattern as `MessagesController.List`'s `status`) — used by the two send-time template pickers (composer "Insert template" in `conversation-panel.tsx`, Reminder SMS dialog) to only show `Sms` templates; the Templates management screen (`TemplatesPageV2.tsx`) omits it to see every mode. |
 | POST `api/templates` | `Create` :35 | default authenticated | new templates default `IsActive=true`. `CommunicationMode` optional in `CreateTemplateRequest` (defaults `Sms` server-side when omitted); `BookmarkIds` optional, looked up and assigned to the new `MessageTemplate.Bookmarks` collection. **`TriggerType` removed (this session)** — was `[Required]` on create/PATCH-optional on update, both now gone along with the enum-parse-or-400 validation blocks; see the `MessageTemplate` schema row above for why. |
-| PATCH `api/templates/{id}` | `Update` :59-89 | default authenticated | now also applies `IsActive` (increment 8); **P9-05**: when `Body` changes, sweeps every `Queued` `OutboundMessage` with a matching `TemplateId` and nulls `RenderedBody` — dual-safety net #1 ("no wrong SMS could send" per Zohaib's explicit call). Net #2, `MessageDispatcher.DispatchOneAsync`, already unconditionally re-renders from the live template on every dispatch attempt for any `TemplateId`-linked message — verified (not assumed) by reading the code: every current production creation path (`ThreadsController.Reply`/`CreateConversation`/`CreateReminder`, plus the now-retired `ReminderScheduler` at the time this was written) leaves `RenderedBody` null, so net #2 alone already fully covers propagation today; net #1 is kept anyway per the explicit dual-safety request and would be the only net that mattered if a future creation path ever pre-rendered `RenderedBody`. Same InMemory-vs-real-provider branch as `WebhooksController.Inbound`'s `UnreadCount` fix (`ExecuteUpdateAsync`'s `SetProperty` isn't translatable by the InMemory provider used by the fast test suite). **New (this session)**: also applies `CommunicationMode` (validated, 400 on invalid) and `BookmarkIds` (full-replace semantics when provided — same "full replace, not sparse" convention as `TaskForwardingRulesController`'s PATCH, not additive). |
+| PATCH `api/templates/{id}` | `Update` :93-153 | default authenticated | now also applies `IsActive` (increment 8); **P9-05 (updated this session)**: when `Body` changes, eagerly re-renders `RenderedBody` on every `Queued` `OutboundMessage` with a matching `TemplateId` — right away in the same request, via the new shared `MessageBodyRenderer.RenderAsync` (`NotifyHub.Infrastructure/Messaging/MessageBodyRenderer.cs`, extracted from what used to be `MessageDispatcher`'s private `RenderAsync`) — dual-safety net #1. This replaced the old "null out `RenderedBody` and let it render lazily at dispatch" behavior: now content is refreshed immediately on edit, not deferred until the message is actually due. `ScheduledAt`/`ExpiresAt`/`Status` are untouched, so send timing is unaffected. Net #2, `MessageDispatcher.DispatchOneAsync`'s `RenderedBody is null` guard, remains a defensive backstop for any row that still reaches dispatch with a null body (e.g. a Reminder SMS created with no committed body, rule 31 — untouched by this sweep unless its template is also edited). The old InMemory-vs-real-provider `ExecuteUpdateAsync` branch is gone — a per-row render can't be expressed as a bulk update, so both providers now share one tracked-loop path. **New (this session)**: also applies `CommunicationMode` (validated, 400 on invalid) and `BookmarkIds` (full-replace semantics when provided — same "full replace, not sparse" convention as `TaskForwardingRulesController`'s PATCH, not additive). |
 
 Applies only non-null fields from `UpdateTemplateRequest` (`NotifyHub.Api/Templates/Dtos/UpdateTemplateRequest.cs`) — added step 6 to close §6b's "create/edit" gap (only `GET`/`POST` existed before).
 
@@ -391,7 +472,7 @@ Race-safe find-or-create: `FindOrCreateThreadAsync` (:119-141) — see §5.
 | Job | File:line | Trigger | What it does |
 |---|---|---|---|
 | `DispatcherWorker` | `NotifyHub.Worker/DispatcherWorker.cs:8-35` | Fixed 5s poll loop (:10, hardcoded, not config-driven); 5s error-retry delay (:11) | Resolves `MessageDispatcher` per scope, calls `DispatchDueMessagesAsync` (:22) |
-| `MessageDispatcher` | `NotifyHub.Infrastructure/Messaging/MessageDispatcher.cs` | Called by `DispatcherWorker` | **Increment 10**: `DispatchDueMessagesAsync` now starts with a single Quiet Hours gate (`SettingsService.IsQuietHoursNowAsync` — if true, returns 0 immediately, no per-message state change; due messages simply stay `Queued` and get picked up on the next non-quiet poll) and the due-query also requires `ScheduledAt == null \|\| ScheduledAt <= now`. Otherwise unchanged: batch of 10 `Queued` messages due now, ordered by `CreatedAt`. `DispatchOneAsync` (:37-90): opt-out short-circuit (:42-50), renders template if set **and `RenderedBody` is still null** (post-Step-9: gated so a committed Reminder SMS body — rule 31 reversal, see §4b — is never overwritten; previously rendered unconditionally whenever `TemplateId` was set), POSTs to mock gateway (:66-67), on failure increments attempt count and either terminalizes via `RetryBackoffPolicy.IsTerminal` (:77-81) or requeues with backoff (:83-86). `RenderAsync` (:92-113) parses `TriggerReference` for `{{appointment_time}}` (:101-109). Constructor now also takes `SettingsService` — any direct `new MessageDispatcher(...)` call site (tests) needs the 4th arg. **P9-07**: `DispatchDueMessagesAsync` now calls a new private `ExpireOverdueMessagesAsync` *before* the Quiet Hours gate (not after) — marks `Expired` any `Queued` message with a passed `ExpiresAt`, sets `ExpiryReason` (fact-based: "before any send attempt"/"after N send attempt(s)", not a guessed specific cause like "quiet hours" — no per-message signal exists to know that for certain), adds a `DeliveryStatusHistory` row, audits `action:"expired"`. Deliberately checked unconditionally regardless of Quiet Hours: a message can sit `Queued` through its whole 12h window while Quiet Hours suppresses the batch entirely, which is the realistic way expiry gets hit in practice (BR-011's own retry/backoff, max ~31 min across 6 attempts, almost never reaches 12h alone) — if expiry ran after the Quiet Hours early-return, it would never fire during that exact scenario. Verified live end-to-end against the real Docker/MySQL stack (worker stopped, a message created and its `ExpiresAt` backdated via direct SQL, worker restarted, confirmed `Expired` + history + audit all landed on the next 5s poll). |
+| `MessageDispatcher` | `NotifyHub.Infrastructure/Messaging/MessageDispatcher.cs` | Called by `DispatcherWorker` | **Increment 10**: `DispatchDueMessagesAsync` now starts with a single Quiet Hours gate (`SettingsService.IsQuietHoursNowAsync` — if true, returns 0 immediately, no per-message state change; due messages simply stay `Queued` and get picked up on the next non-quiet poll) and the due-query also requires `ScheduledAt == null \|\| ScheduledAt <= now`. Otherwise unchanged: batch of 10 `Queued` messages due now, ordered by `CreatedAt`. `DispatchOneAsync` (:93-156): opt-out short-circuit (:98-106), renders template if set **and `RenderedBody` is still null** (post-Step-9: gated so a committed Reminder SMS body — rule 31 reversal, see §4b — is never overwritten; previously rendered unconditionally whenever `TemplateId` was set), POSTs to mock gateway (:132-133), on failure increments attempt count and either terminalizes via `RetryBackoffPolicy.IsTerminal` (:143-147) or requeues with backoff (:148-151). **Rendering extracted (this session)** into a new shared `MessageBodyRenderer` service (`NotifyHub.Infrastructure/Messaging/MessageBodyRenderer.cs`, `RenderAsync(message, templateBody, ct)`, DI-registered in both `NotifyHub.Api/Program.cs` and `NotifyHub.Worker/Program.cs`) — parses `TriggerReference`/`EventTime` for `{{appointment_time}}` same as before, just no longer a private method here, so `TemplatesController.Update`'s eager re-render (P9-05, see §3) can reuse the exact same logic instead of duplicating it. Constructor now takes `SettingsService` and `MessageBodyRenderer` — any direct `new MessageDispatcher(...)` call site (tests) needs both. **P9-07**: `DispatchDueMessagesAsync` now calls a new private `ExpireOverdueMessagesAsync` *before* the Quiet Hours gate (not after) — marks `Expired` any `Queued` message with a passed `ExpiresAt`, sets `ExpiryReason` (fact-based: "before any send attempt"/"after N send attempt(s)", not a guessed specific cause like "quiet hours" — no per-message signal exists to know that for certain), adds a `DeliveryStatusHistory` row, audits `action:"expired"`. Deliberately checked unconditionally regardless of Quiet Hours: a message can sit `Queued` through its whole 12h window while Quiet Hours suppresses the batch entirely, which is the realistic way expiry gets hit in practice (BR-011's own retry/backoff, max ~31 min across 6 attempts, almost never reaches 12h alone) — if expiry ran after the Quiet Hours early-return, it would never fire during that exact scenario. Verified live end-to-end against the real Docker/MySQL stack (worker stopped, a message created and its `ExpiresAt` backdated via direct SQL, worker restarted, confirmed `Expired` + history + audit all landed on the next 5s poll). |
 | `EscalationWorker` | `NotifyHub.Worker/EscalationWorker.cs:8-36` | Config-driven poll, `Escalation:PollIntervalSeconds` default 60s (:17); 5s error-retry delay (:13) | Resolves `EscalationJob` per scope, calls `EscalateOverdueTasksAsync` (:26) |
 | `EscalationJob` | `NotifyHub.Infrastructure/Escalation/EscalationJob.cs` | Called by `EscalationWorker` | `EscalateOverdueTasksAsync` (:19-61): batch of 100 overdue non-terminal tasks (:23-29), resolves lowest-id Admin as fallback (:36-40), sets `Escalated` + audits (:45-47), reassigns + audits "auto-reassigned" if not already assigned to that admin (:49-54). **P9-12**: `EscalationWorker` also calls a new `RevertExpiredLeaveAsync` every poll cycle (piggybacking on this existing periodic job/poll rather than a new worker process, per the plan) — finds every `Status == OnLeave` user whose `LeaveTo` has passed, flips them back to `Active`, audits (`action:"status-change"`, actor `"system"`, entityType `"User"`). Unrelated to task escalation, just co-located for the free poll loop. |
 **Logging**: `NotifyHub.Worker/appsettings.json` and `appsettings.Development.json` set
@@ -495,7 +576,7 @@ Standard/appointment-triggered sends carry `TriggerReference`/no `EventTime`).
 ### API — `ThreadsController` (`NotifyHub.Api/Controllers/ThreadsController.cs`)
 | Verb + route | Notes |
 |---|---|
-| POST `api/threads/{id}/reminders` | `CreateReminder` — body `{templateId, eventTime, body?}`, no manual Scheduled Send Time field (rule 4). Loads thread/patient/template (404 if either missing), snapshots current `ReminderSettings`, computes `ScheduledSendTime`/`ExpiryTime`, 400 if the computed Scheduled Send Time is already in the past (rules 8/9/10 — the real server-side enforcement, not just a UI hint), 409 on a duplicate (patientId+templateId+eventTime+offset) via `IdempotencyKeyGenerator.GenerateForReminder` + the existing unique index on `IdempotencyKey` as the race backstop. **Rule 31 reversal (post-Step-9 fix)**: `TemplateId` stays linked (kept for the idempotency hash/reporting above), but `body` — the Reminder SMS dialog's now-freely-editable text — is committed as `RenderedBody` at creation when provided (`string.IsNullOrWhiteSpace(request.Body) ? null : request.Body`); omitting `body` preserves the original "`RenderedBody = null`, rendered fresh at dispatch from the live template" behavior for backward compatibility. `MessageDispatcher.DispatchOneAsync`'s auto-render is now gated on `RenderedBody is null`, so a committed body is never overwritten at dispatch — but P9-05's template-edit sweep (`TemplatesController.Update`) still applies unmodified: editing the linked template nulls `RenderedBody` for any matching `Queued` message including a committed reminder, forcing a fresh render next dispatch (deliberate, not scoped to exclude reminders). Audits `reminder-created`. |
+| POST `api/threads/{id}/reminders` | `CreateReminder` — body `{templateId, eventTime, body?}`, no manual Scheduled Send Time field (rule 4). Loads thread/patient/template (404 if either missing), snapshots current `ReminderSettings`, computes `ScheduledSendTime`/`ExpiryTime`, 400 if the computed Scheduled Send Time is already in the past (rules 8/9/10 — the real server-side enforcement, not just a UI hint), 409 on a duplicate (patientId+templateId+eventTime+offset) via `IdempotencyKeyGenerator.GenerateForReminder` + the existing unique index on `IdempotencyKey` as the race backstop. **Rule 31 reversal (post-Step-9 fix)**: `TemplateId` stays linked (kept for the idempotency hash/reporting above), but `body` — the Reminder SMS dialog's now-freely-editable text — is committed as `RenderedBody` at creation when provided (`string.IsNullOrWhiteSpace(request.Body) ? null : request.Body`); omitting `body` preserves the original "`RenderedBody = null`, rendered fresh at dispatch from the live template" behavior for backward compatibility. `MessageDispatcher.DispatchOneAsync`'s auto-render is now gated on `RenderedBody is null`, so a committed body is never overwritten at dispatch — but P9-05's template-edit sweep (`TemplatesController.Update`) still applies: editing the linked template eagerly re-renders `RenderedBody` for any matching `Queued` message including a committed reminder, immediately in the same request (deliberate, not scoped to exclude reminders). Audits `reminder-created`. |
 
 ### API — `MessagesController` (`NotifyHub.Api/Controllers/MessagesController.cs`)
 Class-level auth is no longer `[Authorize(Roles="Admin")]` — only `List` (the P9-06 report)
@@ -739,12 +820,19 @@ rather than deferred — no longer an open item.
   their existing `showTaskForm`/`setShowTaskForm` state straight through as `open`/`onOpenChange`.
 - `components/tasks/NewTaskForm.tsx` — thread-picker + priority + due date, `TaskType`/`Description`
   (same optional-blank behavior as `CreateTaskForm`, increment 7). **P9-11**: same recurring-toggle
-  UI as `CreateTaskForm.tsx` above. **(this session)** Priority/Task type/thread-picker moved to
-  shadcn `Select`; gained the same `TaskAssignmentFields` block, re-deriving its default whenever
-  the selected thread changes (the thread picker lives inside this form, unlike `CreateTaskForm`
-  where the thread is already fixed). Not itself wrapped in a `Dialog` — v2's `TaskBoardPageV2.tsx`
+  UI as `CreateTaskForm.tsx` above. Priority/Task type/thread-picker use shadcn `Select`; gained the
+  same `TaskAssignmentFields` block. Not itself wrapped in a `Dialog` — v2's `TaskBoardPageV2.tsx`
   already wraps it in one externally (with a heading); legacy `TaskBoardPage.tsx` still renders it
-  inline, unchanged structurally.
+  inline, unchanged structurally. **Bug fix (this session)**: `handleThreadChange` used to reset
+  `assignedStaffId` to `""` on every thread pick, on the theory that "Assigned to" should
+  re-derive from the newly-selected thread's current owner — in practice this silently blanked
+  or swapped away from the logged-in-user default the moment a patient/thread was chosen. Now
+  `handleThreadChange` only sets `threadId`; `TaskAssignmentFields`'s own `value !== ""` guard
+  (`components/tasks/TaskAssignmentFields.tsx:30-42`) means its default-chain effect fires once,
+  before any thread is picked, and "Assigned to" — default or manually changed — is left alone
+  by every subsequent thread selection. `CreateTaskForm.tsx` is unaffected (its
+  `threadAssignedStaffId` prop is fixed for the dialog's lifetime; it only resets on dialog
+  reopen, which is correct/unrelated).
 - `components/tasks/TaskAssignmentFields.tsx` — **(new, this session)** shared "Assigned from"
   (read-only, `useAuth()`) / "Assigned to" (`Select` over `useAssignableUsers()`) block used by both
   forms above — see the "Assignee picker + default task provider" note under `ThreadsController` in
@@ -1183,6 +1271,23 @@ regression. Out of scope to fix here (not part of `STEP9_PLAN.md`); flagged in S
   date now toasts an error client-side instead of falling through to the server's
   priority-based `TaskDueDateDefaults` default — the due date is no longer optional from this
   form. (P9-03 will later swap these native inputs for the shared `DateTimePicker`.)
+  **FR-008 wired up on the frontend (this session)**: Due Date was still required and blank on
+  open (no client-side default existed since P9-01d, above), forcing a manual pick every time
+  even though `TaskDueDateDefaults`/Settings → Task tab already documented a priority-based
+  suggestion. New `lib/taskDueDateDefaults.ts` mirrors the backend's `TaskDueDateDefaults
+  .DefaultDueAt` (Urgent +4h/High +1day/Medium +3days/Low +7days — must stay in sync with
+  `NotifyHub.Domain/Tasks/TaskDueDateDefaults.cs` and `task-tab.tsx`'s `DEFAULT_DUE_DATES`
+  display). Both forms now initialize `dueAt` to the Medium-priority default and recompute it
+  on every Priority change via a new `handlePriorityChange`, *until* the user edits Due Date
+  directly (`dueAtTouched` flag, set by a new `handleDueAtChange` wrapping the `DateTimePicker`'s
+  `onChange`) — same "default until touched, then hands-off" pattern as
+  `TaskAssignmentFields`'s "Assigned to". `CreateTaskForm.tsx`'s existing reopen effect (which
+  already reset `assignedStaffId` since that component stays mounted across dialog
+  open/closes) now also resets `priority`/`dueAt`/`dueAtTouched` on reopen, so a later reopen
+  shows a fresh "now + offset" suggestion rather than a stale one. `NewTaskForm.tsx` needed no
+  such reset — its parent conditionally mounts it fresh each "New task" click. No backend
+  change: `ThreadsController.CreateTask`'s `request.DueAt ?? TaskDueDateDefaults.DefaultDueAt(...)`
+  fallback is unchanged and still covers any other API caller that omits `DueAt`.
 - **`OffsetHours` removed from the Templates UI** (P9-01e) — `TemplateFormValues` no longer has
   an `offsetHours` field; `template-form.tsx` dropped the input and its validation.
   `TemplatesPageV2.handleCreate` sends a fixed `LEGACY_OFFSET_HOURS_PLACEHOLDER = 24` since the

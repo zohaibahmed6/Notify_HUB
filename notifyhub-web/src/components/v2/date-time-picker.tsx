@@ -32,6 +32,16 @@ function formatDatePart(date: Date) {
   return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
 }
 
+/** Formats a `Date` into this picker's `"yyyy-MM-ddTHH:mm"` value shape, for callers that
+ * need to seed a default value in the exact format `onChange` produces. */
+export function toDateTimeLocalValue(date: Date): string {
+  return `${formatDatePart(date)}T${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+}
+
+function sameCalendarDay(a: Date, b: Date) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
 function formatDisplay(value: string, mode: "date" | "datetime") {
   const { date, hour24, minute } = parseValue(value);
   if (!date) return null;
@@ -62,6 +72,8 @@ function ClockFace({
   onChangeMinute,
   onPhaseSettled,
   onSelectPhase,
+  minHour24,
+  minMinute,
 }: {
   hour24: number;
   minute: number;
@@ -70,12 +82,23 @@ function ClockFace({
   onChangeMinute: (minute: number) => void;
   onPhaseSettled: () => void;
   onSelectPhase: (phase: "hour" | "minute") => void;
+  /** When set, the selected day is the minimum-allowed day — hours/minutes earlier than
+   * this floor are dimmed and un-pickable (dragging into them snaps to the floor). */
+  minHour24?: number;
+  minMinute?: number;
 }) {
   const faceRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
 
   const isPM = hour24 >= 12;
   const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
+
+  // Clamps a candidate hour/minute up to the floor rather than rejecting it outright — a
+  // drag that crosses into the disabled region should feel like it "sticks" at the earliest
+  // allowed value, not like the hand stopped responding.
+  const clampHour = (next: number) => (minHour24 !== undefined && next < minHour24 ? minHour24 : next);
+  const clampMinute = (next: number, forHour24: number) =>
+    minHour24 !== undefined && minMinute !== undefined && forHour24 === minHour24 && next < minMinute ? minMinute : next;
 
   const applyFromPointer = (clientX: number, clientY: number) => {
     const el = faceRef.current;
@@ -85,10 +108,10 @@ function ClockFace({
       let h12 = Math.round(deg / 30) % 12;
       if (h12 === 0) h12 = 12;
       const nextHour24 = isPM ? (h12 === 12 ? 12 : h12 + 12) : h12 === 12 ? 0 : h12;
-      onChangeHour(nextHour24);
+      onChangeHour(clampHour(nextHour24));
     } else {
       const m = Math.round(deg / 6) % 60;
-      onChangeMinute(m);
+      onChangeMinute(clampMinute(m, hour24));
     }
   };
 
@@ -139,14 +162,15 @@ function ClockFace({
         <div className="ml-2 flex flex-col text-xs font-medium text-muted-foreground">
           <button
             type="button"
-            onClick={() => onChangeHour(hour12 === 12 ? 0 : hour12)}
-            className={cn("rounded px-1.5", !isPM && "bg-primary text-primary-foreground")}
+            disabled={minHour24 !== undefined && minHour24 >= 12}
+            onClick={() => onChangeHour(clampHour(hour12 === 12 ? 0 : hour12))}
+            className={cn("rounded px-1.5 disabled:opacity-30", !isPM && "bg-primary text-primary-foreground")}
           >
             AM
           </button>
           <button
             type="button"
-            onClick={() => onChangeHour(hour12 === 12 ? 12 : hour12 + 12)}
+            onClick={() => onChangeHour(clampHour(hour12 === 12 ? 12 : hour12 + 12))}
             className={cn("rounded px-1.5", isPM && "bg-primary text-primary-foreground")}
           >
             PM
@@ -177,6 +201,13 @@ function ClockFace({
 
         {ticks.map(({ value, angleDeg }) => {
           const active = phase === "hour" ? value % 12 === hour12 % 12 : value === minute || (value === 0 && minute >= 58);
+          // For hour ticks, `value` is a 12-hour-clock number shared by both AM/PM — resolve
+          // it against the currently-selected half of the day to know its real hour24 before
+          // comparing against the floor.
+          const disabled =
+            phase === "hour"
+              ? minHour24 !== undefined && (isPM ? (value === 12 ? 12 : value + 12) : value === 12 ? 0 : value) < minHour24
+              : minHour24 !== undefined && minMinute !== undefined && hour24 === minHour24 && value < minMinute;
           const x = 50 + 38 * Math.sin((angleDeg * Math.PI) / 180);
           const y = 50 - 38 * Math.cos((angleDeg * Math.PI) / 180);
           return (
@@ -184,7 +215,7 @@ function ClockFace({
               key={value}
               className={cn(
                 "pointer-events-none absolute flex size-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full text-sm tabular-nums",
-                active ? "text-primary-foreground" : "text-foreground",
+                disabled ? "opacity-30" : active ? "text-primary-foreground" : "text-foreground",
               )}
               style={{ left: `${x}%`, top: `${y}%` }}
             >
@@ -204,6 +235,7 @@ export function DateTimePicker({
   mode = "datetime",
   timeRequired = true,
   minDate,
+  enforceMinTime = false,
   placeholder = "Select date",
   disabled,
   id,
@@ -221,6 +253,11 @@ export function DateTimePicker({
   mode?: "date" | "datetime";
   timeRequired?: boolean;
   minDate?: Date;
+  /** Opt-in only: when true AND minDate is set, the clock face also blocks times earlier
+   * than minDate's own time-of-day on minDate's day (dimmed ticks, clamped drags) — not
+   * just earlier whole days. Off by default so existing/other minDate callers keep
+   * today's day-only block; only the Reminder SMS dialog's Event Time field sets this. */
+  enforceMinTime?: boolean;
   placeholder?: string;
   disabled?: boolean;
   id?: string;
@@ -265,6 +302,12 @@ export function DateTimePicker({
 
   const currentHour24 = parsed.hour24 ?? 9;
   const currentMinute = parsed.minute ?? 0;
+
+  // Only enforce a time-of-day floor when explicitly opted in (enforceMinTime) AND the
+  // selected day IS minDate's day — any later day has no time-of-day restriction (the
+  // Calendar below already blocks any earlier day outright, for every minDate caller).
+  const isMinDay =
+    enforceMinTime && minDate !== undefined && parsed.date !== undefined && sameCalendarDay(parsed.date, minDate);
 
   const display = formatDisplay(value, mode);
 
@@ -348,6 +391,8 @@ export function DateTimePicker({
                   handleOpenChange(false);
                 }
               }}
+              minHour24={isMinDay ? minDate!.getHours() : undefined}
+              minMinute={isMinDay ? minDate!.getMinutes() : undefined}
             />
           </div>
         )}

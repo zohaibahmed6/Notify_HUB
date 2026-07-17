@@ -49,6 +49,7 @@ public class EscalationJob(NotifyHubDbContext db, ILogger<EscalationJob> logger)
             if (fallbackAdminId is not null && task.AssignedStaffId != fallbackAdminId)
             {
                 task.AssignedStaffId = fallbackAdminId;
+                task.AssignedAt = DateTime.UtcNow;
                 var previousUsername = previousAssignee is { } prevId && usernames.TryGetValue(prevId, out var prevName) ? prevName : "unassigned";
                 AuditLogger.Add(db, actor: "system", action: "assignment", entityType: "TaskItem", entityId: task.Id,
                     detail: $"Task auto-reassigned from {previousUsername} to {usernames[fallbackAdminId.Value]} (escalated, overdue)");

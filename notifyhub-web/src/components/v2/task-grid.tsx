@@ -9,6 +9,7 @@ import { TableRowSkeleton } from "@/components/v2/skeletons";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
+import { formatUserLabel, formatUserName } from "@/lib/userDisplay";
 import type { TaskDto, TaskSortBy, TaskSortDir } from "@/types/tasks";
 
 // Modeled on SmsHistoryPage's grid (Table primitives, sticky header, mobile stacked-card
@@ -159,8 +160,17 @@ export function TaskGrid({
                   <TableCell>
                     {task.assignedStaffUsername ? (
                       <div className="flex min-w-0 items-center gap-1.5">
-                        <InitialsAvatar name={task.assignedStaffUsername} size="sm" />
-                        <span className="truncate text-xs text-muted-foreground">{task.assignedStaffUsername}</span>
+                        <InitialsAvatar
+                          name={formatUserName({ fullName: task.assignedStaffFullName, username: task.assignedStaffUsername })}
+                          size="sm"
+                        />
+                        <span className="truncate text-xs text-muted-foreground">
+                          {formatUserLabel({
+                            fullName: task.assignedStaffFullName,
+                            username: task.assignedStaffUsername,
+                            role: task.assignedStaffRole,
+                          })}
+                        </span>
                       </div>
                     ) : (
                       <span className="text-xs text-muted-foreground">Unassigned</span>

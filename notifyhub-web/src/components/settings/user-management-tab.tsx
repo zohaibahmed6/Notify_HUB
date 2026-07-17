@@ -126,12 +126,15 @@ export function UserManagementTab() {
                     <TableCell>
                       <div className="space-y-1">
                         <Select value={u.status} onValueChange={(v) => handleStatusChange(u, v as UserStatus)}>
-                          <SelectTrigger className="h-8 w-32 text-xs">
+                          <SelectTrigger
+                            className="h-8 w-32 text-xs"
+                            title={u.role === "Admin" ? "Admin users must remain Active" : undefined}
+                          >
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
                             {STATUSES.map((s) => (
-                              <SelectItem key={s} value={s}>
+                              <SelectItem key={s} value={s} disabled={u.role === "Admin" && s !== "Active"}>
                                 {s}
                               </SelectItem>
                             ))}

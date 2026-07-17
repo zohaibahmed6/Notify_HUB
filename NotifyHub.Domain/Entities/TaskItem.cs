@@ -18,6 +18,11 @@ public class TaskItem
     public long? AssignedStaffId { get; set; }
     public User? AssignedStaff { get; set; }
 
+    /// Set whenever AssignedStaffId is actually changed (creation, PATCH, Forward, or a
+    /// recurrence spawn) — null on legacy rows/never-assigned tasks, which sort last under a
+    /// most-recently-assigned-first order (we genuinely don't know when they were assigned).
+    public DateTime? AssignedAt { get; set; }
+
     /// Set at creation; recurrence always reassigns here regardless of who the previous
     /// occurrence was escalated to or completed by (BR-007d).
     public long OriginalOwnerId { get; set; }

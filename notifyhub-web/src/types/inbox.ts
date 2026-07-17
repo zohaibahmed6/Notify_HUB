@@ -1,3 +1,5 @@
+import type { UserRole } from "@/types/users";
+
 export interface PagedResult<T> {
   items: T[];
   page: number;
@@ -12,6 +14,8 @@ export interface ThreadDto {
   patientOptedOut: boolean;
   assignedStaffId: number | null;
   assignedStaffUsername: string | null;
+  assignedStaffFullName: string | null;
+  assignedStaffRole: UserRole | null;
   unreadCount: number;
 }
 

@@ -22,11 +22,13 @@ builder.Services.AddHttpClient("gateway", (services, client) =>
 });
 
 builder.Services.AddScoped<SettingsService>();
+builder.Services.AddScoped<MessageBodyRenderer>();
 builder.Services.AddScoped(sp => new MessageDispatcher(
     sp.GetRequiredService<NotifyHubDbContext>(),
     sp.GetRequiredService<IHttpClientFactory>().CreateClient("gateway"),
     sp.GetRequiredService<ILogger<MessageDispatcher>>(),
-    sp.GetRequiredService<SettingsService>()));
+    sp.GetRequiredService<SettingsService>(),
+    sp.GetRequiredService<MessageBodyRenderer>()));
 
 builder.Services.AddHostedService<DispatcherWorker>();
 

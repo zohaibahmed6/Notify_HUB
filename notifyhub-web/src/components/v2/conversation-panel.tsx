@@ -7,6 +7,7 @@ import { useTemplates } from "@/hooks/useTemplates";
 import { apiClient } from "@/lib/apiClient";
 import { errorMessage } from "@/lib/errorMessage";
 import { formatUtc } from "@/lib/dateUtc";
+import { formatUserLabel } from "@/lib/userDisplay";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -33,6 +34,7 @@ export function ConversationPanelV2({ threadId, onBack }: { threadId: number; on
   const reply = useReplyMutation(threadId);
 
   const [draft, setDraft] = useState("");
+  const [templateId, setTemplateId] = useState("");
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [showSchedule, setShowSchedule] = useState(false);
   const [scheduledAt, setScheduledAt] = useState("");
@@ -48,6 +50,7 @@ export function ConversationPanelV2({ threadId, onBack }: { threadId: number; on
   const pageMessages = thread?.messages.items ?? [];
   const allMessages = [...olderMessages, ...pageMessages];
   const hasMoreOlder = thread !== undefined && thread !== null && allMessages.length < thread.messages.totalCount;
+  const lastInboundMessage = [...allMessages].reverse().find((m) => m.direction === "inbound");
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -59,6 +62,7 @@ export function ConversationPanelV2({ threadId, onBack }: { threadId: number; on
   useEffect(() => {
     wasAtBottomRef.current = true;
     setDraft("");
+    setTemplateId("");
     setShowTaskForm(false);
     setShowSchedule(false);
     setScheduledAt("");
@@ -107,6 +111,7 @@ export function ConversationPanelV2({ threadId, onBack }: { threadId: number; on
         scheduledAt: showSchedule && scheduledAt ? new Date(scheduledAt).toISOString() : undefined,
       });
       setDraft("");
+      setTemplateId("");
       setShowSchedule(false);
       setScheduledAt("");
       toast.success(showSchedule && scheduledAt ? "Message scheduled" : "Message sent");
@@ -120,12 +125,13 @@ export function ConversationPanelV2({ threadId, onBack }: { threadId: number; on
   // the composer — the result lands in the editable textarea, same as any ad-hoc reply,
   // not a locked preview. Falls back to the raw template body if the preview call fails,
   // rather than leaving the composer empty.
-  const handleInsertTemplate = async (templateId: string) => {
-    const template = templates?.find((t) => String(t.id) === templateId);
+  const handleInsertTemplate = async (selectedTemplateId: string) => {
+    const template = templates?.find((t) => String(t.id) === selectedTemplateId);
     if (!template) return;
+    setTemplateId(selectedTemplateId);
     try {
       const preview = await apiClient.get<{ renderedBody: string }>(
-        `/api/threads/${threadId}/templates/${templateId}/preview`,
+        `/api/threads/${threadId}/templates/${selectedTemplateId}/preview`,
       );
       setDraft(preview.renderedBody);
     } catch (error) {
@@ -165,7 +171,12 @@ export function ConversationPanelV2({ threadId, onBack }: { threadId: number; on
             <div className="truncate font-medium">{thread.patientName}</div>
             {thread.assignedStaffUsername && (
               <div className="truncate text-xs text-muted-foreground">
-                Assigned to {thread.assignedStaffUsername}
+                Assigned to{" "}
+                {formatUserLabel({
+                  fullName: thread.assignedStaffFullName,
+                  username: thread.assignedStaffUsername,
+                  role: thread.assignedStaffRole,
+                })}
               </div>
             )}
           </div>
@@ -193,6 +204,7 @@ export function ConversationPanelV2({ threadId, onBack }: { threadId: number; on
       <CreateTaskForm
         threadId={threadId}
         threadAssignedStaffId={thread.assignedStaffId}
+        lastInboundMessageBody={lastInboundMessage?.body}
         open={showTaskForm}
         onOpenChange={setShowTaskForm}
       />
@@ -281,7 +293,7 @@ export function ConversationPanelV2({ threadId, onBack }: { threadId: number; on
       <form onSubmit={handleReply} className="shrink-0 border-t p-3">
         {!thread.patientOptedOut && (
           <div className="mb-2 flex flex-wrap items-center gap-2">
-            <Select onValueChange={handleInsertTemplate}>
+            <Select value={templateId} onValueChange={handleInsertTemplate}>
               <SelectTrigger className="h-7 w-44 gap-1.5 text-xs">
                 <FileText className="size-3.5" />
                 <SelectValue placeholder="Insert template" />

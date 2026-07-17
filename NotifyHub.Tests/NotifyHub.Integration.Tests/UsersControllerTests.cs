@@ -167,6 +167,44 @@ public class UsersControllerTests(CustomWebApplicationFactory factory) : IClassF
         Assert.NotNull(updated.LeaveTo);
     }
 
+    [Fact]
+    public async Task UpdateStatus_AdminTarget_RejectsInactiveAndOnLeave()
+    {
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
+        var adminTarget = new User { Username = "admin-target-9006", PasswordHash = "unused", Role = UserRole.Admin, Status = UserStatus.Active };
+        db.Users.Add(adminTarget);
+        await db.SaveChangesAsync();
+
+        var (client, _) = await _client.AsAdminAsync();
+
+        var toInactive = await client.PatchAsJsonAsync($"/api/users/{adminTarget.Id}/status", new { status = "Inactive" });
+        Assert.Equal(HttpStatusCode.BadRequest, toInactive.StatusCode);
+
+        var toOnLeave = await client.PatchAsJsonAsync($"/api/users/{adminTarget.Id}/status",
+            new { status = "OnLeave", leaveFrom = DateTime.UtcNow, leaveTo = DateTime.UtcNow.AddDays(5) });
+        Assert.Equal(HttpStatusCode.BadRequest, toOnLeave.StatusCode);
+
+        using var verifyScope = factory.Services.CreateScope();
+        var verifyDb = verifyScope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
+        var unchanged = await verifyDb.Users.SingleAsync(u => u.Id == adminTarget.Id);
+        Assert.Equal(UserStatus.Active, unchanged.Status);
+    }
+
+    [Fact]
+    public async Task UpdateStatus_StaffTarget_StillAllowed()
+    {
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NotifyHubDbContext>();
+        var staffTarget = new User { Username = "staff-target-9007", PasswordHash = "unused", Role = UserRole.Staff, Status = UserStatus.Active };
+        db.Users.Add(staffTarget);
+        await db.SaveChangesAsync();
+
+        var (client, _) = await _client.AsAdminAsync();
+        var response = await client.PatchAsJsonAsync($"/api/users/{staffTarget.Id}/status", new { status = "Inactive" });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
     private class UserDtoShape
     {
         public long Id { get; set; }

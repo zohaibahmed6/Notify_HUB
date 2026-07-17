@@ -6,6 +6,7 @@ import { TASK_PRIORITY_CONFIG } from "@/components/v2/status-config";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { parseUtc } from "@/lib/dateUtc";
+import { formatUserLabel, formatUserName } from "@/lib/userDisplay";
 import type { TaskDto } from "@/types/tasks";
 
 export function isTaskOverdue(task: TaskDto): boolean {
@@ -66,8 +67,17 @@ export function TaskCard({
       <div className="mt-3 flex items-center justify-between gap-2">
         {task.assignedStaffUsername ? (
           <div className="flex min-w-0 items-center gap-1.5">
-            <InitialsAvatar name={task.assignedStaffUsername} size="sm" />
-            <span className="truncate text-xs text-muted-foreground">{task.assignedStaffUsername}</span>
+            <InitialsAvatar
+              name={formatUserName({ fullName: task.assignedStaffFullName, username: task.assignedStaffUsername })}
+              size="sm"
+            />
+            <span className="truncate text-xs text-muted-foreground">
+              {formatUserLabel({
+                fullName: task.assignedStaffFullName,
+                username: task.assignedStaffUsername,
+                role: task.assignedStaffRole,
+              })}
+            </span>
           </div>
         ) : (
           <span className="text-xs text-muted-foreground">Unassigned</span>
